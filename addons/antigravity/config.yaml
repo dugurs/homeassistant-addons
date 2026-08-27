@@ -1,0 +1,33 @@
+name: "Google Antigravity CLI"
+description: "Run Google Antigravity CLI 이쯤되면 징하네요 HA API integration"
+version: "1.0.52"
+slug: "antigravity"
+init: false
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+
+ingress: true
+ingress_port: 7681
+ingress_stream: true
+panel_icon: mdi:robot-excited
+panel_title: "Antigravity"
+
+map:
+  - addon_config:rw
+  - homeassistant_config:rw
+  - share:rw
+  - media:rw
+  - backup:rw
+  - ssl:ro
+
+homeassistant_api: true
+hassio_api: true
+hassio_role: manager
+
+options:
+  ha_sse_url: ""
+schema:
+  ha_sse_url: "str?"

@@ -1,0 +1,13 @@
+# Ignore everything
+*
+# But not these directories
+!*/
+
+# Allow these files
+!repository.json
+!.gitignore
+
+# Allow the antigravity addon
+!addons/
+!addons/antigravity/
+!addons/antigravity/**
