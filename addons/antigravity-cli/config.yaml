@@ -1,7 +1,7 @@
 name: "Google Antigravity CLI"
-description: "Run Google Antigravity CLI 이쯤되면 징하네요 HA API integration"
-version: "1.0.52"
-slug: "antigravity"
+description: "Run Google Antigravity CLI - HA Add-on"
+version: "1.0.0"
+slug: "antigravity-cli"
 init: false
 arch:
   - aarch64

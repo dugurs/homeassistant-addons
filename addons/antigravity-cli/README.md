@@ -15,9 +15,13 @@
 
 ## 🚀 설치 및 실행 (Installation)
 
-1.  Home Assistant의 **Settings > Add-ons > Add-on Store** 로 이동합니다.
+아래 버튼을 클릭하여 Home Assistant에 이 애드온 저장소를 간편하게 추가할 수 있습니다:
+
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fdugurs%2Fhomeassistant-addons)
+
+1.  저장소 추가가 완료되면 **Settings > Add-ons > Add-on Store** 로 이동합니다.
 2.  우측 상단의 점 3개 메뉴를 눌러 **Repositories**를 선택하고, 이 커스텀 애드온의 저장소 URL을 추가합니다.
-3.  목록에서 **"Google Antigravity CLI"** 애드온을 찾아 설치합니다.
+3.  새로고침 후 목록에서 **"Google Antigravity CLI"** 애드온을 찾아 설치합니다.
 4.  **"Start"** 버튼을 눌러 애드온을 실행합니다.
 5.  **"Open Web UI"** 버튼을 클릭하면 브라우저에 쾌적한 터미널이 열리며 AI와의 대화가 시작됩니다.
 
@@ -29,6 +33,14 @@
 > *"거실 온도 몇 도야?"*
 > *"집에 켜져 있는 조명 다 꺼줘"*
 > *"최근 1시간 동안 냉장고 전력 사용량 그래프 그려줘"*
+
+### 💡 터미널(Tmux) 스크롤 및 기본 사용법
+
+이 애드온은 백그라운드 세션 유지를 위해 내부적으로 `tmux`를 사용합니다. 터미널의 이전 출력 내용을 (스크롤하여) 확인하려면 다음 단축키를 사용하세요:
+
+*   **스크롤 모드 진입**: `Ctrl + B`를 누른 후 `[` 키를 누릅니다. (또는 마우스 휠을 위로 굴리면 자동으로 진입합니다)
+*   **스크롤 이동**: 방향키(위/아래)나 `Page Up` / `Page Down` 키를 사용하여 이전 대화 내용을 확인합니다.
+*   **스크롤 모드 종료**: `Esc` 키 또는 `q` 키를 누르면 원래 프롬프트 화면으로 돌아옵니다.
 
 ### ⚙️ 설정 (Configuration)
 
