@@ -9,5 +9,5 @@
 
 # Allow the antigravity addon
 !addons/
-!addons/antigravity/
-!addons/antigravity/**
+!addons/antigravity-cli/
+!addons/antigravity-cli/**
