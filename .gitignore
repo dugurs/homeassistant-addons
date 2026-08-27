@@ -1,13 +1,24 @@
-# Ignore everything
-*
-# But not these directories
-!*/
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Allow these files
-!repository.json
-!.gitignore
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
-# Allow the antigravity addon
-!addons/
-!addons/antigravity-cli/
-!addons/antigravity-cli/**
+# Python/Node (if used locally for testing)
+__pycache__/
+*.pyc
+node_modules/
+.env
+
+# Antigravity/Gemini specific (if needed)
+.gemini/
