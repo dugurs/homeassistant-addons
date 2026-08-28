@@ -166,15 +166,25 @@ fi
 WRAPPER_EOF
 chmod +x /usr/local/bin/agy
 
-# Pre-warm uvx cache for ha-mcp BEFORE starting agy
-# Without this, agy times out on the first MCP connection while uvx downloads ha-mcp
-echo "[INFO] ha-mcp 캐시 확인 중..."
-if uvx --with ha-mcp python -c "import ha_mcp; print('[INFO] ha-mcp 준비 완료 (캐시)')" 2>/dev/null; then
-    : # already cached, fast path
-else
-    echo "[INFO] ha-mcp 다운로드 중 (최초 1회, 약 20~30초 소요)..."
-    uvx --with ha-mcp python -c "import ha_mcp; print('[INFO] ha-mcp 다운로드 완료')" || true
-fi
+# Pre-warm uvx cache for ha-mcp BEFORE starting agy (with timeout guard)
+# Runs uvx in background + kills after 45s to avoid hanging run.sh
+echo "[INFO] ha-mcp 캐시 사전 준비 중 (최대 45초)..."
+(timeout 45 uvx ha-mcp@latest < /dev/null > /dev/null 2>&1 || true) &
+PREWARM_PID=$!
+# Wait up to 45s but exit early if uvx finishes sooner
+for i in $(seq 1 45); do
+    if ! kill -0 $PREWARM_PID 2>/dev/null; then
+        break
+    fi
+    # Check if ha-mcp package is already in the uv cache
+    if find "${UV_CACHE_DIR}" -name "ha_mcp*" -maxdepth 5 2>/dev/null | grep -q .; then
+        echo "[INFO] ha-mcp 캐시 준비 완료"
+        break
+    fi
+    sleep 1
+done
+kill $PREWARM_PID 2>/dev/null || true
+wait $PREWARM_PID 2>/dev/null || true
 
 # Pre-initialize tmux session and auto-launch agy
 if ! tmux -u has-session -t main 2>/dev/null; then

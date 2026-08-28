@@ -1,4 +1,14 @@
+## 1.0.5
+
+### 수정 (Fix)
+- v1.0.4의 ha-mcp 사전 다운로드 로직이 타임아웃 없이 무한 블록되어 애드온/HA가 멈추는 심각한 버그 수정
+  - `uvx --with ha-mcp python` 방식을 백그라운드 실행 + 45초 타임아웃 방식으로 교체
+  - run.sh가 절대 멈추지 않도록 안전 처리
+
+---
+
 ## 1.0.4
+
 
 ### 수정 (Fix)
 - 첫 설치 후 agy 실행 시 `home-assistant` MCP 서버가 "No MCP servers configured"로 표시되는 문제 수정
