@@ -91,6 +91,18 @@ else
 MCP_EOF
 fi
 
+# Auto-configure global rules for HA MCP
+mkdir -p /root/.gemini/config/rules
+if [ ! -f /root/.gemini/config/rules/ha-guidelines.md ]; then
+    cat << 'RULE_EOF' > /root/.gemini/config/rules/ha-guidelines.md
+# Home Assistant Guidelines
+
+## Tools & Integrations
+- Always prioritize using `ha-mcp` tools (`control_activate`, `get_entity_state`, `search_entities`, etc.) when interacting with Home Assistant entities, devices, and states.
+- Avoid using direct shell `curl` commands to the Home Assistant REST API unless explicitly requested or when MCP tools are unavailable for the specific task.
+RULE_EOF
+fi
+
 # Tmux configuration
 if [ ! -f /root/.tmux.conf ]; then
     cat << 'TMUX_EOF' > /root/.tmux.conf

@@ -1,6 +1,6 @@
 name: "Google Antigravity CLI"
 description: "Run Google Antigravity CLI - HA Add-on"
-version: "1.0.1"
+version: "1.0.2"
 slug: "antigravity-cli"
 init: false
 arch:
@@ -13,7 +13,7 @@ ingress: true
 ingress_port: 7681
 ingress_stream: true
 panel_icon: mdi:robot-excited
-panel_title: "Antigravity"
+panel_title: "Antigravity CLI"
 
 map:
   - addon_config:rw
