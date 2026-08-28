@@ -12,7 +12,7 @@ boot: auto
 ingress: true
 ingress_port: 7681
 ingress_stream: true
-panel_icon: mdi:robot-excited
+panel_icon: mdi:format-color-text
 panel_title: "Antigravity CLI"
 
 map:
