@@ -166,10 +166,20 @@ fi
 WRAPPER_EOF
 chmod +x /usr/local/bin/agy
 
-# Pre-initialize tmux session and auto-launch agy with MCP wait loop
+# Pre-warm uvx cache for ha-mcp BEFORE starting agy
+# Without this, agy times out on the first MCP connection while uvx downloads ha-mcp
+echo "[INFO] ha-mcp 캐시 확인 중..."
+if uvx --with ha-mcp python -c "import ha_mcp; print('[INFO] ha-mcp 준비 완료 (캐시)')" 2>/dev/null; then
+    : # already cached, fast path
+else
+    echo "[INFO] ha-mcp 다운로드 중 (최초 1회, 약 20~30초 소요)..."
+    uvx --with ha-mcp python -c "import ha_mcp; print('[INFO] ha-mcp 다운로드 완료')" || true
+fi
+
+# Pre-initialize tmux session and auto-launch agy
 if ! tmux -u has-session -t main 2>/dev/null; then
     tmux -u new-session -d -s main -c "${WORKDIR}" bash
-    tmux -u send-keys -t main "echo 'Starting Antigravity CLI (첫 실행 시 ha-mcp 자동 다운로드, 약 10~20초 소요)...' && agy" C-m
+    tmux -u send-keys -t main "agy" C-m
 fi
 
 # Launch ttyd attached to persistent tmux session (force UTF-8)

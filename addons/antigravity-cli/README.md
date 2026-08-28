@@ -1,6 +1,6 @@
 # Google Antigravity CLI - Home Assistant Add-on
 
-[![Current Version](https://img.shields.io/badge/version-1.0.3-blue.svg)](config.yaml)
+[![Current Version](https://img.shields.io/badge/version-1.0.4-blue.svg)](config.yaml)
 
 이 애드온은 Home Assistant 내부에서 **Google Antigravity CLI (`agy`)**를 구동하고, Home Assistant의 모든 기기와 상태를 AI 요원이 직접 제어할 수 있도록 완벽하게 연동해 주는 커스텀 애드온입니다.
 
