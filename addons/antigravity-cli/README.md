@@ -1,15 +1,15 @@
 # Google Antigravity CLI - Home Assistant Add-on
 
-[![Current Version](https://img.shields.io/badge/version-1.0.52-blue.svg)](config.yaml)
+[![Current Version](https://img.shields.io/badge/version-1.0.3-blue.svg)](config.yaml)
 
 이 애드온은 Home Assistant 내부에서 **Google Antigravity CLI (`agy`)**를 구동하고, Home Assistant의 모든 기기와 상태를 AI 요원이 직접 제어할 수 있도록 완벽하게 연동해 주는 커스텀 애드온입니다.
 
 ## ✨ 주요 기능 (Features)
 
 *   **웹 기반 터미널 (Web Terminal):** Home Assistant 대시보드 내에서 곧바로 Antigravity CLI에 접속할 수 있습니다.
-*   **완벽한 MCP(Model Context Protocol) 연동:** 
-    *   내장된 Node.js 기반의 **HTTP (SSE) MCP 서버**(`@jango-blockchained/homeassistant-mcp`)를 통해 50개 이상의 Home Assistant 전용 도구(조명 제어, 센서 읽기, 이벤트 구독 등)를 AI에게 즉시 제공합니다.
-    *   기존 `stdio` 통신 방식의 64KB 페이로드 제한을 완벽하게 우회하여 수백 개의 기기가 있는 환경에서도 쾌적하고 안정적으로 작동합니다.
+*   **완벽한 MCP(Model Context Protocol) 연동:**
+    *   초고속 Python 패키지 매니저 `uv`를 통해 공식 **`ha-mcp`**를 **`stdio` 프로세스**로 실행하여 88개 이상의 Home Assistant 전용 도구(조명 제어, 센서 읽기, 자동화 관리 등)를 AI에게 즉시 제공합니다.
+    *   Antigravity CLI의 공식 MCP 전송 방식인 `stdio`를 올바르게 활용하므로 `Method Not Allowed` 에러 없이 안정적으로 연결됩니다.
 *   **백그라운드 세션 유지 (Tmux):** 브라우저 창을 닫아도 AI의 작업과 채팅 세션이 백그라운드(`tmux`)에서 그대로 유지됩니다.
 *   **영구 저장소 (Persistence):** AI의 설정, 인증 정보, 사용자가 만든 스킬 등은 Home Assistant의 `/config/.gemini` 폴더에 안전하게 영구 저장되어 애드온을 재시작하거나 업데이트해도 날아가지 않습니다.
 
@@ -23,7 +23,13 @@
 2.  우측 상단의 점 3개 메뉴를 눌러 **Repositories**를 선택하고, 이 커스텀 애드온의 저장소 URL을 추가합니다.
 3.  새로고침 후 목록에서 **"Google Antigravity CLI"** 애드온을 찾아 설치합니다.
 4.  **"Start"** 버튼을 눌러 애드온을 실행합니다.
-5.  **"Open Web UI"** 버튼을 클릭하면 브라우저에 쾌적한 터미널이 열리며 AI와의 대화가 시작됩니다.
+5.  **"Open Web UI"** 버튼을 클릭하면 브라우저에 쾌적한 터미널이 열립니다.
+6.  터미널에서 `agy` 가 실행되면 **최초 1회** `ha-mcp` 패키지가 자동으로 다운로드됩니다 (약 10~20초 소요).
+7.  다운로드가 완료되면 agy 프롬프트(`>`)에서 아래 명령을 입력해 MCP 연결 상태를 확인합니다:
+    ```
+    /mcp
+    ```
+    `home-assistant` 서버가 **✓ connected** 상태로 표시되면 정상적으로 설치된 것입니다.
 
 ## 🛠 사용 방법 (Usage)
 
@@ -46,20 +52,30 @@
 
 기본적으로 애드온이 Home Assistant의 `SUPERVISOR_TOKEN`을 자동으로 감지하여 모든 권한을 알아서 설정합니다. 사용자가 수동으로 IP나 토큰을 입력할 필요가 없습니다.
 
-*   `ha_sse_url` (선택 사항): 외부 서버의 MCP SSE URL을 연결하고 싶을 때만 사용하며, 비워두면 내장된 HA 서버를 자동 사용합니다.
+*   `ha_sse_url` (선택 사항): [ha-mcp HACS 커스텀 컴포넌트](https://github.com/homeassistant-ai/ha-mcp-integration) 등 외부 MCP 서버의 Streamable HTTP URL을 직접 지정할 때 사용합니다. 비워두면 `uvx ha-mcp@latest`를 `stdio`로 자동 실행합니다.
 
 ## 📝 문제 해결 (Troubleshooting)
 
 *   **AI가 기기를 제어하려고 할 때 권한을 묻는다면?**
     최초 1회 실행 시 보안을 위해 도구 접근 권한을 물어봅니다. 선택지에서 **"Yes, and always allow... (Persist to settings.json)"** 항목을 선택하시면 이후부터는 묻지 않고 스스로 제어합니다.
+
 *   **CLI에서 한 번에 ha-mcp의 모든 기능에 대한 권한을 허용하려면?**
     채팅창에 아래와 같이 입력하면 AI가 권한 설정을 수정해 줍니다.
     ```
     ~/.gemini/antigravity-cli/settings.json 파일의 permissions.allow에 "mcp(home-assistant/*)"를 추가해 줘
     ```
 
+*   **`ha-mcp` 첫 실행 시 느리다면?**
+    최초 실행 시 `uvx`가 `ha-mcp@latest` 패키지를 다운로드합니다 (약 10~20초). 이후 실행부터는 캐시를 사용하므로 즉시 시작됩니다.
+
+*   **MCP 서버가 `Method Not Allowed` 에러를 낸다면?** (v1.0.2 이하에서 업그레이드 시)
+    v1.0.3부터 SSE HTTP 서버 방식을 제거하고 Antigravity CLI의 공식 지원 방식인 `stdio`로 전환했습니다. 애드온을 최신 버전으로 업데이트 후 재시작하면 해결됩니다.
+
 ## 🏗 아키텍처 및 내부 구조
 
 *   **ttyd + tmux**: 브라우저와 터미널 환경을 이어줍니다.
-*   **Node.js 22 + FastMCP**: `0.0.0.0:7123` 포트로 SSE(Server-Sent Events) 프로토콜을 열어 대용량 기기 스키마 목록을 안전하게 Antigravity CLI와 통신합니다.
+*   **uvx + ha-mcp (stdio)**: `agy`가 MCP 서버가 필요할 때 `uvx ha-mcp@latest`를 자식 프로세스(stdio)로 실행합니다. Antigravity CLI는 `stdio` 전송만 지원하므로 이 방식이 공식적으로 올바른 연결 방법입니다.
+*   **SUPERVISOR_TOKEN 자동 주입**: 컨테이너 환경에서 토큰을 자동으로 읽어 `ha-mcp`에 환경 변수로 전달하므로 별도의 Long-Lived Access Token 발급이 불필요합니다.
 *   **Bash 래퍼 스크립트**: x86_64 및 ARM(QEMU) 환경 모두에서 구동될 수 있도록 동적으로 바이너리 호환성을 맞춰줍니다.
+
+

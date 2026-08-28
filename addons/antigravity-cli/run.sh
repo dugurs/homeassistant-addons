@@ -21,6 +21,10 @@ cd "${WORKDIR}" 2>/dev/null || cd /root
 mkdir -p /config/.gemini
 mkdir -p /config/.config
 mkdir -p /config/.local_share
+mkdir -p /config/.uv_cache
+
+# Persist uv package cache across addon rebuilds (avoids re-downloading ha-mcp every update)
+export UV_CACHE_DIR="/config/.uv_cache"
 
 # Symlink persistent paths to /root so auth survives rebuilds/restarts and is included in addon backups
 rm -rf /root/.gemini
@@ -34,8 +38,16 @@ mkdir -p /root/.local/share
 rm -rf /root/.local/share/antigravity
 ln -sfn /config/.local_share /root/.local/share/antigravity
 
-# Auto-configure official Home Assistant MCP Server
+# Auto-configure Home Assistant MCP Server (stdio mode for Antigravity CLI)
 mkdir -p /root/.gemini/config
+
+# Read SUPERVISOR_TOKEN from multiple sources
+if [ -z "$SUPERVISOR_TOKEN" ] && [ -f /var/run/s6/container_environment/SUPERVISOR_TOKEN ]; then
+    export SUPERVISOR_TOKEN=$(cat /var/run/s6/container_environment/SUPERVISOR_TOKEN)
+fi
+if [ -z "$SUPERVISOR_TOKEN" ] && [ -f /proc/1/environ ]; then
+    export SUPERVISOR_TOKEN=$(tr '\0' '\n' < /proc/1/environ | grep '^SUPERVISOR_TOKEN=' | cut -d= -f2-)
+fi
 
 SSE_URL=""
 if [ -f /data/options.json ]; then
@@ -43,7 +55,9 @@ if [ -f /data/options.json ]; then
 fi
 
 if [ -n "$SSE_URL" ] && [ "$SSE_URL" != "null" ]; then
-    cat << MCP_EOF > /root/.gemini/config/mcp_config.json
+    # User supplied an external SSE/Streamable-HTTP URL (e.g. ha-mcp Custom Component webhook URL)
+    echo "[INFO] Using user-supplied HA MCP URL: $SSE_URL"
+    cat <<MCP_EOF > /root/.gemini/config/mcp_config.json
 {
   "mcpServers": {
     "home-assistant": {
@@ -53,38 +67,20 @@ if [ -n "$SSE_URL" ] && [ "$SSE_URL" != "null" ]; then
 }
 MCP_EOF
 else
-    # Fallback to Node.js HTTP (SSE) server! This bypasses the stdio limitations!
-    
-    export HASS_HOST="http://supervisor/core"
-    export JWT_SECRET="dummy-jwt-secret-for-stdio-transport-needs-32-chars-minimum"
-    if [ -z "$SUPERVISOR_TOKEN" ] && [ -f /var/run/s6/container_environment/SUPERVISOR_TOKEN ]; then
-        export SUPERVISOR_TOKEN=$(cat /var/run/s6/container_environment/SUPERVISOR_TOKEN)
-    fi
-    if [ -z "$SUPERVISOR_TOKEN" ] && [ -f /proc/1/environ ]; then
-        export SUPERVISOR_TOKEN=$(tr '\0' '\n' < /proc/1/environ | grep '^SUPERVISOR_TOKEN=' | cut -d= -f2-)
-    fi
-    export HASS_TOKEN="${SUPERVISOR_TOKEN}"
-    
-    # Find the global HTTP server script
-    HTTP_SERVER_SCRIPT="/usr/lib/node_modules/@jango-blockchained/homeassistant-mcp/dist/http-server.mjs"
-    if [ ! -f "$HTTP_SERVER_SCRIPT" ]; then
-        # Fallback to standard npm global path
-        HTTP_SERVER_SCRIPT="/usr/local/lib/node_modules/@jango-blockchained/homeassistant-mcp/dist/http-server.mjs"
-    fi
-    
-    # Run the HTTP server in the background
-    if [ -f "$HTTP_SERVER_SCRIPT" ]; then
-        echo "Starting Home Assistant MCP HTTP Server on port 7123..."
-        node "$HTTP_SERVER_SCRIPT" > /config/mcp-server.log 2>&1 &
-    else
-        echo "[ERROR] Could not find HTTP server script for homeassistant-mcp"
-    fi
-    
-    cat << MCP_EOF > /root/.gemini/config/mcp_config.json
+    # Default: stdio transport via uvx ha-mcp@latest
+    # Antigravity CLI only supports stdio MCP transport (not SSE/HTTP).
+    # uvx launches ha-mcp as a subprocess; env vars allow ha-mcp to reach HA API.
+    echo "[INFO] Configuring ha-mcp via stdio (uvx). SUPERVISOR_TOKEN available: $([ -n "$SUPERVISOR_TOKEN" ] && echo yes || echo no)"
+    cat <<MCP_EOF > /root/.gemini/config/mcp_config.json
 {
   "mcpServers": {
     "home-assistant": {
-      "serverUrl": "http://localhost:7123/mcp"
+      "command": "uvx",
+      "args": ["ha-mcp@latest"],
+      "env": {
+        "HOMEASSISTANT_URL": "http://supervisor/core",
+        "HOMEASSISTANT_TOKEN": "${SUPERVISOR_TOKEN}"
+      }
     }
   }
 }
@@ -95,6 +91,12 @@ fi
 mkdir -p /root/.gemini/config/rules
 if [ ! -f /root/.gemini/config/rules/ha-guidelines.md ]; then
     cat << 'RULE_EOF' > /root/.gemini/config/rules/ha-guidelines.md
+---
+name: ha-guidelines
+description: Always prioritize using ha-mcp tools over direct curl API calls when controlling or querying Home Assistant
+trigger: always_on
+---
+
 # Home Assistant Guidelines
 
 ## Tools & Integrations
@@ -126,6 +128,7 @@ alias cdha='cd /homeassistant'
 alias cdcfg='cd /config'
 alias ha-config-check='hass-cli config check 2>/dev/null || ha core check'
 alias ha-logs='ha core logs'
+alias agy='/usr/local/bin/agy'
 BASH_EOF
 fi
 
@@ -141,13 +144,20 @@ fi
 ARCH=$(uname -m)
 
 if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    # Check if native CPU supports pclmulqdq/pclmul
-    if grep -q -E "\bpclmulqdq\b|\bpclmul\b" /proc/cpuinfo 2>/dev/null; then
+    # Foolproof check: Try running the binary natively. Capture all output to completely silence SIGILL messages.
+    if _dummy=$(bash -c '"$1" --help' _ "$TARGET_BIN" 2>&1); then
         exec "$TARGET_BIN" "$@"
-    elif command -v /usr/bin/qemu-x86_64 >/dev/null 2>&1; then
-        exec /usr/bin/qemu-x86_64 -cpu max "$TARGET_BIN" "$@"
     else
-        exec "$TARGET_BIN" "$@"
+        echo "[WARNING] Native execution failed (Likely missing CPU instructions like pclmulqdq)."
+        echo "[WARNING] Falling back to QEMU emulation (Slower). Change VM CPU Type to 'Host' for native speed!"
+        if command -v qemu-x86_64-static >/dev/null 2>&1; then
+            exec qemu-x86_64-static -cpu max "$TARGET_BIN" "$@"
+        elif command -v qemu-x86_64 >/dev/null 2>&1; then
+            exec qemu-x86_64 -cpu max "$TARGET_BIN" "$@"
+        else
+            echo "[ERROR] QEMU emulator not found. Execution will likely crash."
+            exec "$TARGET_BIN" "$@"
+        fi
     fi
 else
     # ARM64 (Raspberry Pi 4/5, Apple Silicon, etc.) or other architectures
@@ -156,10 +166,10 @@ fi
 WRAPPER_EOF
 chmod +x /usr/local/bin/agy
 
-# Pre-initialize tmux session and auto-launch agy
+# Pre-initialize tmux session and auto-launch agy with MCP wait loop
 if ! tmux -u has-session -t main 2>/dev/null; then
     tmux -u new-session -d -s main -c "${WORKDIR}" bash
-    tmux -u send-keys -t main "agy" C-m
+    tmux -u send-keys -t main "echo 'Starting Antigravity CLI (첫 실행 시 ha-mcp 자동 다운로드, 약 10~20초 소요)...' && agy" C-m
 fi
 
 # Launch ttyd attached to persistent tmux session (force UTF-8)

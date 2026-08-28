@@ -26,11 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-user-static \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 22.x and pre-install the MCP server globally
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g @jango-blockchained/homeassistant-mcp \
-    && rm -rf /var/lib/apt/lists/*
+# Install uv (blazing fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/ \
+    && mv /root/.local/bin/uvx /usr/local/bin/
 
 # Set UTF-8 Locales for complete Korean language support and keep env for s6-overlay
 ENV LANG=C.UTF-8 \
