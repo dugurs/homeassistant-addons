@@ -52,8 +52,8 @@
 
 *   **AI가 기기를 제어하려고 할 때 권한을 묻는다면?**
     최초 1회 실행 시 보안을 위해 도구 접근 권한을 물어봅니다. 선택지에서 **"Yes, and always allow... (Persist to settings.json)"** 항목을 선택하시면 이후부터는 묻지 않고 스스로 제어합니다.
-*   **CLI에서 한 번에 모든 권한을 허용하려면?**
-    채팅창에 *"모든 home-assistant 도구를 영구 허용하도록 내 ~/.gemini/config/settings.json 파일을 수정해 줘."* 라고 입력하면 AI가 스스로 권한 설정을 일괄 수정해 줍니다.
+*   **CLI에서 한 번에 ha-mcp의 모든 기능에 대한 권한을 허용하려면?**
+    채팅창에 `~/.gemini/antigravity-cli/settings.json 파일의 permissions.allow에 "mcp(home-assistant/*)"를 추가해 줘` 라고 입력하면 AI가 권한 설정을 수정해 줍니다.
 
 ## 🏗 아키텍처 및 내부 구조
 
