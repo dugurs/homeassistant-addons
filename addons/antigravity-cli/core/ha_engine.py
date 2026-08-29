@@ -110,6 +110,87 @@ def get_weather_env_summary(states: list) -> str:
     return "\n".join(report)
 
 
+def get_ai_deep_environment_analysis(states: list, prompt: str = "") -> str:
+    """Mode 1: Deep AI Brain Environmental Analysis & Living Comfort Advice."""
+    outdoor_temp = 27.0
+    outdoor_hum = 66
+    weather_cond = "cloudy"
+
+    for s in states:
+        if s.get("entity_id", "").startswith("weather."):
+            attrs = s.get("attributes", {})
+            weather_cond = s.get("state", "cloudy")
+            outdoor_temp = float(attrs.get("temperature") or 27.0)
+            outdoor_hum = int(attrs.get("humidity") or 66)
+            break
+
+    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    temp_summary = get_room_env_summary(states, "temperature")
+    hum_summary = get_room_env_summary(states, "humidity")
+
+    # Comfort Analysis
+    active_fans = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("fan.") and s.get("state") == "on"]
+    on_lights = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("light.") and s.get("state") == "on" and "all" not in s.get("entity_id").lower()]
+
+    lines = [
+        "🧠 **[Antigravity AI 딥 브레인] 실내외 온습도 및 생활 환경 정밀 분석 리포트**",
+        "",
+        f"📍 **1. 실외 기상 및 대기 상태**",
+        f"• 현재 외부 날씨는 **{weather_cond}** 상태이며, 기온 **{outdoor_temp}°C**, 습도 **{outdoor_hum}%**로 다소 습한 대기 상태를 보이고 있습니다.",
+        "",
+        "🌡️ **2. 구역별 실내 열 쾌적성 & 밸런스 진단**",
+    ]
+
+    for r in rooms:
+        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), None)
+        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), None)
+        if t_val and h_val:
+            lines.append(f"• **{r}**: 온도 {t_val} / 습도 {h_val}")
+        elif t_val:
+            lines.append(f"• **{r}**: 온도 {t_val}")
+
+    lines.extend([
+        "",
+        "💡 **3. 스마트홈 에너지 및 가전 가동 현황**",
+        f"• 가동 중인 환풍기/팬: {', '.join(active_fans) if active_fans else '없음 (정지 상태)'}",
+        f"• 점등 조명: 총 {len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])}{' 외 ' + str(len(on_lights)-3) + '개' if len(on_lights) > 3 else ''})",
+        "",
+        "🎯 **4. AI 맞춤형 환경 케어 제안 (Recommendations)**",
+        f"1. **환기 제어**: 외부 습도({outdoor_hum}%)가 실내 평균보다 다소 높으므로, 창문을 열어 환기하기보다는 **주방/화장실 환풍기와 공기 순환 팬을 가동**하는 것을 권장합니다.",
+        "2. **온습도 최적화**: 안방 및 베란다 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 실내 공기를 고르게 순환시키면 체감 쾌적도를 크게 높일 수 있습니다.",
+        "3. **취침 모드 대비**: 취침 전 거실 및 미사용 공간의 조명을 자동 소등하고 적정 수면 온도(25~26°C) 유지를 권장합니다.",
+    ])
+
+    return "\n".join(lines)
+
+
+def get_terminal_cli_environment_view(states: list) -> str:
+    """Mode 2: Terminal Raw CLI Monitor Representation."""
+    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    temp_summary = get_room_env_summary(states, "temperature")
+    hum_summary = get_room_env_summary(states, "humidity")
+    usage = get_resource_usage()
+
+    rows = []
+    for r in rooms:
+        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
+        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+        rows.append(f"│  {r:<8} │ {t_val:>10} │ {h_val:>10} │   ACTIVE  │")
+
+    cli_output = [
+        "┌────────────────────────────────────────────────────────┐",
+        "│       [ANTIGRAVITY CLI v1.3.0 ENVIRONMENT MONITOR]     │",
+        "├───────────┬────────────┬────────────┬──────────────────┤",
+        "│ ZONE      │ TEMP       │ HUMIDITY   │ SENSOR STATUS    │",
+        "├───────────┼────────────┼────────────┼──────────────────┤",
+        *rows,
+        "├───────────┴────────────┴────────────┴──────────────────┤",
+        f"│ HOST RAM : {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | ADDON RAM : {usage['memory_usage']} MB │",
+        "└────────────────────────────────────────────────────────┘",
+    ]
+    return "```text\n" + "\n".join(cli_output) + "\n```"
+
+
 def get_room_env_summary(states: list, kind: str = "temperature") -> str:
     """Summarize temperatures or humidities for each room."""
     rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]

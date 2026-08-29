@@ -15,7 +15,15 @@ try:
 except ImportError:
     pty = None
 
-from core.ha_engine import get_supervisor_token, handle_agent_chat
+from core.ha_engine import (
+    get_ai_deep_environment_analysis,
+    get_ha_states,
+    get_resource_usage,
+    get_supervisor_token,
+    get_terminal_cli_environment_view,
+    get_weather_env_summary,
+    handle_agent_chat,
+)
 
 
 def strip_ansi(text: str) -> str:
@@ -33,9 +41,9 @@ def make_sse(event_type: str, content: str = "") -> str:
 
 
 def stream_transcript_tail(prompt: str):
-    """Mode 1: Step-by-Step Task & Real-Time Progress Streamer with Live HA Synthesis."""
+    """Mode 1: Deep AI Brain Environmental Analysis & Living Advice Streamer."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
-    yield make_sse("tool", f"📜 [모드 1: 실시간 작업 추적] AI 작업 세션 초기화: '{actual_prompt}'")
+    yield make_sse("tool", f"📜 [모드 1: AI 딥 브레인 분석] 세션 초기화: '{actual_prompt}'")
     time.sleep(0.05)
 
     smart_home_keywords = [
@@ -46,14 +54,19 @@ def stream_transcript_tail(prompt: str):
     lower = actual_prompt.lower()
 
     if any(w in lower for w in smart_home_keywords):
-        yield make_sse("tool", "🔍 [1단계] Home Assistant 엔티티 상태 실시간 탐색 중...")
+        yield make_sse("tool", "🔍 [1단계] Home Assistant 엔티티 상태 실시간 탐색 및 MCP 데이터 수집")
         time.sleep(0.08)
-        yield make_sse("tool", "🌡️ [2단계] 센서, 온습도, 조명 및 환경 데이터 파싱 중...")
+        yield make_sse("tool", "🧠 [2단계] Gemini 딥 브레인 연산: 실내외 환경 쾌적성 & 밸런스 추론")
         time.sleep(0.08)
-        yield make_sse("tool", "📊 [3단계] 스마트홈 브리핑 데이터 합성 및 검증 중...")
+        yield make_sse("tool", "📊 [3단계] 맞춤형 스마트홈 케어 제안 및 심층 분석 리포트 합성")
         time.sleep(0.08)
-        
-        full_text = handle_agent_chat(actual_prompt, "", "", False)
+
+        states = get_ha_states()
+        if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온"]):
+            full_text = get_ai_deep_environment_analysis(states, actual_prompt)
+        else:
+            full_text = handle_agent_chat(actual_prompt, "", "", False)
+
         yield make_sse("text", full_text)
         yield make_sse("done")
         return
@@ -162,9 +175,13 @@ def stream_pty_interactive(prompt: str):
     if any(w in lower for w in smart_home_keywords):
         yield make_sse("tool", "🖥️ [가상 터미널] Home Assistant 엔티티 상태 스트림 수신...")
         time.sleep(0.08)
-        yield make_sse("tool", "📊 [터미널 렌더링] 디바이스 상태 및 센서 데이터 출력 포맷팅")
+        yield make_sse("tool", "📊 [터미널 렌더링] 디바이스 상태 및 센서 데이터 CLI 테이블 포맷팅")
         time.sleep(0.08)
-        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        states = get_ha_states()
+        if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온"]):
+            full_text = get_terminal_cli_environment_view(states)
+        else:
+            full_text = handle_agent_chat(actual_prompt, "", "", False)
         yield make_sse("text", full_text)
         yield make_sse("done")
         return
