@@ -159,8 +159,8 @@ def stream_transcript_tail(prompt: str, is_mobile: bool = False):
     yield make_sse("done")
 
 
-def stream_pty_interactive(prompt: str):
-    """Mode 2: Virtual PTY Terminal Interactive Stream with ANSI parsing."""
+def stream_pty_interactive(prompt: str, is_mobile: bool = False):
+    """Mode 2: Virtual PTY Terminal Interactive Stream with ANSI parsing and responsive viewports."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     yield make_sse("tool", f"🖥️ [모드 2: PTY 터미널 스트림] 가상 터미널 세션 생성: '{actual_prompt}'")
     time.sleep(0.05)
@@ -179,7 +179,7 @@ def stream_pty_interactive(prompt: str):
         time.sleep(0.08)
         states = get_ha_states()
         if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온"]):
-            full_text = get_terminal_cli_environment_view(states)
+            full_text = get_terminal_cli_environment_view(states, is_mobile=is_mobile)
         else:
             full_text = handle_agent_chat(actual_prompt, "", "", False)
         yield make_sse("text", full_text)
@@ -329,7 +329,7 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int
         for ev in stream_transcript_tail(prompt, is_mobile=is_mobile):
             yield ev
     elif stream_mode == 2:
-        for ev in stream_pty_interactive(prompt):
+        for ev in stream_pty_interactive(prompt, is_mobile=is_mobile):
             yield ev
     else:
         for ev in stream_hybrid_fast(prompt):

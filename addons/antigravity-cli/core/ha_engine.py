@@ -199,13 +199,35 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
     return "\n".join(lines)
 
 
-def get_terminal_cli_environment_view(states: list) -> str:
-    """Mode 2: Terminal Raw CLI Monitor Representation."""
+def get_terminal_cli_environment_view(states: list, is_mobile: bool = False) -> str:
+    """Mode 2: Terminal Raw CLI Monitor Representation adapted for Mobile/Desktop."""
     rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
     usage = get_resource_usage()
 
+    if is_mobile:
+        # Compact Mobile Terminal View (<= 34 columns)
+        rows = []
+        for r in rooms:
+            t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
+            h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+            rows.append(f"│ {r:<4} │ {t_val:>7} │ {h_val:>6} │")
+
+        cli_output = [
+            "┌──────────────────────────────────┐",
+            "│ [ANTIGRAVITY CLI MOBILE MONITOR] │",
+            "├──────┬─────────┬────────┤",
+            "│ ZONE │ TEMP    │ HUMID  │",
+            "├──────┼─────────┼────────┤",
+            *rows,
+            "├──────┴─────────┴────────┤",
+            f"│ RAM: {usage['used_memory_gb']}/{usage['total_memory_gb']}G ({usage['memory_percent']}%) │",
+            "└──────────────────────────────────┘",
+        ]
+        return "```text\n" + "\n".join(cli_output) + "\n```"
+
+    # Wide Desktop Terminal Matrix
     rows = []
     for r in rooms:
         t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
