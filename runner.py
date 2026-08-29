@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Dedicated Static Task & Test Runner for Antigravity Workspace.
-Modify this file and execute 'python runner.py' for any ad-hoc script execution.
-"""
+"""Inspect HA states to build a comprehensive, rich system summary."""
 
-import sys
+import json
+import urllib.request
 
 
-def main():
-    print("[Runner] Ready to execute dynamic tasks.")
+def inspect_states():
+    ha_ip = "192.168.0.14"
+    url = f"http://{ha_ip}:8000/api/status"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        print("Add-on status:", resp.read().decode("utf-8"))
 
 
 if __name__ == "__main__":
-    main()
+    inspect_states()

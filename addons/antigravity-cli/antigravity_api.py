@@ -543,6 +543,105 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
     yield make_sse("done")
 
 
+def get_comprehensive_home_summary(states: list) -> str:
+    """Generate a rich, multi-dimensional executive dashboard briefing of the entire smart home."""
+    # 1. Persons (가족 재실)
+    persons_home = []
+    persons_away = []
+    for s in states:
+        if s.get("entity_id", "").startswith("person."):
+            fn = s.get("attributes", {}).get("friendly_name") or s.get("entity_id").split(".")[1]
+            st = s.get("state", "")
+            if st == "home":
+                persons_home.append(fn)
+            else:
+                persons_away.append(fn)
+    person_line = ""
+    if persons_home:
+        person_line = f"• 👥 가족 재실: {len(persons_home)}명 전원 재실 중 ({', '.join(persons_home)})"
+        if persons_away:
+            person_line += f" / 외출: {', '.join(persons_away)}"
+
+    # 2. Weather
+    weather_line = ""
+    for s in states:
+        eid = s.get("entity_id", "")
+        if eid.startswith("weather."):
+            fn = s.get("attributes", {}).get("friendly_name") or "실외 기상"
+            st = s.get("state", "")
+            attrs = s.get("attributes", {})
+            temp = attrs.get("temperature", "")
+            hum = attrs.get("humidity", "")
+            weather_line = f"• 🌤️ {fn}: 현재 {st} (기온 {temp}°C / 습도 {hum}%)"
+            break
+
+    # 3. Lights (exclude groups / all_lights)
+    on_lights = []
+    for s in states:
+        eid = s.get("entity_id", "")
+        fn = s.get("attributes", {}).get("friendly_name") or eid
+        if eid.startswith("light.") and s.get("state") == "on":
+            if "all" in eid.lower() or "전체" in fn:
+                continue
+            on_lights.append(fn)
+    if on_lights:
+        lights_str = f"• 💡 조명: 총 {len(on_lights)}개 점등 중 ({', '.join(on_lights[:4])}{' 외 ' + str(len(on_lights)-4) + '개' if len(on_lights) > 4 else ''})"
+    else:
+        lights_str = "• 💡 조명: 모든 조명이 꺼져 있습니다."
+
+    # 4. Room Environment
+    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    temp_summary = get_room_env_summary(states, "temperature")
+    hum_summary = get_room_env_summary(states, "humidity")
+    env_lines = ["• 🌡️ 주요 공간 온습도:"]
+    for r in rooms:
+        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), None)
+        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), None)
+        if t_val and h_val:
+            env_lines.append(f"  - {r}: {t_val} / {h_val}")
+        elif t_val:
+            env_lines.append(f"  - {r}: {t_val}")
+
+    # 5. Major Devices (Curtains, Fans)
+    device_lines = []
+    covers = []
+    for s in states:
+        if s.get("entity_id", "").startswith("cover."):
+            fn = s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
+            st = "열림" if s.get("state") == "open" else "닫힘"
+            covers.append(f"{fn} ({st})")
+    if covers:
+        device_lines.append(f"• 🪟 스마트 커튼: {', '.join(covers)}")
+
+    active_fans = []
+    for s in states:
+        if s.get("entity_id", "").startswith("fan.") and s.get("state") == "on":
+            fn = s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
+            if "all" not in fn.lower() and "전체" not in fn:
+                active_fans.append(fn)
+    if active_fans:
+        device_lines.append(f"• 🌀 가동 중인 팬/환풍기: {', '.join(active_fans)}")
+
+    # 6. System Health
+    usage = get_resource_usage()
+    sys_line = f"• ⚙️ 시스템 리소스: RAM {usage['used_memory_gb']}GB / {usage['total_memory_gb']}GB ({usage['memory_percent']}%) | 애드온 {usage['memory_usage']}MB"
+
+    # Assemble Dashboard
+    report = ["🏠 **우리집 스마트홈 종합 상황 브리핑**\n"]
+    if person_line:
+        report.append(person_line)
+    if weather_line:
+        report.append(weather_line)
+    report.append(lights_str)
+    if len(env_lines) > 1:
+        report.extend(env_lines)
+    if device_lines:
+        report.extend(device_lines)
+    report.append(sys_line)
+    report.append("\n✅ 모든 기기와 센서가 정상 모니터링 중입니다.")
+    return "\n".join(report)
+
+
 def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str = "", is_direct_llm: bool = False) -> str:
     """Dispatches prompt to Antigravity CLI or autonomously resolves intents."""
     clean_prompt = prompt.strip()
@@ -628,13 +727,7 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
                 return home_summary
             states = get_ha_states()
             if states:
-                on_lights = [
-                    s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
-                    for s in states
-                    if s.get("entity_id", "").startswith("light.") and s.get("state") == "on"
-                ]
-                light_str = f"{len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])})" if on_lights else "모두 꺼짐"
-                return f"현재 우리집 상태 요약입니다.\n• 조명: {light_str}\n• 기기 및 센서가 정상 모니터링 중입니다."
+                return get_comprehensive_home_summary(states)
 
     # 8. Targeted Entity Control & Query
     states = get_ha_states()
