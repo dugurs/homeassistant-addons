@@ -870,8 +870,17 @@ HTML_INDEX = """<!DOCTYPE html>
     .msg-row { display: flex; width: 100%; }
     .msg-row.user { justify-content: flex-end; }
     .msg-row.bot { justify-content: flex-start; }
-    .bubble {
+    
+    .bubble-wrap {
+      display: flex;
+      flex-direction: column;
       max-width: 85%;
+    }
+    .msg-row.user .bubble-wrap { align-items: flex-end; }
+    .msg-row.bot .bubble-wrap { align-items: flex-start; }
+
+    .bubble {
+      width: 100%;
       padding: 12px 16px;
       border-radius: 14px;
       font-size: 0.92rem;
@@ -884,6 +893,50 @@ HTML_INDEX = """<!DOCTYPE html>
       color: var(--text-main);
       border: 1px solid var(--border-color);
       border-bottom-left-radius: 2px;
+    }
+
+    /* Message Metadata (Time, Latency, Copy) */
+    .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 0 4px;
+    }
+    .msg-meta.user { justify-content: flex-end; }
+    
+    .meta-latency {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover {
+      background: #1e293b;
+      color: var(--text-main);
+      border-color: var(--accent-blue);
+    }
+    .copy-btn.copied {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--accent-green);
+      border-color: var(--accent-green);
     }
 
     /* Markdown Formats in Bubble */
@@ -1062,11 +1115,38 @@ HTML_INDEX = """<!DOCTYPE html>
       return raw;
     }
 
+    function getCurrentTimeStr() {
+      const now = new Date();
+      return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    }
+
+    function copyMessage(btn) {
+      const bubble = btn.closest('.bubble-wrap').querySelector('.answer-content');
+      const text = bubble.getAttribute('data-raw') || bubble.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✓ 복사완료';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '📋 복사';
+          btn.classList.remove('copied');
+        }, 2000);
+      }).catch(() => {
+        btn.textContent = '❌ 실패';
+        setTimeout(() => { btn.textContent = '📋 복사'; }, 2000);
+      });
+    }
+
     function appendUserMessage(text) {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
+      const timeStr = getCurrentTimeStr();
       row.className = 'msg-row user';
-      row.innerHTML = `<div class="bubble">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
+      row.innerHTML = `
+        <div class="bubble-wrap">
+          <div class="bubble">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
+        </div>
+      `;
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
     }
@@ -1074,17 +1154,26 @@ HTML_INDEX = """<!DOCTYPE html>
     function createBotStreamMessage() {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
+      const timeStr = getCurrentTimeStr();
+      const startTime = performance.now();
       row.className = 'msg-row bot';
       row.innerHTML = `
-        <div class="bubble">
-          <div class="tool-box" style="display: none;">
-            <div class="tool-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-              <span class="tool-title">🔍 AI 도구 호출 진행 중...</span>
-              <span>▼</span>
+        <div class="bubble-wrap">
+          <div class="bubble">
+            <div class="tool-box" style="display: none;">
+              <div class="tool-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                <span class="tool-title">🔍 AI 도구 호출 진행 중...</span>
+                <span>▼</span>
+              </div>
+              <div class="tool-content"></div>
             </div>
-            <div class="tool-content"></div>
+            <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
           </div>
-          <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
+          <div class="msg-meta bot">
+            <span class="meta-time">${timeStr}</span>
+            <span class="meta-latency" style="display: none;"></span>
+            <button class="copy-btn" onclick="copyMessage(this)">📋 복사</button>
+          </div>
         </div>
       `;
       box.appendChild(row);
@@ -1094,6 +1183,7 @@ HTML_INDEX = """<!DOCTYPE html>
       const toolTitle = row.querySelector('.tool-title');
       const toolContent = row.querySelector('.tool-content');
       const answerContent = row.querySelector('.answer-content');
+      const latencyEl = row.querySelector('.meta-latency');
 
       let toolList = [];
       let answerText = "";
@@ -1117,12 +1207,18 @@ HTML_INDEX = """<!DOCTYPE html>
           box.scrollTop = box.scrollHeight;
         },
         finish: function() {
+          const latency = ((performance.now() - startTime) / 1000).toFixed(2);
+          if (latencyEl) {
+            latencyEl.textContent = `⚡ ${latency}초`;
+            latencyEl.style.display = 'inline';
+          }
           if (toolList.length > 0) {
             toolTitle.textContent = `🔍 AI 도구 호출 완료 (${toolList.length}단계)`;
           }
           if (!answerText) {
             answerContent.innerHTML = "답변 작성을 완료했습니다.";
           }
+          answerContent.setAttribute('data-raw', answerText);
           box.scrollTop = box.scrollHeight;
         }
       };
