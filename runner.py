@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E Verification for newly integrated ha-mcp Fast Mode features."""
+"""E2E Verification for Responsive Markdown & Viewport Adaptation in Mode 1."""
 
 import json
 import sys
@@ -14,58 +14,61 @@ def p(msg: str):
     print(msg, flush=True)
 
 
-def test_prompt(prompt: str):
+def test_responsive_markdown(is_mobile: bool):
     ha_ip = "192.168.0.14"
     url = f"http://{ha_ip}:8000/api/chat"
+    mode_name = "Mobile (<768px)" if is_mobile else "Desktop (>=768px)"
+    prompt = "오늘 날씨와 환경 분석해줘"
+
     p(f"\n========================================================")
-    p(f"[*] Testing Prompt: '{prompt}' (Mode 3 Fast)")
+    p(f"[*] Testing Mode 1 AI Brain under [{mode_name}] Viewport")
     p(f"========================================================")
 
-    payload = json.dumps({"prompt": prompt, "is_direct_llm": False, "stream_mode": 3}).encode("utf-8")
+    payload = json.dumps({
+        "prompt": prompt,
+        "is_direct_llm": False,
+        "stream_mode": 1,
+        "is_mobile": is_mobile,
+        "client_width": 375 if is_mobile else 1280
+    }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
     t0 = time.time()
     chunks = []
-    tools = []
 
     with urllib.request.urlopen(req, timeout=10) as resp:
         for line in resp:
             l = line.decode("utf-8", errors="replace").strip()
             if l.startswith("data:"):
                 ev = json.loads(l[5:].strip())
-                etype = ev.get("type")
-                if etype == "tool":
-                    tools.append(ev.get("content", ""))
-                elif etype in ("text", "chunk"):
+                if ev.get("type") in ("text", "chunk"):
                     chunks.append(ev.get("content", ""))
-                elif etype == "done":
+                elif ev.get("type") == "done":
                     break
 
     elapsed = round(time.time() - t0, 3)
     content = "".join(chunks)
-    p(f"[Latency: {elapsed}s | Tool Events: {len(tools)}]")
-    p("--- [Result Output] ---")
+    p(f"[Latency: {elapsed}s]")
+    p("--- [Rendered Output Preview] ---")
     p(content)
-    return len(content) > 0
+
+    if is_mobile:
+        pass_mobile = "(모바일)" in content and "> [!NOTE]" in content
+        p(f"\n• Mobile Card Format Verification: {'YES [PASS]' if pass_mobile else 'NO [FAIL]'}")
+        return pass_mobile
+    else:
+        pass_desktop = "| 구역 (Zone) |" in content and "> [!TIP]" in content
+        p(f"\n• Desktop Multi-Column Table Verification: {'YES [PASS]' if pass_desktop else 'NO [FAIL]'}")
+        return pass_desktop
 
 
 def main():
-    p("[ha-mcp Fast Mode Feature Verification Suite Starting]...")
-    tests = [
-        "자동화 목록",
-        "시스템 헬스체크",
-        "안방 상태 알려줘",
-        "할 일 목록 보여줘",
-    ]
-
-    all_pass = True
-    for t in tests:
-        success = test_prompt(t)
-        if not success:
-            all_pass = False
+    p("[Responsive Markdown & Viewport Adaptation Verification Suite Starting]...")
+    res_desktop = test_responsive_markdown(is_mobile=False)
+    res_mobile = test_responsive_markdown(is_mobile=True)
 
     p("\n" + "=" * 56)
-    p(f"OVERALL RESULT: {'ALL TESTS PASSED [PASS]' if all_pass else 'TEST FAILED [FAIL]'}")
+    p(f"OVERALL RESPONSIVE RESULT: {'ALL PASSED [PASS]' if res_desktop and res_mobile else 'FAILED [FAIL]'}")
 
 
 if __name__ == "__main__":
