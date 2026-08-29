@@ -114,16 +114,19 @@ def handle_agent_chat(
             f"시스템 전체 메모리는 {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) 사용 중입니다."
         )
 
-    # 10. Introduction / Greetings
-    if "뭐" in clean_prompt and ("할 수" in clean_prompt or "할수" in clean_prompt or "가능" in clean_prompt):
+    # 10. Capability & Feature Introduction Intent
+    if (
+        any(w in no_space for w in ["뭐할수", "뭘할수", "무엇을할수", "무엇을할줄", "어떤기능", "기능소개", "기능안내", "기능알려", "사용법", "도움말", "help", "할수있는", "할수있어", "할수있니", "할줄아는", "할줄알아", "할줄알니", "뭘할줄", "뭐할줄"])
+        or (any(w in clean_prompt for w in ["뭐", "뭘", "무엇", "어떤"]) and any(w in clean_prompt for w in ["할 수", "할수", "가능", "도와", "기능", "역할"]))
+    ):
         return (
-            "저는 Google Antigravity CLI 기반 Home Assistant 스마트홈 어시스턴트입니다.\n\n"
-            "다음과 같은 작업을 도와드릴 수 있습니다:\n"
-            "• 조명, 스위치, 커튼, 환풍기, 냉난방 등 스마트홈 기기 제어\n"
-            "• 시스템 에러 로그 및 진단 브리핑\n"
-            "• 방별 조명 및 온습도 상태 요약 브리핑\n"
-            "• 애드온별 메모리/CPU 사용량 및 시스템 리소스 모니터링\n"
-            "• 외출/취침 모드 및 스마트 자동화 실행"
+            "🤖 **Google Antigravity CLI 스마트홈 어시스턴트 기능 안내**\n\n"
+            "저는 집안의 모든 기기를 제어하고 환경을 모니터링하는 AI 에이전트입니다:\n"
+            "• 💡 **스마트홈 기기 제어**: 조명, 스위치, 커튼, 환풍기, 선풍기 켜기/끄기\n"
+            "• 🌦️ **실시간 날씨 및 환경 분석**: 방별 정밀 온습도 및 실외 기상 브리핑\n"
+            "• ⚙️ **시스템 모니터링 & 진단**: CPU/RAM 리소스, 시스템 헬스체크, 에러 로그 점검\n"
+            "• 🤖 **자동화 및 To-Do 관리**: 자동화 목록 확인, 투두/쇼핑 리스트 점검\n"
+            "• 🚀 **3대 스트리밍 모드 지원**: 1) AI 딥브레인, 2) 가상 PTY 터미널, 3) 초고속 즉답"
         )
 
     if any(greet in clean_prompt for greet in ["안녕", "반가워", "hello", "hi", "누구"]):
