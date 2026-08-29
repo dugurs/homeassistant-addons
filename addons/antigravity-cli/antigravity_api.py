@@ -1110,21 +1110,57 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             return
 
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-            try:
-                payload = json.loads(body.decode("utf-8"))
-            except Exception:
-                payload = {}
+            body = b""
+            content_length = self.headers.get("Content-Length")
+            if content_length:
+                try:
+                    body = self.rfile.read(int(content_length))
+                except Exception:
+                    body = b""
+            elif self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                chunks = []
+                while True:
+                    line = self.rfile.readline().strip()
+                    if not line:
+                        break
+                    try:
+                        chunk_len = int(line, 16)
+                    except ValueError:
+                        break
+                    if chunk_len == 0:
+                        self.rfile.readline()
+                        break
+                    chunks.append(self.rfile.read(chunk_len))
+                    self.rfile.readline()
+                body = b"".join(chunks)
+
+            payload = {}
+            if body:
+                try:
+                    payload = json.loads(body.decode("utf-8"))
+                except Exception:
+                    try:
+                        import urllib.parse
+                        payload = dict(urllib.parse.parse_qsl(body.decode("utf-8")))
+                    except Exception:
+                        pass
 
             prompt = payload.get("prompt", "").strip()
+            if not prompt and "?" in self.path:
+                try:
+                    import urllib.parse
+                    qs = urllib.parse.parse_qs(self.path.split("?", 1)[1])
+                    prompt = qs.get("prompt", [""])[0].strip()
+                except Exception:
+                    pass
+
             conv_id = payload.get("conversation_id") or ""
             home_summary = payload.get("home_summary") or ""
             is_direct_llm = payload.get("is_direct_llm", False)
 
             if not prompt:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Empty prompt"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Empty prompt", "received_body_len": len(body)}).encode("utf-8"))
                 return
 
             response_text = handle_agent_chat(prompt, conv_id, home_summary, is_direct_llm)
