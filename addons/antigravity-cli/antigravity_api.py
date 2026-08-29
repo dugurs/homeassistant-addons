@@ -954,17 +954,20 @@ HTML_INDEX = """<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
 
       try {
-        const basePath = window.location.pathname.replace(/\\/$/, '');
-        const apiUrl = (basePath ? basePath : '') + '/api/chat';
+        const apiUrl = new URL('api/chat', window.location.href).href;
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: prompt, is_direct_llm: prompt.startsWith('ai ') || prompt.startsWith('/llm') })
         });
-        const data = await res.json();
         const lb = document.getElementById('loading-bubble');
         if (lb) lb.remove();
-        appendMessage('bot', data.response || "응답을 수신하지 못했습니다.");
+        if (res.ok) {
+          const data = await res.json();
+          appendMessage('bot', data.response || "응답이 비어 있습니다.");
+        } else {
+          appendMessage('bot', `[오류] 서버 응답 오류 HTTP ${res.status} (${apiUrl})`);
+        }
       } catch (err) {
         const lb = document.getElementById('loading-bubble');
         if (lb) lb.remove();
@@ -1106,7 +1109,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
             return
 
-        if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt"):
+        if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length) if content_length > 0 else b"{}"
             try:
