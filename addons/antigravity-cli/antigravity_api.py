@@ -119,6 +119,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
                 return
 
+            resources = get_resource_usage()
             from core.system_info import check_agy_hardware_support
             hw_info = check_agy_hardware_support()
             res = {
