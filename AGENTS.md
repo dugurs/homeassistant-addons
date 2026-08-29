@@ -5,7 +5,10 @@
 **목표:** Home Assistant 애드온(`addons/antigravity-cli`)과 커스텀 통합구성요소(`custom_components/antigravity_cli`) 간의 통신/연동 및 애드온 수정 작업을 체계적이고 안전하게 수행.
 
 **핵심 규칙 (필수 준수):**
-- **수정 작업 전 원인/개선방향 브리핑 및 사전 승인 의무 (Mandatory Pre-Modification Approval Gate)**: 기능 개선, 버그 수정, UI 변경, API 수정 등 **모든 코드 수정 작업을 진행하기 전**에는 반드시 **(1) 정확한 원인 분석**과 **(2) 구체적인 개선 방향 및 조치 계획**을 사용자에게 먼저 상세히 브리핑하고, **사용자의 명시적인 승인(Approval)을 받은 후**에만 파일 수정을 진행한다.
+- **최신 공식 문서 기반 사전 검증 및 브리핑 의무 (Mandatory Official Documentation & Pre-Modification Gate)**:
+  1. **공식 문서 사전 검증 (Official Docs Verification)**: 모든 아키텍처 설계, CLI/API 연동, 버그 수정 시 단편적 추측을 엄격히 금지하고, 반드시 최신 공식 문서(Antigravity CLI 공식 문서 `https://antigravity.google/docs/cli/reference`, Home Assistant 개발자 문서, MCP 공식 규격 등)를 웹 검색 및 레퍼런스로 대조·검증하여 기술적 사실 관계를 입증한다.
+  2. **사전 승인 의무 (Approval Gate)**: 검증된 공식 문서 근거와 함께 **(1) 정확한 원인 분석**과 **(2) 구체적인 개선 방향 및 조치 계획**을 사용자에게 먼저 상세히 브리핑하고, **사용자의 명시적인 승인(Approval)을 받은 후**에만 파일 수정을 진행한다.
+  3. **E2E 실측 데이터 완전 검증 (E2E Stream Verification)**: 수정 후에는 단순 실행 여부가 아닌, 실제 터미널/스트림 패킷 원문 및 로그를 끝까지 추적·검증한 후 결과를 보고한다.
 - **Git 작업 & 파일 동기화 상시 자동 승인 (Git & File Sync Auto-Approval)**: 사용자의 승인을 받아 진행된 수정 작업의 완료 단계에서 실행되는 Git 작업(`git add`, `commit`, `push`), Samba 파일 동기화(`python sync_files.py`), 애드온 Rebuild 및 재시작은 승인 대기 없이 **즉시 자동으로 일괄 실행**한다.
 
 **트리거:** 애드온 수정, 커스텀 통합구성요소 통신 연동, 어시스턴트 파이프라인(Conversation) 연계, 상태 API 추가, 포트 매핑 조정, 에이전트 서비스 연계 작업 요청 시 `addon-integration-orchestrator` 스킬을 사용하라. 단순 질문은 직접 응답 가능.
