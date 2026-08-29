@@ -193,6 +193,8 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
     for r in rooms:
         t_val = temp_map.get(r, "--")
         h_val = hum_map.get(r, "--")
+        if t_val == "--" and h_val == "--":
+            continue
         
         eval_text = "🟢 쾌적"
         try:
