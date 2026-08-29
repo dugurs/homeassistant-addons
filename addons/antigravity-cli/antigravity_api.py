@@ -548,6 +548,28 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
     clean_prompt = prompt.strip()
     lower = clean_prompt.lower()
 
+    # 0. Specific Room Environment Query (e.g. '거실온도', '거실 온도', '안방 습도', '주방온도')
+    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "현관", "베란다"]
+    matched_room = next((r for r in rooms if r in clean_prompt.replace(" ", "")), None)
+    if matched_room:
+        no_space = clean_prompt.replace(" ", "")
+        if any(w in no_space for w in ["온도", "기온"]):
+            states = get_ha_states()
+            if states:
+                summary = get_room_env_summary(states, "temperature")
+                for line in summary.split("\n"):
+                    if matched_room in line:
+                        val = line.split(":", 1)[1].strip() if ":" in line else line
+                        return f"현재 {matched_room}의 온도는 {val} 입니다."
+        if "습도" in no_space:
+            states = get_ha_states()
+            if states:
+                summary = get_room_env_summary(states, "humidity")
+                for line in summary.split("\n"):
+                    if matched_room in line:
+                        val = line.split(":", 1)[1].strip() if ":" in line else line
+                        return f"현재 {matched_room}의 습도는 {val} 입니다."
+
     # 1. Weather & Environment Analysis Query
     if any(w in lower for w in ["날씨", "환경", "기상", "일기예보", "온습도"]):
         if not any(ctrl in lower for ctrl in ["켜", "꺼", "틀어", "시작", "정지"]):
@@ -623,11 +645,14 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
         best_match = None
         best_score = 0
         tokens = [t for t in re.split(r"[\s,!?]+", clean_prompt) if len(t) > 1]
+        prompt_compact = clean_prompt.replace(" ", "").lower()
 
         for s in states:
-            fn = s.get("attributes", {}).get("friendly_name", "")
-            eid = s.get("entity_id", "")
+            fn = (s.get("attributes", {}).get("friendly_name") or "").replace(" ", "").lower()
+            eid = s.get("entity_id", "").replace(" ", "").lower()
             score = 0
+            if fn and (fn in prompt_compact or prompt_compact in fn):
+                score += 30
             for t in tokens:
                 if t in fn:
                     score += 10
