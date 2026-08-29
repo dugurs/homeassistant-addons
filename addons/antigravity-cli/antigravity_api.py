@@ -954,7 +954,9 @@ HTML_INDEX = """<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
 
       try {
-        const res = await fetch('./api/chat', {
+        const basePath = window.location.pathname.replace(/\\/$/, '');
+        const apiUrl = (basePath ? basePath : '') + '/api/chat';
+        const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: prompt, is_direct_llm: prompt.startsWith('ai ') || prompt.startsWith('/llm') })
@@ -1055,13 +1057,15 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Handle GET requests."""
+        clean_path = self.path.split("?")[0].rstrip("/")
+
         # 1. Forward /terminal traffic to ttyd
-        if self.path.startswith("/terminal") or "/terminal" in self.path:
+        if clean_path.endswith("/terminal") or "/terminal" in self.path:
             self._proxy_to_ttyd()
             return
 
         # 2. REST Status API
-        if self.path in ("/api/status", "/api/status/"):
+        if clean_path.endswith("/api/status"):
             if not self._check_auth():
                 self._set_headers(401)
                 self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
@@ -1079,7 +1083,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
-        elif self.path in ("/api/health", "/api/health/"):
+        elif clean_path.endswith("/api/health"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"status": "healthy", "version": VERSION}).encode("utf-8"))
             return
@@ -1090,8 +1094,10 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Handle POST requests."""
+        clean_path = self.path.split("?")[0].rstrip("/")
+
         # 1. Forward /terminal traffic to ttyd
-        if self.path.startswith("/terminal") or "/terminal" in self.path:
+        if clean_path.endswith("/terminal") or "/terminal" in self.path:
             self._proxy_to_ttyd()
             return
 
@@ -1100,7 +1106,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
             return
 
-        if self.path in ("/api/chat", "/api/chat/", "/api/prompt", "/api/prompt/"):
+        if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt"):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length) if content_length > 0 else b"{}"
             try:
@@ -1126,7 +1132,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     "conversation_id": conv_id,
                 }).encode("utf-8")
             )
-        elif self.path in ("/api/restart", "/api/restart/"):
+        elif clean_path.endswith("/api/restart"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"result": "restarted", "status": "online"}).encode("utf-8"))
         else:
