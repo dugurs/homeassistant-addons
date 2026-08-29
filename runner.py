@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Verify clean Web UI HTML without tool-box."""
+"""Run live test of agy headless streaming CLI."""
 
+import json
 import sys
 import urllib.request
 
@@ -8,19 +9,19 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-def verify_ui():
+def run_test():
     ha_ip = "192.168.0.14"
-    url = f"http://{ha_ip}:8000/"
-    req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        html = resp.read().decode("utf-8")
-        assert "tool-box" not in html, "tool-box still present in HTML template!"
-        assert "mode-badge" in html, "mode-badge missing from HTML template!"
-        print("[*] Web UI HTML Clean Verification:")
-        print("  ✓ tool-box completely removed")
-        print("  ✓ mode-badge present")
-        print("\n>>> CLEAN BUBBLE HEADER 100% VERIFIED <<<")
+    url = f"http://{ha_ip}:8000/api/test_stream"
+    print(f"[*] Querying live agy headless test endpoint: {url} ...")
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print("[*] Diagnostic Test Result:")
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"[!] Error during test: {e}")
 
 
 if __name__ == "__main__":
-    verify_ui()
+    run_test()

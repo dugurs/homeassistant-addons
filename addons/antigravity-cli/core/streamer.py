@@ -144,8 +144,15 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
         return result
 
     try:
+        ver_proc = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=3)
+        result["agy_version"] = ver_proc.stdout.strip() or ver_proc.stderr.strip()
+    except Exception as ex:
+        result["agy_version"] = f"Error: {ex}"
+
+    try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -154,14 +161,15 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
             env=env,
         )
         try:
-            stdout, stderr = proc.communicate(timeout=10)
+            stdout, stderr = proc.communicate(timeout=5)
             result["returncode"] = proc.returncode
             result["lines"] = [line.strip() for line in stdout.splitlines() if line.strip()]
             result["stderr"] = stderr.strip()
             result["success"] = proc.returncode == 0 and len(result["lines"]) > 0
         except subprocess.TimeoutExpired:
             proc.kill()
-            result["stderr"] = "Subprocess timed out after 10s"
+            stdout, stderr = proc.communicate()
+            result["stderr"] = f"Timeout (stdout: {stdout.strip()[:200]}, stderr: {stderr.strip()[:200]})"
     except Exception as e:
         result["stderr"] = str(e)
 
