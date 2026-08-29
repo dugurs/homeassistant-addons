@@ -286,9 +286,13 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
 
     env_data = get_room_env_matrix(states)
     rooms = env_data["rooms"]
-    active_metrics = env_data["active_metrics"]
     matrix = env_data["matrix"]
     metric_labels = env_data["metric_labels"]
+
+    # Only include primary indoor comfort metrics in the main table (exclude illuminance & PMs from table)
+    table_metrics = [m for m in ["temperature", "humidity", "co2", "tvoc"] if m in env_data["active_metrics"]]
+    if not table_metrics:
+        table_metrics = ["temperature", "humidity"]
 
     temp_map = {r: matrix.get(r, {}).get("temperature", {}).get("formatted", "--") for r in rooms}
     hum_map = {r: matrix.get(r, {}).get("humidity", {}).get("formatted", "--") for r in rooms}
@@ -315,17 +319,38 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
         outdoor_pm25=outdoor_pm25,
     )
 
+    # Extract clean PM2.5 & PM10 sentence
+    pm_parts = []
+    for r in rooms:
+        r_data = matrix.get(r, {})
+        pm25 = r_data.get("pm25", {}).get("formatted")
+        pm10 = r_data.get("pm10", {}).get("formatted")
+        if pm25 and pm10:
+            pm_parts.append(f"**{r}** 초미세먼지(PM2.5) **{pm25}** / 미세먼지(PM10) **{pm10}**")
+        elif pm25:
+            pm_parts.append(f"**{r}** 초미세먼지(PM2.5) **{pm25}**")
+
+    if outdoor_pm25 is not None:
+        pm_line = f"- 실외 초미세먼지: **{outdoor_pm25} µg/m³**" + (f" | 실내: {', '.join(pm_parts)}" if pm_parts else "")
+    elif pm_parts:
+        pm_line = f"- 실내 공기질: {', '.join(pm_parts)}"
+    else:
+        pm_line = "- 실내외 미세먼지 수치가 쾌적한 청정 상태를 유지하고 있습니다."
+
     if is_mobile:
         lines = [
             "🧠 **[AI 딥 브레인] 스마트홈 환경 진단 (모바일)**",
             f"> [!NOTE] 외부 기상: **{weather_cond}** ({outdoor_temp}°C / {outdoor_hum}%)",
             "",
-            "🌡️ **실내 다차원 환경 현황 및 종합 진단**",
+            "🍃 **실내외 미세먼지 및 공기 청정도**",
+            pm_line,
+            "",
+            "🌡️ **실내 온습도 & CO2 현황**",
         ]
         for r in rooms:
             r_data = matrix.get(r, {})
             metric_strs = []
-            for m in active_metrics:
+            for m in table_metrics:
                 if m in r_data:
                     metric_strs.append(f"{metric_labels[m]} `{r_data[m]['formatted']}`")
             health = evaluate_room_env_health(r_data)
@@ -343,9 +368,9 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
         ])
         return "\n".join(lines)
 
-    # Desktop Table with Dynamic Columns and Comprehensive Diagnostics
-    header_cols = ["구역 (Zone)"] + [f"현재 {metric_labels[m]}" for m in active_metrics] + ["종합 환경 진단"]
-    sep_cols = [":---"] + [":---" for _ in active_metrics] + [":---"]
+    # Desktop Table: Slim, focused on Temperature, Humidity, CO2 (No Illuminance or PM columns)
+    header_cols = ["구역 (Zone)"] + [f"현재 {metric_labels[m]}" for m in table_metrics] + ["종합 환경 진단"]
+    sep_cols = [":---"] + [":---" for _ in table_metrics] + [":---"]
     header_line = "| " + " | ".join(header_cols) + " |"
     sep_line = "| " + " | ".join(sep_cols) + " |"
 
@@ -355,7 +380,7 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
         if not r_data:
             continue
         row_vals = [f"**{r}**"]
-        for m in active_metrics:
+        for m in table_metrics:
             val_str = r_data.get(m, {}).get("formatted", "--")
             row_vals.append(val_str)
         health = evaluate_room_env_health(r_data)
@@ -363,19 +388,22 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
         table_rows.append("| " + " | ".join(row_vals) + " |")
 
     lines = [
-        "🧠 **[Antigravity AI 딥 브레인] 실내외 다차원 환경 및 공기질 정밀 분석 리포트**",
+        "🧠 **[Antigravity AI 딥 브레인] 실내외 환경 및 공기질 정밀 분석 리포트**",
         "",
         "📍 **1. 실외 기상 및 대기 상태**",
-        f"• 현재 외부 날씨는 **{weather_cond}** 상태이며, 기온 **{outdoor_temp}°C**, 습도 **{outdoor_hum}%** 대기 상태를 보이고 있습니다.",
+        f"- 현재 외부 날씨는 **{weather_cond}** 상태이며, 기온 **{outdoor_temp}°C**, 습도 **{outdoor_hum}%** 입니다.",
         "",
-        "🌡️ **2. 구역별 실내 열 쾌적성 & 다차원 공기질 매트릭스**",
+        "🍃 **2. 실내외 미세먼지 및 공기 청정도**",
+        pm_line,
+        "",
+        "🌡️ **3. 구역별 실내 열 쾌적성 & CO2 매트릭스**",
         header_line,
         sep_line,
         *table_rows,
         "",
-        "💡 **3. 스마트홈 에너지 및 가전 가동 현황**",
-        f"• 가동 중인 환풍기/팬: {', '.join(active_fans) if active_fans else '없음 (정지 상태)'}",
-        f"• 점등 조명: 총 {len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])}{' 외 ' + str(len(on_lights)-3) + '개' if len(on_lights) > 3 else ''})",
+        "💡 **4. 스마트홈 에너지 및 가전 가동 현황**",
+        f"- 가동 중인 환풍기/팬: {', '.join(active_fans) if active_fans else '없음 (정지 상태)'}",
+        f"- 점등 조명: 총 {len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])}{' 외 ' + str(len(on_lights)-3) + '개' if len(on_lights) > 3 else ''})",
         "",
         "> [!TIP] 🎯 AI 실시간 상황 맞춤 제안 (Dynamic Recommendations)",
         *recs,

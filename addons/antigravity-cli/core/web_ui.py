@@ -839,6 +839,9 @@ HTML_INDEX = """<!DOCTYPE html>
           answerContent.innerHTML = formatMarkdown(answerText);
           box.scrollTop = box.scrollHeight;
         },
+        hasContent: function() {
+          return answerText && answerText.trim().length > 0;
+        },
         finish: function(tokensMeta) {
           if (finished) return;
           finished = true;
@@ -974,7 +977,10 @@ HTML_INDEX = """<!DOCTYPE html>
         }
         streamUI.finish();
       } catch (err) {
-        streamUI.setText(`[오류] 실시간 스트림 연결 실패: ${err.message}`);
+        if (!streamUI.hasContent()) {
+          streamUI.setText(`[오류] 실시간 스트림 연결 실패: ${err.message}`);
+        }
+        streamUI.finish();
       } finally {
         btn.disabled = false;
         updateSendBtn();
