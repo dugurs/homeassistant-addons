@@ -854,17 +854,27 @@ HTML_INDEX = """<!DOCTYPE html>
       background: var(--bg-bubble-user);
       border: none;
       color: #fff;
-      width: 34px;
-      height: 34px;
+      width: 36px;
+      height: 36px;
       border-radius: 50%;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      transition: opacity 0.2s;
+      opacity: 0.4;
+      font-size: 1.1rem;
+      transition: all 0.2s ease-in-out;
     }
-    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .send-btn:hover:not(:disabled) {
+      opacity: 1 !important;
+      background: var(--accent-blue) !important;
+      transform: scale(1.1) !important;
+    }
+    .send-btn:disabled {
+      opacity: 0.2 !important;
+      cursor: not-allowed !important;
+    }
 
     /* Terminal View */
     #terminal-view { height: 100%; display: none; width: 100%; }
@@ -903,7 +913,7 @@ HTML_INDEX = """<!DOCTYPE html>
       </div>
       <div class="input-bar-wrap">
         <div class="input-bar">
-          <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" onkeydown="handleKey(event)"></textarea>
+          <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" oninput="updateSendBtn()" onkeydown="handleKey(event)"></textarea>
           <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
         </div>
       </div>
@@ -1025,12 +1035,25 @@ HTML_INDEX = """<!DOCTYPE html>
       };
     }
 
+    function updateSendBtn() {
+      const input = document.getElementById('user-input');
+      const btn = document.getElementById('send-btn');
+      const hasText = input.value.trim().length > 0;
+      btn.style.opacity = hasText ? '1' : '0.4';
+      btn.style.background = hasText ? '#38bdf8' : 'var(--bg-bubble-user)';
+      btn.style.transform = hasText ? 'scale(1.05)' : 'scale(1)';
+      btn.style.cursor = hasText ? 'pointer' : 'default';
+    }
+
     function sendQuick(prompt) {
-      document.getElementById('user-input').value = prompt;
+      const input = document.getElementById('user-input');
+      input.value = prompt;
+      updateSendBtn();
       sendMessage();
     }
 
     function handleKey(e) {
+      updateSendBtn();
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
@@ -1046,6 +1069,7 @@ HTML_INDEX = """<!DOCTYPE html>
       appendUserMessage(prompt);
       input.value = '';
       btn.disabled = true;
+      updateSendBtn();
 
       const streamUI = createBotStreamMessage();
       const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
@@ -1061,6 +1085,7 @@ HTML_INDEX = """<!DOCTYPE html>
         if (!res.ok) {
           streamUI.setText(`[오류] 서버 응답 코드 HTTP ${res.status}`);
           btn.disabled = false;
+          updateSendBtn();
           return;
         }
 
@@ -1099,6 +1124,7 @@ HTML_INDEX = """<!DOCTYPE html>
         streamUI.setText(`[오류] 실시간 스트림 연결 실패: ${err.message}`);
       } finally {
         btn.disabled = false;
+        updateSendBtn();
         input.focus();
       }
     }
