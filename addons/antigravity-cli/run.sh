@@ -26,17 +26,16 @@ mkdir -p /config/.uv_cache
 # Persist uv package cache across addon rebuilds (avoids re-downloading ha-mcp every update)
 export UV_CACHE_DIR="/config/.uv_cache"
 
-# Symlink persistent paths to /root so auth survives rebuilds/restarts and is included in addon backups
+# Symlink entire ~/.gemini and ~/.config to /config so all auth tokens survive rebuilds
 rm -rf /root/.gemini
 ln -sfn /config/.gemini /root/.gemini
 
-mkdir -p /root/.config
-rm -rf /root/.config/antigravity
-ln -sfn /config/.config /root/.config/antigravity
+rm -rf /root/.config
+ln -sfn /config/.config /root/.config
 
-mkdir -p /root/.local/share
-rm -rf /root/.local/share/antigravity
-ln -sfn /config/.local_share /root/.local/share/antigravity
+mkdir -p /root/.local
+rm -rf /root/.local/share
+ln -sfn /config/.local_share /root/.local/share
 
 # Auto-configure Home Assistant MCP Server (stdio mode for Antigravity CLI)
 mkdir -p /root/.gemini/config

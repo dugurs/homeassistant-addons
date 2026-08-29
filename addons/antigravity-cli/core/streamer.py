@@ -130,6 +130,20 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
     env["FORCE_COLOR"] = "0"
     env["TERM"] = "dumb"
 
+    api_key = ""
+    if os.path.exists("/data/options.json"):
+        try:
+            with open("/data/options.json", "r") as f:
+                opts = json.load(f)
+                api_key = opts.get("api_key", "").strip()
+        except Exception:
+            pass
+
+    if api_key:
+        env["GEMINI_API_KEY"] = api_key
+        env["GOOGLE_API_KEY"] = api_key
+        env["ANTIGRAVITY_API_KEY"] = api_key
+
     yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시: '{actual_prompt[:30]}...'")
 
     try:
@@ -319,8 +333,7 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
 
     try:
         proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
+            [agy_bin, "-p", "In one sentence, what is a git rebase?", "--output-format", "stream-json", "--dangerously-skip-permissions"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -329,7 +342,7 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
             env=env,
         )
         try:
-            stdout, stderr = proc.communicate(timeout=5)
+            stdout, stderr = proc.communicate(timeout=4)
             result["returncode"] = proc.returncode
             result["lines"] = [line.strip() for line in stdout.splitlines() if line.strip()]
             result["stderr"] = stderr.strip()
@@ -337,7 +350,7 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
-            result["stderr"] = f"Timeout (stdout: {stdout.strip()[:200]}, stderr: {stderr.strip()[:200]})"
+            result["stderr"] = f"Timeout (stdout: '{stdout}', stderr: '{stderr}')"
     except Exception as e:
         result["stderr"] = str(e)
 
