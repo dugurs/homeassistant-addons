@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E Verification for Web UI chat stream & HTTP Index loading."""
+"""E2E Verification for Mode 2 Responsive Terminal Markdown (Mobile vs Desktop)."""
 
 import json
 import sys
@@ -14,26 +14,29 @@ def p(msg: str):
     print(msg, flush=True)
 
 
-def test_ui():
+def test_mode2_viewport(is_mobile: bool):
     ha_ip = "192.168.0.14"
-    url_index = f"http://{ha_ip}:8000/"
-    url_chat = f"http://{ha_ip}:8000/api/chat"
+    url = f"http://{ha_ip}:8000/api/chat"
+    mode_name = "Mobile (<768px)" if is_mobile else "Desktop (>=768px)"
+    prompt = "오늘 날씨와 환경 분석해줘"
 
-    # 1. Test Index
-    p("[*] Step 1: Testing Web UI Index endpoint...")
-    req_index = urllib.request.Request(url_index)
-    with urllib.request.urlopen(req_index, timeout=5) as resp:
-        html = resp.read().decode("utf-8")
-        p(f"[PASS] Index loaded: HTTP {resp.status} ({len(html)} bytes)")
+    p(f"\n========================================================")
+    p(f"[*] Testing Mode 2 PTY Stream under [{mode_name}] Viewport")
+    p(f"========================================================")
 
-    # 2. Test Chat API
-    p("\n[*] Step 2: Testing /api/chat stream endpoint with prompt '안녕'...")
-    payload = json.dumps({"prompt": "안녕", "is_direct_llm": False, "stream_mode": 3}).encode("utf-8")
-    req_chat = urllib.request.Request(url_chat, data=payload, headers={"Content-Type": "application/json"})
-    
+    payload = json.dumps({
+        "prompt": prompt,
+        "is_direct_llm": False,
+        "stream_mode": 2,
+        "is_mobile": is_mobile,
+        "client_width": 375 if is_mobile else 1280
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
     t0 = time.time()
     chunks = []
-    with urllib.request.urlopen(req_chat, timeout=10) as resp:
+
+    with urllib.request.urlopen(req, timeout=10) as resp:
         for line in resp:
             l = line.decode("utf-8", errors="replace").strip()
             if l.startswith("data:"):
@@ -45,9 +48,28 @@ def test_ui():
 
     elapsed = round(time.time() - t0, 3)
     content = "".join(chunks)
-    p(f"[PASS] Chat stream received in {elapsed}s: '{content}'")
-    p("\nALL WEB UI CHAT ENDPOINTS OPERATIONAL!")
+    p(f"[Latency: {elapsed}s]")
+    p("--- [Rendered Output Preview] ---")
+    p(content)
+
+    if is_mobile:
+        pass_mobile = "MOBILE MONITOR" in content
+        p(f"\n• Mode 2 Mobile Compact Table Verification: {'YES [PASS]' if pass_mobile else 'NO [FAIL]'}")
+        return pass_mobile
+    else:
+        pass_desktop = "ENVIRONMENT MONITOR" in content and "HOST RAM" in content
+        p(f"\n• Mode 2 Desktop Full Grid Verification  : {'YES [PASS]' if pass_desktop else 'NO [FAIL]'}")
+        return pass_desktop
+
+
+def main():
+    p("[Mode 2 Responsive Terminal Viewport Verification Suite Starting]...")
+    res_desktop = test_mode2_viewport(is_mobile=False)
+    res_mobile = test_mode2_viewport(is_mobile=True)
+
+    p("\n" + "=" * 60)
+    p(f"MODE 2 RESPONSIVE RESULT: {'ALL PASSED [PASS]' if res_desktop and res_mobile else 'FAILED [FAIL]'}")
 
 
 if __name__ == "__main__":
-    test_ui()
+    main()
