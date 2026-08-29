@@ -484,10 +484,26 @@ HTML_INDEX = """<!DOCTYPE html>
       if (!text) return "";
       let raw = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       
-      // Callouts: > [!WARNING] or > [!NOTE] or > quote
-      raw = raw.replace(/^&gt;\\s*\\[!(WARNING|CAUTION|IMPORTANT)\\]\\s*(.*)$/gim, '<div class="callout warning"><strong>⚠️ $1:</strong> $2</div>');
-      raw = raw.replace(/^&gt;\\s*\\[!(NOTE|INFO|TIP)\\]\\s*(.*)$/gim, '<div class="callout tip"><strong>💡 $1:</strong> $2</div>');
-      raw = raw.replace(/^&gt;\\s*(.*)$/gim, '<div class="callout">$1</div>');
+      // Multi-line Callouts / Blockquotes
+      raw = raw.replace(/((?:^&gt;.*(?:\n|$))+)/gm, function(match) {
+        let lines = match.trim().split('\n').map(l => l.replace(/^&gt;\s?/, '').trim());
+        let firstLine = lines[0] || '';
+        let calloutType = 'tip';
+        let icon = '💡';
+        
+        if (/^\[!(WARNING|CAUTION|IMPORTANT)\]/i.test(firstLine)) {
+          calloutType = 'warning';
+          icon = '⚠️';
+          lines[0] = lines[0].replace(/^\[!(WARNING|CAUTION|IMPORTANT)\]\s*/i, '');
+        } else if (/^\[!(NOTE|INFO|TIP)\]/i.test(firstLine)) {
+          calloutType = 'tip';
+          icon = '💡';
+          lines[0] = lines[0].replace(/^\[!(NOTE|INFO|TIP)\]\s*/i, '');
+        }
+        
+        let inner = lines.filter(l => l.length > 0).join('<br>');
+        return `<div class="callout ${calloutType}"><strong>${icon}</strong> ${inner}</div>`;
+      });
 
       // Code blocks with header & copy button
       raw = raw.replace(/```([a-zA-Z0-9_-]*)\\n([\\s\\S]*?)```/g, function(match, lang, code) {
