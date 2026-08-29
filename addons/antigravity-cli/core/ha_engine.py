@@ -110,8 +110,8 @@ def get_weather_env_summary(states: list) -> str:
     return "\n".join(report)
 
 
-def get_ai_deep_environment_analysis(states: list, prompt: str = "") -> str:
-    """Mode 1: Deep AI Brain Environmental Analysis & Living Comfort Advice."""
+def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: bool = False) -> str:
+    """Mode 1: Deep AI Brain Environmental Analysis & Responsive Markdown Synthesis."""
     outdoor_temp = 27.0
     outdoor_hum = 66
     weather_cond = "cloudy"
@@ -128,39 +128,74 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "") -> str:
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
 
-    # Comfort Analysis
     active_fans = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("fan.") and s.get("state") == "on"]
     on_lights = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("light.") and s.get("state") == "on" and "all" not in s.get("entity_id").lower()]
+
+    if is_mobile:
+        # Compact Mobile Card Layout
+        lines = [
+            "🧠 **[AI 딥 브레인] 스마트홈 환경 진단 (모바일)**",
+            f"> [!NOTE] 외부 기상: **{weather_cond}** ({outdoor_temp}°C / {outdoor_hum}%)",
+            "",
+            "🌡️ **실내 온습도 현황**",
+        ]
+        for r in rooms:
+            t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), None)
+            h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), None)
+            if t_val and h_val:
+                lines.append(f"• **{r}**: `{t_val}` / `{h_val}`")
+            elif t_val:
+                lines.append(f"• **{r}**: `{t_val}`")
+
+        lines.extend([
+            "",
+            "💡 **가전 가동 현황**",
+            f"• 가동 팬: {len(active_fans)}대 가동 중",
+            f"• 켜진 조명: {len(on_lights)}개 점등",
+            "",
+            "> [!TIP] AI 맞춤 케어 제안",
+            "> 외부 습도가 높으므로 창문 개방 대신 환풍기와 서큘레이터를 가동하여 실내 공기를 순환시키세요.",
+        ])
+        return "\n".join(lines)
+
+    # Wide Desktop Multi-Column Table Layout
+    table_rows = []
+    for r in rooms:
+        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
+        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+        
+        # Simple comfort evaluation
+        eval_text = "🟢 쾌적"
+        try:
+            temp_num = float(t_val.replace("°C", "").replace("°F", "").strip())
+            if temp_num >= 30:
+                eval_text = "🟡 냉방 필요"
+            elif temp_num <= 20:
+                eval_text = "🔵 난방 필요"
+        except Exception:
+            pass
+        table_rows.append(f"| **{r}** | {t_val} | {h_val} | {eval_text} |")
 
     lines = [
         "🧠 **[Antigravity AI 딥 브레인] 실내외 온습도 및 생활 환경 정밀 분석 리포트**",
         "",
         f"📍 **1. 실외 기상 및 대기 상태**",
-        f"• 현재 외부 날씨는 **{weather_cond}** 상태이며, 기온 **{outdoor_temp}°C**, 습도 **{outdoor_hum}%**로 다소 습한 대기 상태를 보이고 있습니다.",
+        f"• 현재 외부 날씨는 **{weather_cond}** 상태이며, 기온 **{outdoor_temp}°C**, 습도 **{outdoor_hum}%** 대기 상태를 보이고 있습니다.",
         "",
-        "🌡️ **2. 구역별 실내 열 쾌적성 & 밸런스 진단**",
-    ]
-
-    for r in rooms:
-        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), None)
-        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), None)
-        if t_val and h_val:
-            lines.append(f"• **{r}**: 온도 {t_val} / 습도 {h_val}")
-        elif t_val:
-            lines.append(f"• **{r}**: 온도 {t_val}")
-
-    lines.extend([
+        "🌡️ **2. 구역별 실내 열 쾌적성 & 환경 매트릭스**",
+        "| 구역 (Zone) | 현재 온도 | 현재 습도 | 환경 진단 |",
+        "| :--- | :--- | :--- | :--- |",
+        *table_rows,
         "",
         "💡 **3. 스마트홈 에너지 및 가전 가동 현황**",
         f"• 가동 중인 환풍기/팬: {', '.join(active_fans) if active_fans else '없음 (정지 상태)'}",
         f"• 점등 조명: 총 {len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])}{' 외 ' + str(len(on_lights)-3) + '개' if len(on_lights) > 3 else ''})",
         "",
-        "🎯 **4. AI 맞춤형 환경 케어 제안 (Recommendations)**",
-        f"1. **환기 제어**: 외부 습도({outdoor_hum}%)가 실내 평균보다 다소 높으므로, 창문을 열어 환기하기보다는 **주방/화장실 환풍기와 공기 순환 팬을 가동**하는 것을 권장합니다.",
-        "2. **온습도 최적화**: 안방 및 베란다 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 실내 공기를 고르게 순환시키면 체감 쾌적도를 크게 높일 수 있습니다.",
-        "3. **취침 모드 대비**: 취침 전 거실 및 미사용 공간의 조명을 자동 소등하고 적정 수면 온도(25~26°C) 유지를 권장합니다.",
-    ])
-
+        "> [!TIP] 🎯 AI 맞춤형 환경 케어 제안 (Recommendations)",
+        "> 1. **환기 제어**: 외부 습도(71%)가 실내 평균보다 높으므로, 창문 대신 **주방/화장실 환풍기와 공기 순환 팬 가동**을 권장합니다.<br>"
+        "> 2. **온습도 최적화**: 안방 및 베란다 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 실내 공기를 순환시키세요.<br>"
+        "> 3. **취침 모드 대비**: 취침 전 거실 및 미사용 공간의 조명을 자동 소등하고 적정 수면 온도(25~26°C) 유지를 권장합니다.",
+    ]
     return "\n".join(lines)
 
 

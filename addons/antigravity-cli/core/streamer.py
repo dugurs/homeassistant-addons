@@ -40,7 +40,7 @@ def make_sse(event_type: str, content: str = "") -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def stream_transcript_tail(prompt: str):
+def stream_transcript_tail(prompt: str, is_mobile: bool = False):
     """Mode 1: Deep AI Brain Environmental Analysis & Living Advice Streamer."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     yield make_sse("tool", f"📜 [모드 1: AI 딥 브레인 분석] 세션 초기화: '{actual_prompt}'")
@@ -63,7 +63,7 @@ def stream_transcript_tail(prompt: str):
 
         states = get_ha_states()
         if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온"]):
-            full_text = get_ai_deep_environment_analysis(states, actual_prompt)
+            full_text = get_ai_deep_environment_analysis(states, actual_prompt, is_mobile=is_mobile)
         else:
             full_text = handle_agent_chat(actual_prompt, "", "", False)
 
@@ -323,10 +323,10 @@ def stream_hybrid_fast(prompt: str):
     yield make_sse("done")
 
 
-def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 3):
+def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 3, is_mobile: bool = False):
     """Router for the 3 Streaming Modes."""
     if stream_mode == 1:
-        for ev in stream_transcript_tail(prompt):
+        for ev in stream_transcript_tail(prompt, is_mobile=is_mobile):
             yield ev
     elif stream_mode == 2:
         for ev in stream_pty_interactive(prompt):

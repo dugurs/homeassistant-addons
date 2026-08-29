@@ -178,14 +178,119 @@ HTML_INDEX = """<!DOCTYPE html>
       border-color: var(--accent-green);
     }
 
-    /* Markdown Formats in Bubble */
-    .bubble table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.85rem; }
-    .bubble th, .bubble td { border: 1px solid var(--border-color); padding: 6px 10px; text-align: left; }
-    .bubble th { background: #0f172a; color: var(--accent-blue); }
-    .bubble tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
-    .bubble pre { background: #0b0f19; padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; font-size: 0.82rem; }
-    .bubble code { font-family: monospace; color: #38bdf8; }
-    .bubble ul, .bubble ol { margin-left: 20px; margin-top: 6px; margin-bottom: 6px; }
+    /* Rich Markdown Styles */
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      margin: 12px 0;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: #0f172a;
+    }
+    .bubble table {
+      width: 100%;
+      min-width: 380px;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .bubble th, .bubble td {
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    .bubble th {
+      background: #1e293b;
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+    .bubble tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    
+    .code-block-wrap {
+      position: relative;
+      margin: 10px 0;
+      background: #090d16;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1e293b;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+    .code-copy-btn {
+      background: transparent;
+      border: none;
+      color: var(--accent-blue);
+      cursor: pointer;
+      font-size: 0.72rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .code-copy-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+    }
+    .bubble pre {
+      padding: 10px 12px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      margin: 0;
+      font-family: 'Fira Code', monospace;
+      color: #e2e8f0;
+    }
+    .bubble code {
+      font-family: 'Fira Code', monospace;
+      color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.1);
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+    .bubble pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent-blue);
+      background: rgba(56, 189, 248, 0.08);
+      padding: 10px 14px;
+      border-radius: 0 8px 8px 0;
+      margin: 10px 0;
+      font-size: 0.88rem;
+    }
+    .callout.warning {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .callout.tip {
+      border-left-color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+    }
+
+    .bubble ul, .bubble ol {
+      margin-left: 20px;
+      margin-top: 6px;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 768px) {
+      .bubble-wrap { max-width: 95%; }
+      .bubble { padding: 10px 12px; font-size: 0.88rem; }
+      .hero-card { padding: 14px; }
+      .quick-chips { gap: 6px; }
+      .chip { font-size: 0.75rem; padding: 4px 10px; }
+    }
 
     /* Live Tool Accordion */
     .tool-box {
@@ -367,32 +472,71 @@ HTML_INDEX = """<!DOCTYPE html>
       }
     }
 
+    function copyCodeBlock(btn) {
+      const code = btn.closest('.code-block-wrap').querySelector('code').innerText;
+      navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = '✓ 복사완료';
+        setTimeout(() => { btn.textContent = '📋 복사'; }, 2000);
+      });
+    }
+
     function formatMarkdown(text) {
       if (!text) return "";
       let raw = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       
-      // Tables
-      raw = raw.replace(/\\|(.+)\\|\\n\\|[-|\\s]+\\|\\n((?:\\|.*\\|\\n?)*)/g, function(match, header, rows) {
+      // Callouts: > [!WARNING] or > [!NOTE] or > quote
+      raw = raw.replace(/^&gt;\\s*\\[!(WARNING|CAUTION|IMPORTANT)\\]\\s*(.*)$/gim, '<div class="callout warning"><strong>⚠️ $1:</strong> $2</div>');
+      raw = raw.replace(/^&gt;\\s*\\[!(NOTE|INFO|TIP)\\]\\s*(.*)$/gim, '<div class="callout tip"><strong>💡 $1:</strong> $2</div>');
+      raw = raw.replace(/^&gt;\\s*(.*)$/gim, '<div class="callout">$1</div>');
+
+      // Code blocks with header & copy button
+      raw = raw.replace(/```([a-zA-Z0-9_-]*)\\n([\\s\\S]*?)```/g, function(match, lang, code) {
+        const langStr = lang || 'code';
+        return `
+          <div class="code-block-wrap">
+            <div class="code-header">
+              <span>${langStr}</span>
+              <button class="code-copy-btn" onclick="copyCodeBlock(this)">📋 복사</button>
+            </div>
+            <pre><code>${code.trim()}</code></pre>
+          </div>
+        `;
+      });
+
+      // Inline code
+      raw = raw.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      // Responsive Tables wrapped in table-wrapper
+      raw = raw.replace(/\\|(.+)\\|\\n\\|[-|\\s:]+\\|\\n((?:\\|.*\\|\\n?)*)/g, function(match, header, rows) {
         let headers = header.split('|').map(h => h.trim()).filter(h => h);
         let rowLines = rows.trim().split('\\n');
-        let html = '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+        let html = '<div class="table-wrapper"><table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
         rowLines.forEach(r => {
           let cols = r.split('|').map(c => c.trim()).filter(c => c);
           if (cols.length) {
             html += '<tr>' + cols.map(c => `<td>${c}</td>`).join('') + '</tr>';
           }
         });
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         return html;
       });
 
-      // Code blocks
-      raw = raw.replace(/```([a-z]*)\\n([\\s\\S]*?)```/g, '<pre><code>$2</code></pre>');
-      // Bold
+      // Bold & Italic
+      raw = raw.replace(/\\*\\*\\*(.*?)\\*\\*\\*/g, '<strong><em>$1</em></strong>');
       raw = raw.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+      raw = raw.replace(/\\*(.*?)\\*/g, '<em>$1</em>');
+
+      // Task lists
+      raw = raw.replace(/^\\s*[-*]\\s+\\[x\\]\\s*(.*)$/gim, '<li style="list-style:none;">☑️ $1</li>');
+      raw = raw.replace(/^\\s*[-*]\\s+\\[ \\]\\s*(.*)$/gim, '<li style="list-style:none;">⬜ $1</li>');
+
       // Lists & bullets
       raw = raw.replace(/^[•\\-] (.*)$/gm, '<li>$1</li>');
       raw = raw.replace(/((?:<li>.*<\\/li>\\s*)+)/g, '<ul>$1</ul>');
+
+      // Numbered lists
+      raw = raw.replace(/^(\\d+)\\.\\s+(.*)$/gm, '<li><strong>$1.</strong> $2</li>');
+
       // Line breaks
       raw = raw.replace(/\\n/g, '<br>');
       return raw;
@@ -566,13 +710,20 @@ HTML_INDEX = """<!DOCTYPE html>
 
       const streamUI = createBotStreamMessage();
       const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
+      const isMobile = window.innerWidth < 768;
 
       try {
         const apiUrl = new URL('api/chat', window.location.href).href;
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt, is_direct_llm: isDirectLLM, stream_mode: streamMode })
+          body: JSON.stringify({
+            prompt: prompt,
+            is_direct_llm: isDirectLLM,
+            stream_mode: streamMode,
+            client_width: window.innerWidth,
+            is_mobile: isMobile
+          })
         });
 
         if (!res.ok) {

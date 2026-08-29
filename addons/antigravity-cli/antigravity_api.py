@@ -202,6 +202,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
             is_direct_llm = payload.get("is_direct_llm", False) or prompt.startswith("ai ") or prompt.startswith("/llm")
             stream_mode = int(payload.get("stream_mode", 3))
+            is_mobile = bool(payload.get("is_mobile", False))
 
             if not prompt:
                 self._set_headers(400)
@@ -218,7 +219,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             try:
-                for event_str in stream_agent_chat(prompt, is_direct_llm, stream_mode):
+                for event_str in stream_agent_chat(prompt, is_direct_llm, stream_mode, is_mobile=is_mobile):
                     self.wfile.write(event_str.encode("utf-8"))
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
