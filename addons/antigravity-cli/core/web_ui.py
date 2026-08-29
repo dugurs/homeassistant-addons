@@ -115,6 +115,154 @@ HTML_INDEX = """<!DOCTYPE html>
       white-space: nowrap;
     }
 
+    .resource-badge {
+      font-size: 11px;
+      background: var(--badge-bg);
+      border: 1px solid var(--badge-border);
+      color: var(--accent-green);
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .resource-badge:hover {
+      border-color: var(--accent-green);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+    }
+    .badge-pipe {
+      color: var(--border-color);
+      opacity: 0.8;
+    }
+
+    /* Resource Monitor Modal */
+    .resource-modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .resource-modal-overlay.open {
+      display: flex;
+    }
+    .resource-modal-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.3);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes modalPop {
+      0% { opacity: 0; transform: scale(0.95) translateY(8px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-base);
+    }
+    .modal-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-bold);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+    }
+    .modal-close-btn:hover {
+      color: var(--text-main);
+      background: var(--border-color);
+    }
+    .modal-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .chart-section {
+      background: var(--bg-base);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 0.8rem;
+    }
+    .chart-name {
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .chart-val {
+      font-weight: 700;
+      color: var(--accent-blue);
+      font-family: 'Fira Code', monospace;
+    }
+    .canvas-wrap {
+      width: 100%;
+      height: 80px;
+      position: relative;
+    }
+    .canvas-wrap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .resource-stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .stat-box {
+      background: var(--bg-base);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .stat-lbl {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+    .stat-val {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-bold);
+    }
+
     .theme-toggle-btn {
       background: var(--bg-base);
       border: 1px solid var(--border-color);
@@ -326,6 +474,25 @@ HTML_INDEX = """<!DOCTYPE html>
       background: rgba(168, 85, 247, 0.12);
       color: #c084fc;
       border-color: rgba(168, 85, 247, 0.3);
+    }
+
+    .live-progress-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.76rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--accent-blue);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      margin-bottom: 8px;
+      animation: pulseLive 2s infinite ease-in-out;
+    }
+    @keyframes pulseLive {
+      0%, 100% { opacity: 0.95; transform: scale(1); }
+      50% { opacity: 0.65; transform: scale(0.99); }
     }
 
     /* Message Metadata Footer */
@@ -609,6 +776,11 @@ HTML_INDEX = """<!DOCTYPE html>
       <span class="brand-badge">Real-time</span>
     </div>
     <div class="header-right">
+      <div class="resource-badge" id="resource-badge" onclick="toggleResourceModal()" title="클릭하여 실시간 CPU/RAM 상세 그래프 보기">
+        <span id="header-cpu">⚙️ CPU 0.0%</span>
+        <span class="badge-pipe">|</span>
+        <span id="header-ram">💾 RAM 0MB</span>
+      </div>
       <div class="session-token-badge" onclick="resetTokens()" title="클릭 시 누적 토큰 초기화" style="cursor: pointer;">🪙 누적: <strong id="session-tokens">0</strong> Tokens</div>
       <button class="theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 테마 전환">🌙 다크</button>
       <div class="nav-tabs">
@@ -617,6 +789,56 @@ HTML_INDEX = """<!DOCTYPE html>
       </div>
     </div>
   </header>
+
+  <!-- Resource Monitor Modal -->
+  <div id="resource-modal" class="resource-modal-overlay" onclick="closeResourceModal(event)">
+    <div class="resource-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>📊 시스템 리소스 실시간 모니터링</span>
+        </div>
+        <button class="modal-close-btn" onclick="toggleResourceModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="chart-section">
+          <div class="chart-header">
+            <span class="chart-name">⚙️ CPU 사용률 추이 (실시간)</span>
+            <strong id="modal-cpu-val" class="chart-val">0.0%</strong>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="cpu-chart" width="440" height="80"></canvas>
+          </div>
+        </div>
+        <div class="chart-section">
+          <div class="chart-header">
+            <span class="chart-name">💾 RAM 점유율 추이 (시스템 전체)</span>
+            <strong id="modal-ram-val" class="chart-val">0MB (0%)</strong>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="ram-chart" width="440" height="80"></canvas>
+          </div>
+        </div>
+        <div class="resource-stats-grid">
+          <div class="stat-box">
+            <div class="stat-lbl">애드온 메모리</div>
+            <div class="stat-val" id="stat-addon-ram">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">전체 시스템 RAM</div>
+            <div class="stat-val" id="stat-total-ram">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">가동 시간 (Uptime)</div>
+            <div class="stat-val" id="stat-uptime">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Antigravity Stream</div>
+            <div class="stat-val" id="stat-agy-stream">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <main>
     <!-- Chat View -->
@@ -914,6 +1136,9 @@ HTML_INDEX = """<!DOCTYPE html>
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
+            <div class="live-progress-badge" style="display: none;">
+              <span class="live-status-text"></span>
+            </div>
             <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
@@ -928,6 +1153,8 @@ HTML_INDEX = """<!DOCTYPE html>
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
+      const liveBadge = row.querySelector('.live-progress-badge');
+      const liveStatusText = row.querySelector('.live-status-text');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
@@ -946,7 +1173,13 @@ HTML_INDEX = """<!DOCTYPE html>
       }, 100);
 
       return {
-        addTool: function(toolStr) {},
+        addTool: function(toolStr) {
+          if (liveBadge && liveStatusText) {
+            liveStatusText.textContent = toolStr;
+            liveBadge.style.display = 'inline-flex';
+            box.scrollTop = box.scrollHeight;
+          }
+        },
         appendChunk: function(chunk) {
           answerText += chunk;
           answerContent.innerHTML = formatMarkdown(answerText);
@@ -966,6 +1199,9 @@ HTML_INDEX = """<!DOCTYPE html>
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
+          if (liveBadge) {
+            liveBadge.style.display = 'none';
+          }
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초`;
@@ -991,6 +1227,193 @@ HTML_INDEX = """<!DOCTYPE html>
       };
     }
 
+    // Resource Monitor History & Charting
+    const MAX_HISTORY = 20;
+    const cpuHistory = [];
+    const ramHistory = [];
+    let isResourceModalOpen = false;
+
+    function toggleResourceModal() {
+      const modal = document.getElementById('resource-modal');
+      if (!modal) return;
+      isResourceModalOpen = !modal.classList.contains('open');
+      modal.classList.toggle('open', isResourceModalOpen);
+      if (isResourceModalOpen) {
+        renderCharts();
+      }
+    }
+
+    function closeResourceModal(e) {
+      const modal = document.getElementById('resource-modal');
+      if (modal) {
+        modal.classList.remove('open');
+        isResourceModalOpen = false;
+      }
+    }
+
+    function formatUptime(seconds) {
+      if (!seconds) return '0초';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      if (h > 0) return `${h}시간 ${m}분`;
+      if (m > 0) return `${m}분 ${s}초`;
+      return `${s}초`;
+    }
+
+    function drawSparkline(canvasId, dataList, maxScale, strokeColor, fillColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      if (!dataList || dataList.length === 0) return;
+
+      // Draw subtle horizontal grid lines
+      ctx.strokeStyle = 'rgba(150, 150, 150, 0.15)';
+      ctx.lineWidth = 1;
+      for (let y of [0.25, 0.5, 0.75]) {
+        ctx.beginPath();
+        ctx.moveTo(0, h * y);
+        ctx.lineTo(w, h * y);
+        ctx.stroke();
+      }
+
+      const points = [];
+      const step = w / Math.max(MAX_HISTORY - 1, 1);
+      const startX = w - ((dataList.length - 1) * step);
+
+      dataList.forEach((val, i) => {
+        const x = startX + (i * step);
+        const ratio = Math.min(1, Math.max(0, val / maxScale));
+        const y = h - 8 - (ratio * (h - 16));
+        points.push({ x, y, val });
+      });
+
+      if (points.length < 2) {
+        const p = points[0];
+        ctx.fillStyle = strokeColor;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+
+      // Draw Gradient Area Fill
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, h);
+      ctx.lineTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.lineTo(points[points.length - 1].x, h);
+      ctx.closePath();
+
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, fillColor);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Draw Line Stroke
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw Current Point Dot
+      const lastP = points[points.length - 1];
+      ctx.fillStyle = strokeColor;
+      ctx.beginPath();
+      ctx.arc(lastP.x, lastP.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    function renderCharts() {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const cpuStroke = isDark ? '#60a5fa' : '#2563eb';
+      const cpuFill = isDark ? 'rgba(96, 165, 250, 0.35)' : 'rgba(37, 99, 235, 0.25)';
+      const ramStroke = isDark ? '#34d399' : '#059669';
+      const ramFill = isDark ? 'rgba(52, 211, 153, 0.35)' : 'rgba(5, 150, 105, 0.25)';
+
+      drawSparkline('cpu-chart', cpuHistory, 100, cpuStroke, cpuFill);
+      drawSparkline('ram-chart', ramHistory, 100, ramStroke, ramFill);
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Update CPU History
+        const cpuVal = typeof data.cpu_usage === 'number' ? data.cpu_usage : 0;
+        cpuHistory.push(cpuVal);
+        if (cpuHistory.length > MAX_HISTORY) cpuHistory.shift();
+
+        // Update RAM History
+        const ramPct = typeof data.memory_percent === 'number' ? data.memory_percent : 0;
+        ramHistory.push(ramPct);
+        if (ramHistory.length > MAX_HISTORY) ramHistory.shift();
+
+        // Update Header Badge
+        const headerCpu = document.getElementById('header-cpu');
+        const headerRam = document.getElementById('header-ram');
+        if (headerCpu) headerCpu.textContent = `⚙️ CPU ${cpuVal.toFixed(1)}%`;
+        if (headerRam) headerRam.textContent = `💾 RAM ${data.memory_usage || 0}MB (${ramPct.toFixed(0)}%)`;
+
+        // Update Modal Details
+        const modalCpu = document.getElementById('modal-cpu-val');
+        const modalRam = document.getElementById('modal-ram-val');
+        if (modalCpu) modalCpu.textContent = `${cpuVal.toFixed(1)}%`;
+        if (modalRam) modalRam.textContent = `${data.used_memory_gb || 0}GB / ${data.total_memory_gb || 0}GB (${ramPct.toFixed(1)}%)`;
+
+        const statAddonRam = document.getElementById('stat-addon-ram');
+        const statTotalRam = document.getElementById('stat-total-ram');
+        const statUptime = document.getElementById('stat-uptime');
+        const statAgyStream = document.getElementById('stat-agy-stream');
+
+        if (statAddonRam) statAddonRam.textContent = `${data.memory_usage || 0} MB`;
+        if (statTotalRam) statTotalRam.textContent = `${data.used_memory_gb || 0} GB (${ramPct.toFixed(0)}%)`;
+        if (statUptime) statUptime.textContent = formatUptime(data.uptime);
+        if (statAgyStream) {
+          statAgyStream.textContent = data.agy_stream_supported ? '✅ 지원 (Host 모드)' : '❌ 미지원 (kvm64)';
+          statAgyStream.style.color = data.agy_stream_supported ? 'var(--accent-green)' : 'var(--text-muted)';
+        }
+
+        // Mode 3 Conditional Enable/Disable
+        const opt3 = document.getElementById('opt-mode-3');
+        const modeSel = document.getElementById('stream-mode');
+        if (opt3) {
+          if (data.agy_stream_supported) {
+            opt3.disabled = false;
+            opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (실시간 NDJSON)';
+          } else {
+            opt3.disabled = true;
+            opt3.textContent = '🚀 모드 3: Google Antigravity (AVX 미지원으로 비활성화)';
+            if (modeSel && modeSel.value === '3') {
+              modeSel.value = '1';
+              localStorage.setItem('antigravity_stream_mode', '1');
+            }
+          }
+        }
+
+        if (isResourceModalOpen) {
+          renderCharts();
+        }
+      } catch (e) {}
+    }
+
     function onModeChange(val) {
       localStorage.setItem('antigravity_stream_mode', val);
     }
@@ -1002,20 +1425,11 @@ HTML_INDEX = """<!DOCTYPE html>
       const sessBadge = document.getElementById('session-tokens');
       if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
 
-      try {
-        const res = await fetch('api/status');
-        if (res.ok) {
-          const data = await res.json();
-          const opt3 = document.getElementById('opt-mode-3');
-          if (opt3) {
-            if (data.agy_stream_supported) {
-              opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (Host 모드 활성)';
-            } else {
-              opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (Host 모드 필요)';
-            }
-          }
-        }
-      } catch (e) {}
+      // Initial Status Poll
+      await pollStatus();
+
+      // Start 3-second Periodic Status Polling
+      setInterval(pollStatus, 3000);
     });
 
     function updateSendBtn() {
