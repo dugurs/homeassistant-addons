@@ -121,6 +121,14 @@ def git_push_all(msg: str = "auto: Synchronize and push latest updates"):
 
 
 if __name__ == "__main__":
-    commit_msg = sys.argv[1] if len(sys.argv) > 1 else "auto: Synchronize and push latest updates"
+    import argparse
+    parser = argparse.ArgumentParser(description="Synchronize files to Samba and optionally push to Gitea.")
+    parser.add_argument("--push", action="store_true", help="Push changes to Gitea remote repository")
+    parser.add_argument("-m", "--message", default="auto: Synchronize and push latest updates", help="Git commit message")
+    args = parser.parse_args()
+
     sync_samba()
-    git_push_all(commit_msg)
+    if args.push:
+        git_push_all(args.message)
+    else:
+        print("[INFO] Samba sync completed. (Gitea push skipped - use --push to commit & push)")

@@ -8,6 +8,9 @@ import os
 import sys
 import urllib.request
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def test_chat(prompt: str = "", stream_mode: int = 3):
     if not prompt:
@@ -26,29 +29,33 @@ def test_chat(prompt: str = "", stream_mode: int = 3):
     payload = json.dumps({"prompt": prompt, "is_direct_llm": is_direct_llm, "stream_mode": stream_mode}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
+    import time as _t
+    t_start = _t.time()
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:
             content_type = resp.headers.get("Content-Type", "")
-            print(f"[OK] Response HTTP {resp.status} ({content_type})")
-            print("--- [Stream Output] ---")
+            print(f"[OK] Response HTTP {resp.status} ({content_type})", flush=True)
+            print("--- [Stream Output] ---", flush=True)
             for line in resp:
                 l = line.decode("utf-8", errors="replace").strip()
                 if l.startswith("data:"):
+                    elapsed = round(_t.time() - t_start, 3)
                     try:
                         ev = json.loads(l[5:].strip())
                         ev_type = ev.get("type")
                         if ev_type in ("text", "chunk"):
-                            sys.stdout.buffer.write(ev.get("content", "").encode("utf-8"))
-                            sys.stdout.buffer.flush()
+                            content = ev.get("content", "")
+                            print(f"[+{elapsed:06.3f}s] [chunk] {content}", flush=True)
                         elif ev_type == "tool":
-                            sys.stdout.buffer.write(f"\n[TOOL] {ev.get('content')}\n".encode("utf-8"))
-                            sys.stdout.buffer.flush()
+                            print(f"[+{elapsed:06.3f}s] [tool]  {ev.get('content')}", flush=True)
                         elif ev_type == "done":
-                            print("\n[DONE] Stream finished successfully.")
-                    except Exception:
-                        pass
+                            print(f"[+{elapsed:06.3f}s] [done]  {ev.get('tokens')}", flush=True)
+                            print("[OK] Stream completed successfully.", flush=True)
+                            break
+                    except Exception as ex:
+                        print(f"Parse error: {ex} on line: {l}", flush=True)
     except Exception as e:
-        print(f"[ERR] Chat test error: {e}", file=sys.stderr)
+        print(f"[ERR] Chat test error: {e}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

@@ -480,6 +480,77 @@ HTML_INDEX = """<!DOCTYPE html>
       color: #c084fc;
       border-color: rgba(168, 85, 247, 0.3);
     }
+    
+    /* Thought & Tool Step Timeline Accordion */
+    .thought-box {
+      margin-bottom: 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-base);
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+    .thought-header {
+      padding: 8px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      background: var(--bg-base);
+      outline: none;
+    }
+    .thought-header:hover {
+      color: var(--accent-blue);
+      background: var(--table-stripe);
+    }
+    .thought-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .thought-status-icon {
+      font-size: 0.8rem;
+      display: inline-block;
+      animation: spinThought 1.5s linear infinite;
+    }
+    .thought-status-icon.done {
+      animation: none;
+    }
+    @keyframes spinThought {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .step-timeline-list {
+      list-style: none;
+      padding: 6px 12px 10px 12px;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .step-item {
+      font-size: 0.76rem;
+      color: var(--text-main);
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      line-height: 1.4;
+      animation: stepFadeIn 0.25s ease-out;
+    }
+    @keyframes stepFadeIn {
+      0% { opacity: 0; transform: translateY(3px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    .step-bullet {
+      color: var(--accent-blue);
+      font-weight: bold;
+      flex-shrink: 0;
+    }
 
     .live-progress-badge {
       display: inline-flex;
@@ -1136,9 +1207,17 @@ HTML_INDEX = """<!DOCTYPE html>
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
-            <div class="live-progress-badge" style="display: none;">
-              <span class="live-status-text"></span>
-            </div>
+            <!-- Thought & Tool Step Timeline Accordion -->
+            <details class="thought-box" style="display: none;" open>
+              <summary class="thought-header">
+                <div class="thought-title-wrap">
+                  <span class="thought-status-icon">⚡</span>
+                  <span class="thought-title-text">작업 및 추론 과정</span>
+                  <span class="thought-step-badge" style="font-size: 0.72rem; color: var(--accent-blue);">(1단계 진행 중...)</span>
+                </div>
+              </summary>
+              <ul class="step-timeline-list"></ul>
+            </details>
             <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
@@ -1153,8 +1232,10 @@ HTML_INDEX = """<!DOCTYPE html>
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
-      const liveBadge = row.querySelector('.live-progress-badge');
-      const liveStatusText = row.querySelector('.live-status-text');
+      const thoughtBox = row.querySelector('.thought-box');
+      const thoughtIcon = row.querySelector('.thought-status-icon');
+      const thoughtBadge = row.querySelector('.thought-step-badge');
+      const stepList = row.querySelector('.step-timeline-list');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
@@ -1162,6 +1243,7 @@ HTML_INDEX = """<!DOCTYPE html>
 
       let answerText = "";
       let finished = false;
+      let stepCount = 0;
 
       const liveTimer = setInterval(() => {
         if (finished) return;
@@ -1174,9 +1256,14 @@ HTML_INDEX = """<!DOCTYPE html>
 
       return {
         addTool: function(toolStr) {
-          if (liveBadge && liveStatusText) {
-            liveStatusText.textContent = toolStr;
-            liveBadge.style.display = 'inline-flex';
+          stepCount++;
+          if (thoughtBox && stepList) {
+            thoughtBox.style.display = 'block';
+            if (thoughtBadge) thoughtBadge.textContent = `(${stepCount}단계 진행 중...)`;
+            const li = document.createElement('li');
+            li.className = 'step-item';
+            li.innerHTML = `<span class="step-bullet">▸</span><span>${toolStr}</span>`;
+            stepList.appendChild(li);
             box.scrollTop = box.scrollHeight;
           }
         },
@@ -1199,8 +1286,12 @@ HTML_INDEX = """<!DOCTYPE html>
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
-          if (liveBadge) {
-            liveBadge.style.display = 'none';
+          if (thoughtBox && stepCount > 0) {
+            if (thoughtIcon) {
+              thoughtIcon.textContent = '✅';
+              thoughtIcon.classList.add('done');
+            }
+            if (thoughtBadge) thoughtBadge.textContent = `(${stepCount}단계 완료)`;
           }
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {

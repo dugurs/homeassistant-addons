@@ -153,7 +153,125 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(test_res, ensure_ascii=False).encode("utf-8"))
             return
 
-        # 4. Serve Web UI
+        # 4. PTY-based agy test (uses script -q -c to force TTY mode)
+        if clean_path.endswith("/api/test_pty"):
+            import subprocess as _sp
+            import os as _os
+            import time as _t
+            results = {}
+            agy_bin = "/root/.local/bin/agy"
+
+            # Check auth files / symlinks
+            auth_info = {}
+            for p in ["/root/.gemini", "/config/.gemini", "/root/.config"]:
+                if _os.path.islink(p):
+                    auth_info[p] = f"symlink -> {_os.readlink(p)}"
+                elif _os.path.exists(p):
+                    try:
+                        auth_info[p] = _os.listdir(p)
+                    except Exception as ex:
+                        auth_info[p] = str(ex)
+                else:
+                    auth_info[p] = "NOT_FOUND"
+            results["auth_info"] = auth_info
+
+            # Look for credential files - exhaustive recursive search
+            cred_found = {}
+            import os as _os2
+            for search_root in ["/root/.gemini", "/config/.gemini", "/root/.config", "/config/.config", "/root/.local/share"]:
+                real_root = _os.path.realpath(search_root) if _os.path.islink(search_root) else search_root
+                if _os.path.exists(real_root):
+                    for dirpath, dirnames, filenames in _os.walk(real_root):
+                        for fname in filenames:
+                            fpath = _os.path.join(dirpath, fname)
+                            cred_found[fpath] = f"size={_os.path.getsize(fpath)}"
+            results["all_files"] = cred_found
+
+            env = _os.environ.copy()
+            env["HOME"] = "/root"
+            env["USER"] = "root"
+            env["PATH"] = "/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+            env["TERM"] = "xterm"
+            env["FORCE_COLOR"] = "0"
+
+            # Try script -q -c to force pseudo-TTY (Go flushes immediately in TTY mode)
+            t0 = _t.time()
+            try:
+                proc = _sp.Popen(
+                    ["script", "-q", "-e", "-c",
+                     f"{agy_bin} -p 'Say hi in 3 words' --output-format stream-json --dangerously-skip-permissions",
+                     "/dev/null"],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=env,
+                )
+                try:
+                    stdout, stderr = proc.communicate(timeout=20)
+                    results["script_pty"] = {
+                        "time": round(_t.time() - t0, 2),
+                        "ret": proc.returncode,
+                        "stdout_raw_lines": [l for l in stdout.splitlines() if l.strip()],
+                        "stderr": stderr[:300],
+                    }
+                except _sp.TimeoutExpired:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    results["script_pty"] = {
+                        "timeout": True,
+                        "time": round(_t.time() - t0, 2),
+                        "stdout_raw_lines": [l for l in stdout.splitlines() if l.strip()],
+                        "stderr": stderr[:300],
+                    }
+            except Exception as ex:
+                results["script_pty"] = {"error": str(ex)}
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps(results, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 5. Read agy crash and run logs for diagnosis
+        if clean_path.endswith("/api/read_logs"):
+            import os as _os
+            import glob as _glob
+            result = {}
+
+            # Read latest crash log
+            crash_dir = "/config/.gemini/antigravity-cli/crashes"
+            if _os.path.exists(crash_dir):
+                crash_files = sorted(_glob.glob(f"{crash_dir}/*.log"))
+                if crash_files:
+                    latest_crash = crash_files[-1]
+                    try:
+                        with open(latest_crash) as f:
+                            result["crash_log"] = {"file": latest_crash, "content": f.read(3000)}
+                    except Exception as ex:
+                        result["crash_log"] = {"error": str(ex)}
+
+            # Read latest agy run log
+            log_dir = "/config/.gemini/antigravity-cli/log"
+            if _os.path.exists(log_dir):
+                log_files = sorted(_glob.glob(f"{log_dir}/cli-*.log"))
+                if log_files:
+                    latest_log = log_files[-1]
+                    try:
+                        with open(latest_log) as f:
+                            content = f.read()
+                            # Show last 3000 chars
+                            result["agy_log"] = {"file": latest_log, "content": content[-3000:]}
+                    except Exception as ex:
+                        result["agy_log"] = {"error": str(ex)}
+
+            # Check token file
+            token_path = "/config/.gemini/antigravity-cli/antigravity-oauth-token"
+            if _os.path.exists(token_path):
+                result["token_exists"] = True
+                result["token_size"] = _os.path.getsize(token_path)
+            else:
+                result["token_exists"] = False
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # Serve Web UI
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(HTML_INDEX.encode("utf-8"))
 

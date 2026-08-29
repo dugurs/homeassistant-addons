@@ -146,12 +146,22 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
 
     yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시: '{actual_prompt[:30]}...'")
 
+    # Use 'script -q -c' to run agy in a pseudo-TTY.
+    # This forces the Go runtime to flush output line-by-line instead of buffering.
+    # Without this, agy buffers 4KB before writing anything to a pipe.
+    script_cmd = (
+        f"{agy_bin} -p {json.dumps(actual_prompt)}"
+        f" --output-format stream-json"
+        f" --dangerously-skip-permissions"
+    )
+    cmd = ["script", "-q", "-e", "-c", script_cmd, "/dev/null"]
+
     try:
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
             encoding="utf-8",
@@ -166,73 +176,160 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
     has_emitted_chunk = False
     auth_failed = False
     output_chars = 0
+    full_text_parts = []
 
     try:
         for line in iter(proc.stdout.readline, ""):
-            line_str = line.strip()
+            # script -q sometimes adds carriage returns; strip control chars
+            line_str = line.rstrip("\r\n").strip()
             if not line_str:
                 continue
 
+            # Try to parse as JSON
             try:
                 data = json.loads(line_str)
             except Exception:
-                if any(w in line_str.lower() for w in ["agy login", "auth", "login required"]):
+                # Not JSON - check for auth error messages in plain text
+                lower = line_str.lower()
+                if any(w in lower for w in ["login required", "please run", "agy login", "oauth", "unauthorized", "unauthenticated"]):
                     auth_failed = True
                     break
-                yield make_sse("chunk", line)
-                has_emitted_chunk = True
-                output_chars += len(line)
+                # Some other plain text - ignore (script adds noise)
                 continue
 
-            evt_type = data.get("type", "")
+            # Official Google Antigravity CLI stream-json event schema
+            evt = data.get("event", data.get("type", ""))
 
-            if evt_type in ("step_start", "progress"):
-                step_msg = data.get("status") or data.get("thought") or "추론 진행 중"
-                yield make_sse("tool", f"🧠 [추론] {step_msg}")
-            elif evt_type == "tool_call":
-                tool_name = data.get("tool", "unknown_tool")
-                yield make_sse("tool", f"🔧 [도구 실행] {tool_name}")
-            elif evt_type == "tool_result":
-                tool_name = data.get("tool", "")
-                summary = data.get("summary", "완료")
-                yield make_sse("tool", f"✅ [도구 완료] {tool_name}: {summary}")
-            elif evt_type in ("chunk", "content_delta"):
-                delta = data.get("delta") or data.get("content") or ""
+            # 1. Session Initialization Event
+            if evt == "init":
+                tools = data.get("init", {}).get("tools", [])
+                yield make_sse("tool", f"🚀 [CLI 세션 시작] 사용 가능 도구 {len(tools)}개 로드됨")
+
+            # 2. Step Update Event (Text tokens, Tool execution, Thinking)
+            elif evt == "step_update":
+                step = data.get("step_update", {})
+                step_type = step.get("step_type", "")
+                state = step.get("state", "")
+
+                # 2-1. Real-time text token delta
+                delta = step.get("text_delta") or ""
                 if delta:
-                    yield make_sse("chunk", delta)
-                    has_emitted_chunk = True
+                    full_text_parts.append(delta)
                     output_chars += len(delta)
-            elif evt_type in ("done", "finish"):
-                tokens_meta = data.get("tokens", {})
-                if not tokens_meta:
-                    elapsed = time.time() - t_start
-                    tokens_meta = {
-                        "input": 120,
-                        "output": max(1, int(output_chars * 0.6)),
-                        "total": 120 + max(1, int(output_chars * 0.6)),
-                        "speed_tps": round(max(1, int(output_chars * 0.6)) / max(0.01, elapsed), 1),
-                        "elapsed": round(elapsed, 2),
-                    }
+                    has_emitted_chunk = True
+                    yield make_sse("chunk", delta)
+
+                # 2-2. Thinking / Reasoning step
+                thinking = step.get("thinking") or step.get("thought") or ""
+                if thinking:
+                    yield make_sse("tool", f"💭 [추론] {thinking[:80]}...")
+
+                # 2-3. Tool Call step
+                tool_call = step.get("tool_call") or step.get("tool") or {}
+                if tool_call:
+                    if isinstance(tool_call, dict):
+                        tname = tool_call.get("name") or tool_call.get("tool", "unknown")
+                        tinput = str(tool_call.get("input") or tool_call.get("args") or "")[:80]
+                        yield make_sse("tool", f"🔧 [도구 실행] {tname}{f': {tinput}' if tinput else ''}")
+                    else:
+                        yield make_sse("tool", f"🔧 [도구 실행] {tool_call}")
+
+                # 2-4. Tool Result step
+                if step_type == "tool_result" or "tool_result" in step:
+                    tname = step.get("tool_name", "")
+                    yield make_sse("tool", f"✅ [도구 완료] {tname}")
+
+            # 3. Final Execution Result Event
+            elif evt == "result":
+                res = data.get("result", {})
+                status = res.get("status", "")
+                response_text = res.get("response", "")
+                usage = res.get("usage", {})
+                duration = res.get("duration_seconds", 0)
+
+                # Fallback: if no streaming chunks arrived but response exists
+                if not has_emitted_chunk and response_text:
+                    full_text_parts.append(response_text)
+                    output_chars += len(response_text)
+                    has_emitted_chunk = True
+                    yield make_sse("chunk", response_text)
+
+                elapsed = duration or (time.time() - t_start)
+                in_tok = usage.get("input_tokens", 120)
+                out_tok = usage.get("output_tokens", max(1, int(output_chars * 0.4)))
+                think_tok = usage.get("thinking_tokens", 0)
+                total_tok = usage.get("total_tokens", in_tok + out_tok)
+
+                tokens_meta = {
+                    "input": in_tok,
+                    "output": out_tok,
+                    "thinking": think_tok,
+                    "total": total_tok,
+                    "speed_tps": round(out_tok / max(0.01, elapsed), 1),
+                    "elapsed": round(elapsed, 2),
+                }
                 yield make_sse("done", tokens=tokens_meta)
                 proc.stdout.close()
                 proc.wait()
                 return
-            elif evt_type in ("error", "auth_required"):
-                if "auth" in data.get("code", "").lower() or "login" in data.get("message", "").lower():
+
+            # 4. Standard Anthropic/OpenAI compatibility fallbacks
+            elif evt in ("content_block_start", "content_block_delta", "text_delta"):
+                delta = (
+                    data.get("delta", {}).get("text", "")
+                    or data.get("text", "")
+                    or data.get("content", "")
+                    or ""
+                )
+                if delta:
+                    full_text_parts.append(delta)
+                    output_chars += len(delta)
+                    has_emitted_chunk = True
+                    yield make_sse("chunk", delta)
+
+            elif evt == "message_stop":
+                elapsed = time.time() - t_start
+                tokens_meta = {
+                    "input": data.get("message", {}).get("usage", {}).get("input_tokens", 120),
+                    "output": data.get("message", {}).get("usage", {}).get("output_tokens", max(1, int(output_chars * 0.4))),
+                    "total": 0,
+                    "speed_tps": 0,
+                    "elapsed": round(elapsed, 2),
+                }
+                tokens_meta["total"] = tokens_meta["input"] + tokens_meta["output"]
+                tokens_meta["speed_tps"] = round(tokens_meta["output"] / max(0.01, elapsed), 1)
+                yield make_sse("done", tokens=tokens_meta)
+                proc.stdout.close()
+                proc.wait()
+                return
+
+            # 5. Error Event
+            elif evt in ("error",):
+                msg = data.get("error", {}).get("message", "") or data.get("message", "")
+                if any(w in msg.lower() for w in ["auth", "login", "oauth", "unauthorized"]):
                     auth_failed = True
                     break
-                else:
-                    yield make_sse("tool", f"⚠️ 에러 발생: {data.get('message', '알 수 없는 오류')}")
+                yield make_sse("tool", f"⚠️ [오류] {msg}")
 
         proc.stdout.close()
         proc.wait()
 
-    except Exception:
-        auth_failed = True
+    except Exception as ex:
+        yield make_sse("tool", f"⚠️ [스트림 파싱 예외] {type(ex).__name__}: {str(ex)[:150]}")
+        auth_failed = False  # do not falsely trigger auth fallback for general exceptions
 
-    if auth_failed or not has_emitted_chunk:
-        yield make_sse("tool", "🔑 [안내] Google Antigravity OAuth 인증 필요 (상단 'Terminal' 탭에서 'agy login' 실행 권장)")
-        yield make_sse("tool", "⚡ [Fallback] Home Assistant 내장 다차원 AI 어시스턴트로 자동 전환하여 답변합니다.")
+    if has_emitted_chunk:
+        # Completed normally
+        return
+
+    if auth_failed:
+        yield make_sse("tool", "🔑 [인증 필요] Terminal 탭에서 'agy' 실행 후 Google 계정으로 1회 로그인하세요.")
+        yield make_sse("tool", "⚡ [자동 전환] Home Assistant 내장 AI 어시스턴트로 답변합니다.")
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
+            yield ev
+    else:
+        # No chunks emitted, but not auth failure - try deep brain fallback gracefully
+        yield make_sse("tool", "⚡ [응답 생성] Home Assistant 통합 AI 엔진으로 즉시 답변합니다.")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev
 
@@ -332,29 +429,47 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
     except Exception as ex:
         result["agy_auth"] = f"Error: {ex}"
 
-    try:
-        proc = subprocess.Popen(
-            [agy_bin, "-p", "In one sentence, what is a git rebase?", "--output-format", "stream-json", "--dangerously-skip-permissions"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            encoding="utf-8",
-            env=env,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=4)
-            result["returncode"] = proc.returncode
-            result["lines"] = [line.strip() for line in stdout.splitlines() if line.strip()]
-            result["stderr"] = stderr.strip()
-            result["success"] = proc.returncode == 0 and len(result["lines"]) > 0
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            result["stderr"] = f"Timeout (stdout: '{stdout}', stderr: '{stderr}')"
-    except Exception as e:
-        result["stderr"] = str(e)
+    flag_tests = []
+    test_commands = [
+        ("echo prompt", ["bash", "-c", "echo 'Say hi in 3 words' | /usr/local/bin/agy --output-format stream-json --dangerously-skip-permissions"]),
+        ("print flag", ["/usr/local/bin/agy", "-p", "Say hi in 3 words"]),
+        ("stream-json flag", ["/usr/local/bin/agy", "-p", "Say hi in 3 words", "--output-format", "stream-json"]),
+        ("disable slash", ["/usr/local/bin/agy", "-p", "Say hi in 3 words", "--output-format", "stream-json", "--disable-slash-commands"]),
+    ]
 
-    result["elapsed_sec"] = round(time.time() - t0, 3)
+    for label, c in test_commands:
+        t_c = time.time()
+        try:
+            p = subprocess.Popen(
+                c,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+            try:
+                stdout, stderr = p.communicate(input="Say hi in 3 words\n", timeout=2)
+                flag_tests.append({
+                    "label": label,
+                    "ret": p.returncode,
+                    "stdout": stdout[:200],
+                    "stderr": stderr[:200],
+                    "time": round(time.time() - t_c, 2)
+                })
+            except subprocess.TimeoutExpired:
+                p.kill()
+                stdout, stderr = p.communicate()
+                flag_tests.append({
+                    "label": label,
+                    "timeout": True,
+                    "stdout": stdout[:200],
+                    "stderr": stderr[:200],
+                    "time": round(time.time() - t_c, 2)
+                })
+        except Exception as e:
+            flag_tests.append({"label": label, "err": str(e)})
+
+    result["flag_tests"] = flag_tests
     return result
 
