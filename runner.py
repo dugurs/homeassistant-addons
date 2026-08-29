@@ -6,13 +6,20 @@ import sys
 import time
 import urllib.request
 
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
+def p(msg: str):
+    print(msg, flush=True)
+
 
 def test_mode(mode_num: int, prompt: str):
     ha_ip = "192.168.0.14"
     url = f"http://{ha_ip}:8000/api/chat"
-    print(f"\n========================================================")
-    print(f"[*] Running E2E Test on [Mode {mode_num}] with: '{prompt}'")
-    print(f"========================================================")
+    p(f"\n========================================================")
+    p(f"[*] Running E2E Test on [Mode {mode_num}] with: '{prompt}'")
+    p(f"========================================================")
 
     payload = json.dumps({"prompt": prompt, "is_direct_llm": False, "stream_mode": mode_num}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -23,8 +30,8 @@ def test_mode(mode_num: int, prompt: str):
     done_received = False
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            print(f"[HTTP {resp.status}] Content-Type: {resp.headers.get('Content-Type')}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            p(f"[HTTP {resp.status}] Content-Type: {resp.headers.get('Content-Type')}")
             for line in resp:
                 l = line.decode("utf-8", errors="replace").strip()
                 if not l.startswith("data:"):
@@ -35,53 +42,54 @@ def test_mode(mode_num: int, prompt: str):
                     if etype == "tool":
                         content = ev.get("content", "")
                         tools_received.append(content)
-                        print(f"  [TOOL EVENT] {content}")
+                        p(f"  [TOOL EVENT] {content}")
                     elif etype in ("text", "chunk"):
                         content = ev.get("content", "")
                         chunks_received.append(content)
-                        print(f"  [CHUNK] {content[:60]}..." if len(content) > 60 else f"  [CHUNK] {content}")
+                        p(f"  [CHUNK] {content[:60]}..." if len(content) > 60 else f"  [CHUNK] {content}")
                     elif etype == "done":
                         done_received = True
-                        print(f"  [DONE EVENT] Stream successfully terminated.")
+                        p(f"  [DONE EVENT] Stream successfully terminated.")
+                        break
                 except Exception as ex:
-                    print(f"  [PARSE ERR] {ex}")
+                    p(f"  [PARSE ERR] {ex}")
     except Exception as e:
-        print(f"[ERR] Failed on Mode {mode_num}: {e}")
+        p(f"[ERR] Failed on Mode {mode_num}: {e}")
         return False
 
     elapsed = round(time.time() - t0, 3)
-    print(f"\n--- [Mode {mode_num} Test Summary] ---")
-    print(f"• Tool Events Count : {len(tools_received)}")
-    print(f"• Chunk/Text Count  : {len(chunks_received)}")
-    print(f"• Finished with Done: {done_received}")
-    print(f"• Total Latency     : {elapsed}s")
+    p(f"\n--- [Mode {mode_num} Test Summary] ---")
+    p(f"• Tool Events Count : {len(tools_received)}")
+    p(f"• Chunk/Text Count  : {len(chunks_received)}")
+    p(f"• Finished with Done: {done_received}")
+    p(f"• Total Latency     : {elapsed}s")
 
     success = len(tools_received) > 0 and len(chunks_received) > 0 and done_received
-    print(f"• Status            : {'[PASS]' if success else '[FAIL]'}")
+    p(f"• Status            : {'[PASS]' if success else '[FAIL]'}")
     return success
 
 
 def main():
-    print("[E2E Verification Suite Starting] Testing all 3 Modes against Home Assistant Add-on...")
+    p("[E2E Verification Suite Starting] Testing all 3 Modes against Home Assistant Add-on...")
     results = {}
-    results["Mode 1 (Transcript/Step Tracking)"] = test_mode(1, "오늘 날씨와 환경 분석해줘")
+    results["Mode 1 (Step/Transcript Tracking)"] = test_mode(1, "오늘 날씨와 환경 분석해줘")
     results["Mode 2 (PTY Virtual Terminal)"] = test_mode(2, "거실온도")
     results["Mode 3 (Hybrid Fast)"] = test_mode(3, "우리집 종합 상황 알려줘")
 
-    print("\n" + "=" * 56)
-    print("           FINAL E2E VERIFICATION REPORT           ")
-    print("=" * 56)
+    p("\n" + "=" * 56)
+    p("           FINAL E2E VERIFICATION REPORT           ")
+    p("=" * 56)
     all_pass = True
     for mode_name, passed in results.items():
         status = "PASSED" if passed else "FAILED"
-        print(f"• {mode_name:38} : [{status}]")
+        p(f"• {mode_name:38} : [{status}]")
         if not passed:
             all_pass = False
 
     if all_pass:
-        print("\nALL 3 MODES PASSED COMPLETE E2E VERIFICATION!")
+        p("\nALL 3 MODES PASSED COMPLETE E2E VERIFICATION!")
     else:
-        print("\nSOME TESTS FAILED - REQUIRES INVESTIGATION")
+        p("\nSOME TESTS FAILED - REQUIRES INVESTIGATION")
         sys.exit(1)
 
 
