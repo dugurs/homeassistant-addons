@@ -173,87 +173,200 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
             yield ev
         return
 
+    import threading
+    import queue
+
+    event_queue = queue.Queue()
+    done_event = threading.Event()
+    seen_step_indices = set()
     has_emitted_chunk = False
     auth_failed = False
     output_chars = 0
     full_text_parts = []
 
-    try:
-        for line in iter(proc.stdout.readline, ""):
-            # script -q sometimes adds carriage returns; strip control chars
-            line_str = line.rstrip("\r\n").strip()
-            if not line_str:
-                continue
+    def tail_transcript(conv_id):
+        """Monitor conversation transcript on disk in real time and emit thoughts/tool actions."""
+        candidate_paths = [
+            f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
+            f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
+        ]
+        
+        file_obj = None
+        for _ in range(60):
+            if done_event.is_set():
+                break
+            for cp in candidate_paths:
+                if os.path.exists(cp):
+                    try:
+                        file_obj = open(cp, "r", encoding="utf-8", errors="ignore")
+                        break
+                    except Exception:
+                        pass
+            if file_obj:
+                break
+            time.sleep(0.08)
 
-            # Try to parse as JSON
+        if not file_obj:
+            return
+
+        try:
+            while not done_event.is_set():
+                line = file_obj.readline()
+                if not line:
+                    time.sleep(0.08)
+                    continue
+                try:
+                    step_data = json.loads(line.strip())
+                    s_idx = step_data.get("step_index")
+                    if s_idx in seen_step_indices:
+                        continue
+                    seen_step_indices.add(s_idx)
+
+                    stype = step_data.get("type", "")
+
+                    # 1. Thinking / Reasoning step
+                    thinking = (step_data.get("thinking") or "").strip()
+                    if thinking:
+                        clean_think = thinking.replace("\n\n", " · ").replace("\n", " ")
+                        if len(clean_think) > 220:
+                            clean_think = clean_think[:220] + "..."
+                        event_queue.put(("chunk", f"> 💭 **[추론]** *{clean_think}*\n\n"))
+
+                    # 2. Tool Calls
+                    tcs = step_data.get("tool_calls", [])
+                    for tc in tcs:
+                        tname = tc.get("name", "tool")
+                        args = tc.get("args") or {}
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except Exception:
+                                pass
+
+                        summary = tc.get("toolSummary") or (args.get("toolSummary") if isinstance(args, dict) else "")
+                        action = tc.get("toolAction") or (args.get("toolAction") if isinstance(args, dict) else "")
+                        desc = summary or action or ""
+
+                        if tname == "call_mcp_tool" and isinstance(args, dict):
+                            tcalled = args.get("ToolName", "mcp")
+                            targs = args.get("Arguments", {})
+                            arg_str = json.dumps(targs, ensure_ascii=False) if isinstance(targs, dict) else str(targs)
+                            if len(arg_str) > 70:
+                                arg_str = arg_str[:70] + "..."
+                            event_queue.put(("chunk", f"> 🔧 **[HA 도구]** `{tcalled}` {f'— *{desc}*' if desc else ''} `{arg_str}`\n\n"))
+                        elif tname == "view_file" and isinstance(args, dict):
+                            fpath = args.get("AbsolutePath", "")
+                            fname = os.path.basename(fpath) if fpath else "file"
+                            event_queue.put(("chunk", f"> 📄 **[파일 확인]** `{fname}` {f'— *{desc}*' if desc else ''}\n\n"))
+                        elif tname == "run_command" and isinstance(args, dict):
+                            cmd_str = args.get("CommandLine", "")
+                            event_queue.put(("chunk", f"> ⚙️ **[명령어]** `{cmd_str[:60]}` {f'— *{desc}*' if desc else ''}\n\n"))
+                        elif tname == "search_web":
+                            q = args.get("query", "") if isinstance(args, dict) else str(args)
+                            event_queue.put(("chunk", f"> 🌐 **[웹 검색]** *\"{q[:50]}\"*\n\n"))
+                        else:
+                            event_queue.put(("chunk", f"> 🔧 **[도구 실행]** `{tname}` {f'— *{desc}*' if desc else ''}\n\n"))
+
+                    # 3. Model Response (Final output)
+                    content = step_data.get("content", "")
+                    if content and stype == "PLANNER_RESPONSE" and not tcs:
+                        event_queue.put(("content", content))
+
+                except Exception:
+                    pass
+        finally:
             try:
-                data = json.loads(line_str)
+                file_obj.close()
             except Exception:
-                # Not JSON - check for auth error messages in plain text
-                lower = line_str.lower()
-                if any(w in lower for w in ["login required", "please run", "agy login", "oauth", "unauthorized", "unauthenticated"]):
-                    auth_failed = True
+                pass
+
+    def read_stdout():
+        nonlocal auth_failed, output_chars
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                l = line.rstrip("\r\n").strip()
+                if not l:
+                    continue
+                try:
+                    data = json.loads(l)
+                except Exception:
+                    lower = l.lower()
+                    if any(w in lower for w in ["login required", "please run", "agy login", "oauth", "unauthorized", "unauthenticated"]):
+                        auth_failed = True
+                        break
+                    continue
+
+                evt = data.get("event", data.get("type", ""))
+
+                if evt == "init":
+                    tools = data.get("init", {}).get("tools", [])
+                    cid = data.get("conversation_id", "")
+                    init_msg = f"> 🚀 **[Antigravity CLI]** 세션 개시 (`{len(tools)}`개 도구 로드됨)\n\n"
+                    event_queue.put(("chunk", init_msg))
+                    if cid:
+                        t_tail = threading.Thread(target=tail_transcript, args=(cid,), daemon=True)
+                        t_tail.start()
+
+                elif evt == "step_update":
+                    delta = data.get("step_update", {}).get("text_delta", "")
+                    if delta:
+                        event_queue.put(("chunk", delta))
+
+                elif evt == "result":
+                    res = data.get("result", {})
+                    event_queue.put(("result", res))
                     break
-                # Some other plain text - ignore (script adds noise)
-                continue
 
-            # Official Google Antigravity CLI stream-json event schema
-            evt = data.get("event", data.get("type", ""))
+                elif evt in ("content_block_delta", "text_delta"):
+                    delta = data.get("delta", {}).get("text", "") or data.get("text", "")
+                    if delta:
+                        event_queue.put(("chunk", delta))
 
-            # 1. Session Initialization Event
-            if evt == "init":
-                tools = data.get("init", {}).get("tools", [])
-                yield make_sse("tool", f"🚀 [CLI 세션 시작] 사용 가능 도구 {len(tools)}개 로드됨")
+                elif evt == "error":
+                    msg = data.get("error", {}).get("message", "") or data.get("message", "")
+                    if any(w in msg.lower() for w in ["auth", "login", "oauth", "unauthorized"]):
+                        auth_failed = True
+                        break
+                    event_queue.put(("chunk", f"> ⚠️ **[오류]** {msg}\n\n"))
+        finally:
+            done_event.set()
+            try:
+                proc.stdout.close()
+                proc.wait()
+            except Exception:
+                pass
 
-            # 2. Step Update Event (Text tokens, Tool execution, Thinking)
-            elif evt == "step_update":
-                step = data.get("step_update", {})
-                step_type = step.get("step_type", "")
-                state = step.get("state", "")
+    t_proc = threading.Thread(target=read_stdout, daemon=True)
+    t_proc.start()
 
-                # 2-1. Real-time text token delta
-                delta = step.get("text_delta") or ""
-                if delta:
-                    full_text_parts.append(delta)
-                    output_chars += len(delta)
+    # Stream out events as they arrive in real time
+    while True:
+        try:
+            ev_type, ev_data = event_queue.get(timeout=0.08)
+            if ev_type == "chunk":
+                full_text_parts.append(ev_data)
+                output_chars += len(ev_data)
+                has_emitted_chunk = True
+                yield make_sse("chunk", ev_data)
+            elif ev_type == "content":
+                # Check if content was already streamed
+                already_streamed = any(ev_data[:40] in p for p in full_text_parts) if full_text_parts else False
+                if not already_streamed:
+                    full_text_parts.append(ev_data)
+                    output_chars += len(ev_data)
                     has_emitted_chunk = True
-                    yield make_sse("chunk", delta)
-
-                # 2-2. Thinking / Reasoning step
-                thinking = step.get("thinking") or step.get("thought") or ""
-                if thinking:
-                    yield make_sse("tool", f"💭 [추론] {thinking[:80]}...")
-
-                # 2-3. Tool Call step
-                tool_call = step.get("tool_call") or step.get("tool") or {}
-                if tool_call:
-                    if isinstance(tool_call, dict):
-                        tname = tool_call.get("name") or tool_call.get("tool", "unknown")
-                        tinput = str(tool_call.get("input") or tool_call.get("args") or "")[:80]
-                        yield make_sse("tool", f"🔧 [도구 실행] {tname}{f': {tinput}' if tinput else ''}")
-                    else:
-                        yield make_sse("tool", f"🔧 [도구 실행] {tool_call}")
-
-                # 2-4. Tool Result step
-                if step_type == "tool_result" or "tool_result" in step:
-                    tname = step.get("tool_name", "")
-                    yield make_sse("tool", f"✅ [도구 완료] {tname}")
-
-            # 3. Final Execution Result Event
-            elif evt == "result":
-                res = data.get("result", {})
-                status = res.get("status", "")
-                response_text = res.get("response", "")
-                usage = res.get("usage", {})
-                duration = res.get("duration_seconds", 0)
-
-                # Fallback: if no streaming chunks arrived but response exists
-                if not has_emitted_chunk and response_text:
-                    full_text_parts.append(response_text)
-                    output_chars += len(response_text)
+                    yield make_sse("chunk", ev_data)
+            elif ev_type == "result":
+                resp_text = ev_data.get("response", "")
+                already_streamed = any(resp_text[:40] in p for p in full_text_parts) if full_text_parts else False
+                if resp_text and not already_streamed:
+                    full_text_parts.append(resp_text)
+                    output_chars += len(resp_text)
                     has_emitted_chunk = True
-                    yield make_sse("chunk", response_text)
+                    yield make_sse("chunk", resp_text)
 
+                usage = ev_data.get("usage", {})
+                duration = ev_data.get("duration_seconds", 0)
                 elapsed = duration or (time.time() - t_start)
                 in_tok = usage.get("input_tokens", 120)
                 out_tok = usage.get("output_tokens", max(1, int(output_chars * 0.4)))
@@ -269,67 +382,29 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                     "elapsed": round(elapsed, 2),
                 }
                 yield make_sse("done", tokens=tokens_meta)
-                proc.stdout.close()
-                proc.wait()
                 return
-
-            # 4. Standard Anthropic/OpenAI compatibility fallbacks
-            elif evt in ("content_block_start", "content_block_delta", "text_delta"):
-                delta = (
-                    data.get("delta", {}).get("text", "")
-                    or data.get("text", "")
-                    or data.get("content", "")
-                    or ""
-                )
-                if delta:
-                    full_text_parts.append(delta)
-                    output_chars += len(delta)
-                    has_emitted_chunk = True
-                    yield make_sse("chunk", delta)
-
-            elif evt == "message_stop":
-                elapsed = time.time() - t_start
-                tokens_meta = {
-                    "input": data.get("message", {}).get("usage", {}).get("input_tokens", 120),
-                    "output": data.get("message", {}).get("usage", {}).get("output_tokens", max(1, int(output_chars * 0.4))),
-                    "total": 0,
-                    "speed_tps": 0,
-                    "elapsed": round(elapsed, 2),
-                }
-                tokens_meta["total"] = tokens_meta["input"] + tokens_meta["output"]
-                tokens_meta["speed_tps"] = round(tokens_meta["output"] / max(0.01, elapsed), 1)
-                yield make_sse("done", tokens=tokens_meta)
-                proc.stdout.close()
-                proc.wait()
-                return
-
-            # 5. Error Event
-            elif evt in ("error",):
-                msg = data.get("error", {}).get("message", "") or data.get("message", "")
-                if any(w in msg.lower() for w in ["auth", "login", "oauth", "unauthorized"]):
-                    auth_failed = True
-                    break
-                yield make_sse("tool", f"⚠️ [오류] {msg}")
-
-        proc.stdout.close()
-        proc.wait()
-
-    except Exception as ex:
-        yield make_sse("tool", f"⚠️ [스트림 파싱 예외] {type(ex).__name__}: {str(ex)[:150]}")
-        auth_failed = False  # do not falsely trigger auth fallback for general exceptions
+        except queue.Empty:
+            if done_event.is_set() and event_queue.empty():
+                break
 
     if has_emitted_chunk:
-        # Completed normally
+        elapsed = time.time() - t_start
+        tokens_meta = {
+            "input": 120,
+            "output": max(1, int(output_chars * 0.4)),
+            "thinking": 0,
+            "total": 120 + max(1, int(output_chars * 0.4)),
+            "speed_tps": round(max(1, int(output_chars * 0.4)) / max(0.01, elapsed), 1),
+            "elapsed": round(elapsed, 2),
+        }
+        yield make_sse("done", tokens=tokens_meta)
         return
 
     if auth_failed:
-        yield make_sse("tool", "🔑 [인증 필요] Terminal 탭에서 'agy' 실행 후 Google 계정으로 1회 로그인하세요.")
-        yield make_sse("tool", "⚡ [자동 전환] Home Assistant 내장 AI 어시스턴트로 답변합니다.")
+        yield make_sse("chunk", "> 🔑 **[인증 필요]** Terminal 탭에서 `agy` 실행 후 Google 계정으로 1회 로그인하세요.\n\n")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev
     else:
-        # No chunks emitted, but not auth failure - try deep brain fallback gracefully
-        yield make_sse("tool", "⚡ [응답 생성] Home Assistant 통합 AI 엔진으로 즉시 답변합니다.")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev
 

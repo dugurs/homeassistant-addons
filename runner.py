@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Read final steps of smart home query conversation."""
-import os, glob, sys
+"""Check live Web UI JS from HTTP response."""
+import urllib.request, re, subprocess
 
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+url = "http://192.168.0.14:8000/"
+with urllib.request.urlopen(url) as resp:
+    html = resp.read().decode("utf-8")
 
-base_dir = r"\\HOMEASSISTANT\addon_configs\local_antigravity-cli\.gemini\antigravity-cli\brain"
-convs = sorted(os.listdir(base_dir), key=lambda d: os.path.getmtime(os.path.join(base_dir, d)))
-latest = os.path.join(base_dir, convs[-1])
-print(f"Latest conv: {convs[-1]}")
-
-tpath = os.path.join(latest, ".system_generated", "logs", "chunks", "transcript", "00000000.jsonl")
-if os.path.exists(tpath):
-    with open(tpath, "r", encoding="utf-8", errors="ignore") as f:
-        lines = f.readlines()
-        print(f"Total steps: {len(lines)}")
-        for i in range(max(0, len(lines)-10), len(lines)):
-            print(f"Step {i}: {lines[i][:300]}")
+scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.DOTALL)
+print(f"Live scripts found: {len(scripts)}")
+for i, s in enumerate(scripts):
+    with open("temp_script.js", "w", encoding="utf-8") as f:
+        f.write(s)
+    res = subprocess.run(["node", "--check", "temp_script.js"], capture_output=True, text=True)
+    if res.returncode == 0:
+        print(f"Live Script {i}: JS SYNTAX 100% VALID (PASS)")
+    else:
+        print(f"Live Script {i}: JS SYNTAX ERROR:\n{res.stderr}")

@@ -668,19 +668,58 @@ HTML_INDEX = """<!DOCTYPE html>
       color: var(--list-bullet);
     }
 
-    /* Callout & Alerts */
+    /* Callout & Alerts & Real-time Terminal Badges */
     .callout {
-      border-left: 4px solid var(--callout-tip-border);
+      border-left: 3px solid var(--callout-tip-border);
       background: var(--callout-tip-bg);
-      padding: 10px 14px;
-      border-radius: 0 8px 8px 0;
-      margin: 10px 0;
-      font-size: 0.88rem;
-      line-height: 1.55;
+      padding: 6px 12px;
+      border-radius: 0 6px 6px 0;
+      margin: 6px 0;
+      font-size: 0.82rem;
+      line-height: 1.45;
     }
     .callout.warning {
       border-left-color: var(--callout-warn-border);
       background: var(--callout-warn-bg);
+    }
+    .callout.thinking {
+      border-left-color: #a855f7;
+      background: rgba(168, 85, 247, 0.08);
+      color: #d8b4fe;
+      font-style: italic;
+    }
+    .callout.tool {
+      border-left-color: #3b82f6;
+      background: rgba(59, 130, 246, 0.08);
+      color: #93c5fd;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.80rem;
+    }
+    .callout.file {
+      border-left-color: #14b8a6;
+      background: rgba(20, 184, 166, 0.08);
+      color: #5eead4;
+      font-size: 0.80rem;
+    }
+    .callout.cmd {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.08);
+      color: #fcd34d;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.80rem;
+    }
+    .callout.init {
+      border-left-color: #6366f1;
+      background: rgba(99, 102, 241, 0.08);
+      color: #a5b4fc;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .callout.done {
+      border-left-color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+      color: #6ee7b7;
+      font-size: 0.80rem;
     }
     .callout strong { color: var(--text-bold); }
 
@@ -1006,25 +1045,34 @@ HTML_INDEX = """<!DOCTYPE html>
       // 1. Escape HTML
       let src = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-      // 2. Multi-line Blockquotes & Callouts
+      // 2. Multi-line Blockquotes & Terminal Callouts
       src = src.replace(/((?:^&gt;.*(?:\\r?\\n|$))+)/gm, function(match) {
         let lines = match.trim().split(/\\r?\\n/).map(l => l.replace(/^&gt;\\s?/, '').trim());
         let firstLine = lines[0] || '';
         let calloutType = 'tip';
-        let icon = '💡';
         
-        if (/^\\[!(WARNING|CAUTION|IMPORTANT)\\]/i.test(firstLine)) {
+        if (firstLine.includes('💭') || firstLine.includes('[추론]')) {
+          calloutType = 'thinking';
+        } else if (firstLine.includes('🔧') || firstLine.includes('[HA 도구]') || firstLine.includes('[도구')) {
+          calloutType = 'tool';
+        } else if (firstLine.includes('📄') || firstLine.includes('[파일')) {
+          calloutType = 'file';
+        } else if (firstLine.includes('⚙️') || firstLine.includes('[명령어')) {
+          calloutType = 'cmd';
+        } else if (firstLine.includes('🚀') || firstLine.includes('[Antigravity')) {
+          calloutType = 'init';
+        } else if (firstLine.includes('✅') || firstLine.includes('[완료]')) {
+          calloutType = 'done';
+        } else if (/^\\[!(WARNING|CAUTION|IMPORTANT)\\]/i.test(firstLine)) {
           calloutType = 'warning';
-          icon = '⚠️';
-          lines[0] = lines[0].replace(/^\\[!(WARNING|CAUTION|IMPORTANT)\\]\\s*/i, '');
+          lines[0] = lines[0].replace(/^\\[!(WARNING|CAUTION|IMPORTANT)\\]\\s*/i, '⚠️ ');
         } else if (/^\\[!(NOTE|INFO|TIP)\\]/i.test(firstLine)) {
           calloutType = 'tip';
-          icon = '💡';
-          lines[0] = lines[0].replace(/^\\[!(NOTE|INFO|TIP)\\]\\s*/i, '');
+          lines[0] = lines[0].replace(/^\\[!(NOTE|INFO|TIP)\\]\\s*/i, '💡 ');
         }
         
         let inner = lines.filter(l => l.length > 0).join('<br>');
-        return '<div class="callout ' + calloutType + '"><strong>' + icon + '</strong> ' + inner + '</div>';
+        return '<div class="callout ' + calloutType + '">' + inner + '</div>';
       });
 
       // 3. Fenced Code Blocks
@@ -1207,18 +1255,7 @@ HTML_INDEX = """<!DOCTYPE html>
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
-            <!-- Thought & Tool Step Timeline Accordion -->
-            <details class="thought-box" style="display: none;" open>
-              <summary class="thought-header">
-                <div class="thought-title-wrap">
-                  <span class="thought-status-icon">⚡</span>
-                  <span class="thought-title-text">작업 및 추론 과정</span>
-                  <span class="thought-step-badge" style="font-size: 0.72rem; color: var(--accent-blue);">(1단계 진행 중...)</span>
-                </div>
-              </summary>
-              <ul class="step-timeline-list"></ul>
-            </details>
-            <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
+            <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 스트림 연결 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
           <div class="msg-meta bot">
@@ -1232,10 +1269,6 @@ HTML_INDEX = """<!DOCTYPE html>
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
-      const thoughtBox = row.querySelector('.thought-box');
-      const thoughtIcon = row.querySelector('.thought-status-icon');
-      const thoughtBadge = row.querySelector('.thought-step-badge');
-      const stepList = row.querySelector('.step-timeline-list');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
@@ -1243,29 +1276,19 @@ HTML_INDEX = """<!DOCTYPE html>
 
       let answerText = "";
       let finished = false;
-      let stepCount = 0;
 
       const liveTimer = setInterval(() => {
         if (finished) return;
         const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-        if (elapsed >= 1.0 && latencyEl) {
-          latencyEl.textContent = `⏳ ${elapsed}초 분석 중...`;
+        if (elapsed >= 0.5 && latencyEl) {
+          latencyEl.textContent = `⏳ ${elapsed}초 실시간 처리 중...`;
           latencyEl.style.display = 'inline';
         }
       }, 100);
 
       return {
         addTool: function(toolStr) {
-          stepCount++;
-          if (thoughtBox && stepList) {
-            thoughtBox.style.display = 'block';
-            if (thoughtBadge) thoughtBadge.textContent = `(${stepCount}단계 진행 중...)`;
-            const li = document.createElement('li');
-            li.className = 'step-item';
-            li.innerHTML = `<span class="step-bullet">▸</span><span>${toolStr}</span>`;
-            stepList.appendChild(li);
-            box.scrollTop = box.scrollHeight;
-          }
+          // Tool info is now directly delivered via inline chunks in real-time
         },
         appendChunk: function(chunk) {
           answerText += chunk;
@@ -1286,16 +1309,9 @@ HTML_INDEX = """<!DOCTYPE html>
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
-          if (thoughtBox && stepCount > 0) {
-            if (thoughtIcon) {
-              thoughtIcon.textContent = '✅';
-              thoughtIcon.classList.add('done');
-            }
-            if (thoughtBadge) thoughtBadge.textContent = `(${stepCount}단계 완료)`;
-          }
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
-            latencyEl.textContent = `⚡ ${latency}초`;
+            latencyEl.textContent = `⚡ ${latency}초 완료`;
             latencyEl.style.display = 'inline';
           }
           if (tokensMeta && tokensMeta.total) {
