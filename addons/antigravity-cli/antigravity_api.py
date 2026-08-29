@@ -408,6 +408,14 @@ def get_weather_env_summary(states: list) -> str:
     return "\n".join(res)
 
 
+def make_sse(ev_type: str, content: str = "") -> str:
+    """Helper to format Server-Sent Events without nested f-string backslashes."""
+    payload = {"type": ev_type}
+    if content:
+        payload["content"] = content
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
     """Generator that yields real-time SSE stream events for Antigravity AI."""
     clean_prompt = prompt.strip()
@@ -416,14 +424,14 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
     # 1. Real-Time Deep Brain AI via PTY
     if is_direct_llm:
         if pty is None:
-            yield f"data: {json.dumps({'type': 'text', 'content': '[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
+            yield make_sse("done")
             return
 
         agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
         if not os.path.exists(agy_bin):
-            yield f"data: {json.dumps({'type': 'text', 'content': '[오류] agy 바이너리를 찾을 수 없습니다.'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield make_sse("text", "[오류] agy 바이너리를 찾을 수 없습니다.")
+            yield make_sse("done")
             return
 
         supervisor_token = get_supervisor_token()
@@ -466,7 +474,7 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
                         proc.kill()
                     except Exception:
                         pass
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': f'\\n[오류] AI 추론 시간이 초과되었습니다 ({timeout}초 초과).' })}\n\n"
+                    yield make_sse("chunk", f"\n[오류] AI 추론 시간이 초과되었습니다 ({timeout}초 초과).")
                     break
 
                 r, _, _ = select.select([master_fd], [], [], 0.2)
@@ -489,9 +497,9 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
                                 if any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
                                     continue
                                 if clean.startswith("● ") or clean.startswith("▸ ") or clean.startswith("Initiating") or clean.startswith("Discovering"):
-                                    yield f"data: {json.dumps({'type': 'tool', 'content': clean})}\n\n"
+                                    yield make_sse("tool", clean)
                                 else:
-                                    yield f"data: {json.dumps({'type': 'chunk', 'content': clean + '\\n'})}\n\n"
+                                    yield make_sse("chunk", clean + "\n")
                     except OSError:
                         break
 
@@ -516,9 +524,9 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
                     clean = strip_ansi(line).strip()
                     if clean and not any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
                         if clean.startswith("● ") or clean.startswith("▸ "):
-                            yield f"data: {json.dumps({'type': 'tool', 'content': clean})}\n\n"
+                            yield make_sse("tool", clean)
                         else:
-                            yield f"data: {json.dumps({'type': 'chunk', 'content': clean + '\\n'})}\n\n"
+                            yield make_sse("chunk", clean + "\n")
 
         finally:
             try:
@@ -526,13 +534,13 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
             except Exception:
                 pass
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        yield make_sse("done")
         return
 
     # 2. Fast Semantic Engine Queries (Weather, System, Room sensors)
     full_text = handle_agent_chat(clean_prompt, "", "", False)
-    yield f"data: {json.dumps({'type': 'text', 'content': full_text})}\n\n"
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield make_sse("text", full_text)
+    yield make_sse("done")
 
 
 def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str = "", is_direct_llm: bool = False) -> str:
