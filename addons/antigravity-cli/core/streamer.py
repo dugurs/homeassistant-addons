@@ -30,6 +30,10 @@ def make_sse(event_type: str, content: str = "") -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+import queue
+import threading
+
+
 def stream_transcript_tail(prompt: str):
     """Mode 1: Tail transcript.jsonl in real-time to stream thoughts, tool calls, and chunks without blocking."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
@@ -59,14 +63,18 @@ def stream_transcript_tail(prompt: str):
 
     brain_roots = [
         "/root/.gemini/antigravity/brain",
+        "/root/.gemini/brain",
         "/config/.gemini/antigravity/brain",
+        "/config/.gemini/brain",
         os.path.expanduser("~/.gemini/antigravity/brain"),
+        os.path.expanduser("~/.gemini/brain"),
     ]
 
     cmd = [agy_bin, "--dangerously-skip-permissions", "--print", actual_prompt]
     try:
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -77,6 +85,21 @@ def stream_transcript_tail(prompt: str):
         yield make_sse("done")
         return
 
+    out_queue = queue.Queue()
+
+    def reader_thread(pipe, q):
+        try:
+            for line in iter(pipe.readline, b""):
+                if line:
+                    q.put(line.decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+        finally:
+            pipe.close()
+
+    t = threading.Thread(target=reader_thread, args=(proc.stdout, out_queue), daemon=True)
+    t.start()
+
     yield make_sse("tool", "AI 딥 브레인 연산 시작 및 실시간 트랜스크립트 로그 모니터링 중...")
 
     transcript_file = None
@@ -86,6 +109,20 @@ def stream_transcript_tail(prompt: str):
     streamed_any_chunk = False
 
     while time.time() - start_time < timeout:
+        # Drain stdout queue
+        while not out_queue.empty():
+            try:
+                line_data = out_queue.get_nowait()
+                clean = strip_ansi(line_data).strip()
+                if clean:
+                    if clean.startswith("● ") or clean.startswith("▸ ") or clean.startswith("Initiating") or clean.startswith("Discovering"):
+                        yield make_sse("tool", clean)
+                    else:
+                        yield make_sse("chunk", clean + "\n")
+                        streamed_any_chunk = True
+            except queue.Empty:
+                break
+
         if not transcript_file:
             for br in brain_roots:
                 if os.path.exists(br):
@@ -135,17 +172,16 @@ def stream_transcript_tail(prompt: str):
             except Exception:
                 pass
 
-        if proc.poll() is not None:
+        if proc.poll() is not None and out_queue.empty():
             break
 
-        time.sleep(0.3)
+        time.sleep(0.2)
 
-    # Process final stdout
+    # If nothing was streamed from agy, fallback to smart home response
     if not streamed_any_chunk:
-        stdout_data, _ = proc.communicate()
-        out_str = strip_ansi(stdout_data.decode("utf-8", errors="replace").strip())
-        if out_str:
-            yield make_sse("text", out_str)
+        yield make_sse("tool", "실시간 스마트홈 상태 데이터 추가 분석 중...")
+        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        yield make_sse("text", full_text)
 
     yield make_sse("done")
 

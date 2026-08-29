@@ -471,6 +471,14 @@ HTML_INDEX = """<!DOCTYPE html>
       let toolList = [];
       let answerText = "";
 
+      const liveTimer = setInterval(() => {
+        const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+        if (elapsed >= 1.0 && latencyEl) {
+          latencyEl.textContent = `⏳ ${elapsed}초 분석 중...`;
+          latencyEl.style.display = 'inline';
+        }
+      }, 100);
+
       return {
         addTool: function(toolStr) {
           toolList.push(toolStr);
@@ -490,6 +498,7 @@ HTML_INDEX = """<!DOCTYPE html>
           box.scrollTop = box.scrollHeight;
         },
         finish: function() {
+          clearInterval(liveTimer);
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초`;
