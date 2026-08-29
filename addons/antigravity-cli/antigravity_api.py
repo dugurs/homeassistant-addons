@@ -201,7 +201,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     pass
 
             is_direct_llm = payload.get("is_direct_llm", False) or prompt.startswith("ai ") or prompt.startswith("/llm")
-            stream_mode = int(payload.get("stream_mode", 3))
+            stream_mode = int(payload.get("stream_mode", 1))
             is_mobile = bool(payload.get("is_mobile", False))
 
             if not prompt:

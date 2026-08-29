@@ -383,77 +383,7 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
     return "\n".join(lines)
 
 
-def get_terminal_cli_environment_view(states: list, is_mobile: bool = False) -> str:
-    """Mode 2: Terminal Raw CLI Monitor Representation adapted for Mobile/Desktop."""
-    env_data = get_room_env_matrix(states)
-    rooms = env_data["rooms"]
-    matrix = env_data["matrix"]
-    active_metrics = env_data["active_metrics"]
-    usage = get_resource_usage()
 
-    if is_mobile:
-        rows = []
-        for r in rooms:
-            r_data = matrix.get(r, {})
-            t_val = r_data.get("temperature", {}).get("formatted", "--")
-            h_val = r_data.get("humidity", {}).get("formatted", "--")
-            rows.append(f"│ {r:<4} │ {t_val:>7} │ {h_val:>6} │")
-
-        cli_output = [
-            "┌──────────────────────────────────┐",
-            "│ [ANTIGRAVITY CLI MOBILE MONITOR] │",
-            "├──────┬─────────┬────────┤",
-            "│ ZONE │ TEMP    │ HUMID  │",
-            "├──────┼─────────┼────────┤",
-            *rows,
-            "├──────┴─────────┴────────┤",
-            f"│ RAM: {usage['used_memory_gb']}/{usage['total_memory_gb']}G ({usage['memory_percent']}%) │",
-            "└──────────────────────────────────┘",
-        ]
-        return "```text\n" + "\n".join(cli_output) + "\n```"
-
-    # Check if CO2 or TVOC is in active metrics
-    has_co2 = "co2" in active_metrics
-    rows = []
-    if has_co2:
-        for r in rooms:
-            r_data = matrix.get(r, {})
-            t_val = r_data.get("temperature", {}).get("formatted", "--")
-            h_val = r_data.get("humidity", {}).get("formatted", "--")
-            c_val = r_data.get("co2", {}).get("formatted", "--")
-            rows.append(f"│  {r:<6} │ {t_val:>8} │ {h_val:>8} │ {c_val:>10} │  ACTIVE │")
-
-        cli_output = [
-            "┌──────────────────────────────────────────────────────────────┐",
-            "│         [ANTIGRAVITY CLI v1.3.0 ENVIRONMENT MONITOR]         │",
-            "├──────────┬──────────┬──────────┬────────────┬────────────────┤",
-            "│ ZONE     │ TEMP     │ HUMIDITY │ CO2        │ SENSOR STATUS  │",
-            "├──────────┼──────────┼──────────┼────────────┼────────────────┤",
-            *rows,
-            "├──────────┴──────────┴──────────┴────────────┴────────────────┤",
-            f"│ HOST RAM : {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | ADDON RAM : {usage['memory_usage']} MB │",
-            "└──────────────────────────────────────────────────────────────┘",
-        ]
-    else:
-        for r in rooms:
-            r_data = matrix.get(r, {})
-            t_val = r_data.get("temperature", {}).get("formatted", "--")
-            h_val = r_data.get("humidity", {}).get("formatted", "--")
-            rows.append(f"│  {r:<8} │ {t_val:>10} │ {h_val:>10} │   ACTIVE  │")
-
-        cli_output = [
-            "┌────────────────────────────────────────────────────────┐",
-            "│       [ANTIGRAVITY CLI v1.3.0 ENVIRONMENT MONITOR]     │",
-            "├───────────┬────────────┬────────────┬──────────────────┤",
-            "│ ZONE      │ TEMP       │ HUMIDITY   │ SENSOR STATUS    │",
-            "├───────────┼────────────┼────────────┼──────────────────┤",
-            *rows,
-            "├───────────┴────────────┴────────────┴──────────────────┤",
-            f"│ HOST RAM : {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | ADDON RAM : {usage['memory_usage']} MB │",
-            "└────────────────────────────────────────────────────────┘",
-        ]
-
-    return "```text\n" + "\n".join(cli_output) + "\n```"
 
 
 def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str:

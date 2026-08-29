@@ -400,6 +400,33 @@ HTML_INDEX = """<!DOCTYPE html>
       cursor: not-allowed !important;
     }
 
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .session-token-badge {
+      font-size: 11px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      color: #38bdf8;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .meta-tokens {
+      color: #38bdf8;
+      font-weight: 500;
+      background: rgba(56, 189, 248, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      white-space: nowrap;
+    }
+
     /* Terminal View */
     #terminal-view { height: 100%; display: none; width: 100%; }
     #terminal-view.active { display: block; }
@@ -412,9 +439,12 @@ HTML_INDEX = """<!DOCTYPE html>
       <span>🤖 Antigravity AI</span>
       <span class="brand-badge">Real-time Stream</span>
     </div>
-    <div class="nav-tabs">
-      <button class="tab-btn active" onclick="switchTab('chat')">💬 AI Chat</button>
-      <button class="tab-btn" onclick="switchTab('terminal')">🖥️ Terminal</button>
+    <div class="header-right">
+      <div class="session-token-badge">🪙 세션 누적: <strong id="session-tokens">0</strong> Tokens</div>
+      <div class="nav-tabs">
+        <button class="tab-btn active" onclick="switchTab('chat')">💬 AI Chat</button>
+        <button class="tab-btn" onclick="switchTab('terminal')">🖥️ Terminal</button>
+      </div>
     </div>
   </header>
 
@@ -441,9 +471,8 @@ HTML_INDEX = """<!DOCTYPE html>
             <span>⚙️ 실시간 스트림 엔진:</span>
           </label>
           <select id="stream-mode" class="mode-select" onchange="onModeChange(this.value)">
-            <option value="1">📜 모드 1: Transcript 추적 (사고과정 & 도구호출 가시화)</option>
-            <option value="2">🖥️ 모드 2: PTY 터미널 스트림 (실시간 터미널 렌더링)</option>
-            <option value="3" selected>⚡ 모드 3: 하이브리드 고속 (스마트홈 0.05초 즉답)</option>
+            <option value="1" selected>🧠 모드 1: AI 딥 브레인 분석 (다차원 공기질 & AI 조언)</option>
+            <option value="2">⚡ 모드 2: 초고속 스마트홈 즉답 (0.05초 즉시 제어 & 대시보드)</option>
           </select>
         </div>
         <div class="input-bar">
@@ -589,6 +618,8 @@ HTML_INDEX = """<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
     }
 
+    let sessionTotalTokens = 0;
+
     function createBotStreamMessage() {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
@@ -610,6 +641,7 @@ HTML_INDEX = """<!DOCTYPE html>
           <div class="msg-meta bot">
             <span class="meta-time">${timeStr}</span>
             <span class="meta-latency" style="display: none;"></span>
+            <span class="meta-tokens" style="display: none;"></span>
             <button class="copy-btn" onclick="copyMessage(this)">📋 복사</button>
           </div>
         </div>
@@ -622,11 +654,14 @@ HTML_INDEX = """<!DOCTYPE html>
       const toolContent = row.querySelector('.tool-content');
       const answerContent = row.querySelector('.answer-content');
       const latencyEl = row.querySelector('.meta-latency');
+      const tokensEl = row.querySelector('.meta-tokens');
 
       let toolList = [];
       let answerText = "";
+      let finished = false;
 
       const liveTimer = setInterval(() => {
+        if (finished) return;
         const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
         if (elapsed >= 1.0 && latencyEl) {
           latencyEl.textContent = `⏳ ${elapsed}초 분석 중...`;
@@ -652,12 +687,23 @@ HTML_INDEX = """<!DOCTYPE html>
           answerContent.innerHTML = formatMarkdown(answerText);
           box.scrollTop = box.scrollHeight;
         },
-        finish: function() {
+        finish: function(tokensMeta) {
+          if (finished) return;
+          finished = true;
           clearInterval(liveTimer);
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초`;
             latencyEl.style.display = 'inline';
+          }
+          if (tokensMeta && tokensMeta.total) {
+            if (tokensEl) {
+              tokensEl.textContent = `🪙 ${tokensMeta.total} Tokens (In: ${tokensMeta.input} / Out: ${tokensMeta.output}) | ${tokensMeta.speed_tps} tok/s`;
+              tokensEl.style.display = 'inline';
+            }
+            sessionTotalTokens += tokensMeta.total;
+            const sessBadge = document.getElementById('session-tokens');
+            if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
           }
           if (toolList.length > 0) {
             toolTitle.textContent = `🔍 AI 도구 호출 완료 (${toolList.length}단계)`;
@@ -676,7 +722,7 @@ HTML_INDEX = """<!DOCTYPE html>
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      const savedMode = localStorage.getItem('antigravity_stream_mode') || '3';
+      const savedMode = localStorage.getItem('antigravity_stream_mode') || '1';
       const sel = document.getElementById('stream-mode');
       if (sel) sel.value = savedMode;
     });
@@ -710,7 +756,7 @@ HTML_INDEX = """<!DOCTYPE html>
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
       const modeSel = document.getElementById('stream-mode');
-      const streamMode = modeSel ? parseInt(modeSel.value) : 3;
+      const streamMode = modeSel ? parseInt(modeSel.value) : 1;
       const prompt = input.value.trim();
       if (!prompt) return;
 
@@ -769,7 +815,7 @@ HTML_INDEX = """<!DOCTYPE html>
               } else if (ev.type === 'text') {
                 streamUI.setText(ev.content);
               } else if (ev.type === 'done') {
-                streamUI.finish();
+                streamUI.finish(ev.tokens);
               }
             } catch (e) {}
           }

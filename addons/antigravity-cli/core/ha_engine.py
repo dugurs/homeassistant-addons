@@ -11,7 +11,6 @@ from core.renderers import (
     generate_dynamic_ai_recommendations,
     get_ai_deep_environment_analysis,
     get_comprehensive_home_summary,
-    get_terminal_cli_environment_view,
     get_weather_env_summary,
 )
 from core.sensors import (
