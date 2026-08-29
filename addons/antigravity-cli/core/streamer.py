@@ -310,7 +310,7 @@ def stream_pty_interactive(prompt: str, is_mobile: bool = False):
     yield make_sse("done")
 
 
-def stream_hybrid_fast(prompt: str):
+def stream_hybrid_fast(prompt: str, is_mobile: bool = False):
     """Mode 3: Ultra-Fast Smart Home Native Dispatcher (0.05s) + Step-by-Step Tool Visibility."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     yield make_sse("tool", "⚡ [모드 3: 하이브리드 고속] 스마트홈 실시간 엔티티 고속 수집 중...")
@@ -318,7 +318,7 @@ def stream_hybrid_fast(prompt: str):
     yield make_sse("tool", "📊 [2단계] 주요 공간 센서 및 기기 데이터 실시간 분석")
     time.sleep(0.04)
 
-    full_text = handle_agent_chat(actual_prompt, "", "", False)
+    full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
     yield make_sse("text", full_text)
     yield make_sse("done")
 
@@ -332,5 +332,5 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int
         for ev in stream_pty_interactive(prompt, is_mobile=is_mobile):
             yield ev
     else:
-        for ev in stream_hybrid_fast(prompt):
+        for ev in stream_hybrid_fast(prompt, is_mobile=is_mobile):
             yield ev

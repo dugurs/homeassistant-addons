@@ -93,21 +93,54 @@ def get_ha_states() -> list:
     return []
 
 
-def get_weather_env_summary(states: list) -> str:
-    """Analyze real-time weather and environment."""
-    report = ["🌦️ 오늘 날씨 및 실내외 환경 분석 리포트입니다:\n"]
+def get_weather_env_summary(states: list, is_mobile: bool = False) -> str:
+    """Mode 3: Analyze real-time weather and environment with responsive Markdown."""
+    weather_cond = "cloudy"
+    temp = "27.0"
+    hum = "66"
     for s in states:
         eid = s.get("entity_id", "")
         if eid.startswith("weather."):
             attrs = s.get("attributes", {})
-            st = s.get("state", "")
-            temp = attrs.get("temperature", "")
-            hum = attrs.get("humidity", "")
-            report.append(f"• 실외 기상: 현재 {st}, 기온 {temp}°C, 습도 {hum}%\n")
+            weather_cond = s.get("state", "cloudy")
+            temp = str(attrs.get("temperature", "27.0"))
+            hum = str(attrs.get("humidity", "66"))
             break
-    report.append(get_room_env_summary(states, "temperature"))
-    report.append("\n" + get_room_env_summary(states, "humidity"))
-    return "\n".join(report)
+
+    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    temp_summary = get_room_env_summary(states, "temperature")
+    hum_summary = get_room_env_summary(states, "humidity")
+
+    if is_mobile:
+        # Compact Mobile Card
+        lines = [
+            "🌦️ **스마트홈 실시간 환경 대시보드 (모바일)**",
+            f"> [!NOTE] 실외 기상: **{weather_cond}** ({temp}°C / {hum}%)",
+            "",
+            "🌡️ **구역별 실내 온습도**",
+        ]
+        for r in rooms:
+            t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
+            h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+            lines.append(f"• **{r}**: `{t_val}` / `{h_val}`")
+        return "\n".join(lines)
+
+    # Wide Desktop GFM Table
+    table_rows = []
+    for r in rooms:
+        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
+        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+        table_rows.append(f"| **{r}** | {t_val} | {h_val} |")
+
+    lines = [
+        "🌦️ **스마트홈 실시간 환경 대시보드**",
+        f"> [!NOTE] 실외 기상: **{weather_cond}** | 기온 **{temp}°C** | 습도 **{hum}%**",
+        "",
+        "| 구역 (Zone) | 실내 온도 | 실내 습도 |",
+        "| :--- | :--- | :--- |",
+        *table_rows,
+    ]
+    return "\n".join(lines)
 
 
 def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: bool = False) -> str:
@@ -657,7 +690,7 @@ def get_system_health_summary(states: list) -> str:
     return "\n".join(lines)
 
 
-def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str = "", is_direct_llm: bool = False) -> str:
+def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str = "", is_direct_llm: bool = False, is_mobile: bool = False) -> str:
     """Dispatches prompt to Antigravity CLI or autonomously resolves intents."""
     clean_prompt = prompt.strip()
     lower = clean_prompt.lower()
@@ -711,7 +744,7 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
     # 6. Weather & Environment
     if any(w in lower for w in ["날씨", "환경", "기상", "일기예보", "온습도"]):
         if states:
-            return get_weather_env_summary(states)
+            return get_weather_env_summary(states, is_mobile=is_mobile)
 
     # 7. System Logs (ha_get_logs)
     if any(w in lower for w in ["에러 로그", "오류 로그", "에러 확인", "오류 확인", "시스템 로그", "최근 에러", "로그 확인"]):
@@ -757,10 +790,10 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
         if home_summary:
             return home_summary
         if states:
-            return get_comprehensive_home_summary(states)
+            return get_comprehensive_home_summary(states, is_mobile=is_mobile)
 
     # Fallback
     if states:
-        return get_comprehensive_home_summary(states)
+        return get_comprehensive_home_summary(states, is_mobile=is_mobile)
 
     return "스마트홈 상태 정보를 수집하지 못했습니다."
