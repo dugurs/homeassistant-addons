@@ -301,32 +301,26 @@ HTML_INDEX = """<!DOCTYPE html>
       margin: 4px 0;
     }
 
-    /* Tool Progression Accordion */
-    .tool-box {
-      margin-bottom: 12px;
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      background: var(--bg-base);
-      overflow: hidden;
-      font-size: 0.8rem;
-    }
-    .tool-header {
-      padding: 7px 12px;
+    /* Header Mode Badge */
+    .header-left-group {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      cursor: pointer;
-      user-select: none;
-      background: rgba(56, 189, 248, 0.05);
-      border-bottom: 1px solid var(--border-subtle);
+      gap: 8px;
     }
-    .tool-title { font-weight: 600; color: var(--accent-blue); }
-    .tool-content {
-      padding: 8px 12px;
-      color: var(--text-muted);
-      line-height: 1.6;
-      font-family: 'Fira Code', monospace;
-      font-size: 0.76rem;
+    .mode-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: var(--badge-bg);
+      color: var(--accent-blue);
+      border: 1px solid var(--badge-border);
+      white-space: nowrap;
+    }
+    .mode-badge.fast {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-green);
+      border-color: rgba(16, 185, 129, 0.25);
     }
 
     /* Message Metadata Footer */
@@ -884,28 +878,28 @@ HTML_INDEX = """<!DOCTYPE html>
       });
     }
 
-    function createBotStreamMessage() {
+    function createBotStreamMessage(streamMode) {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
       const timeStr = getCurrentTimeStr();
       const startTime = performance.now();
+      const isMode2 = (streamMode === 2);
+      const modeText = isMode2 ? '⚡ 초고속 스마트홈' : '🧠 AI 딥 브레인';
+      const modeClass = isMode2 ? 'mode-badge fast' : 'mode-badge';
+
       row.className = 'msg-row bot';
       row.innerHTML = `
         <div class="bubble-wrap">
           <div class="bubble">
             <div class="bubble-header">
-              <div class="view-toggle-wrap">
-                <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
-                <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 마크다운 원문</button>
+              <div class="header-left-group">
+                <span class="${modeClass}">${modeText}</span>
+                <div class="view-toggle-wrap">
+                  <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
+                  <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 원문</button>
+                </div>
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
-            </div>
-            <div class="tool-box" style="display: none;">
-              <div class="tool-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                <span class="tool-title">🔍 AI 도구 호출 진행 중...</span>
-                <span>▼</span>
-              </div>
-              <div class="tool-content"></div>
             </div>
             <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
@@ -921,15 +915,11 @@ HTML_INDEX = """<!DOCTYPE html>
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
-      const toolBox = row.querySelector('.tool-box');
-      const toolTitle = row.querySelector('.tool-title');
-      const toolContent = row.querySelector('.tool-content');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
       const tokensEl = row.querySelector('.meta-tokens');
 
-      let toolList = [];
       let answerText = "";
       let finished = false;
 
@@ -943,13 +933,7 @@ HTML_INDEX = """<!DOCTYPE html>
       }, 100);
 
       return {
-        addTool: function(toolStr) {
-          toolList.push(toolStr);
-          toolBox.style.display = 'block';
-          toolTitle.textContent = `🔍 AI 도구 호출 진행 중 (${toolList.length}단계)`;
-          toolContent.innerHTML = toolList.map(t => '• ' + t.replace(/</g, "&lt;")).join('<br>');
-          box.scrollTop = box.scrollHeight;
-        },
+        addTool: function(toolStr) {},
         appendChunk: function(chunk) {
           answerText += chunk;
           answerContent.innerHTML = formatMarkdown(answerText);
@@ -983,9 +967,6 @@ HTML_INDEX = """<!DOCTYPE html>
             localStorage.setItem('antigravity_total_tokens', sessionTotalTokens.toString());
             const sessBadge = document.getElementById('session-tokens');
             if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
-          }
-          if (toolList.length > 0) {
-            toolTitle.textContent = `🔍 AI 도구 호출 완료 (${toolList.length}단계)`;
           }
           if (!answerText) {
             answerContent.innerHTML = "답변 작성을 완료했습니다.";
@@ -1047,7 +1028,7 @@ HTML_INDEX = """<!DOCTYPE html>
       btn.disabled = true;
       updateSendBtn();
 
-      const streamUI = createBotStreamMessage();
+      const streamUI = createBotStreamMessage(streamMode);
       const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
       const isMobile = window.innerWidth < 768;
 
