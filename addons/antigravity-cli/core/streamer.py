@@ -284,14 +284,15 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
             auth_files.append(f"{p}: NOT_FOUND")
 
     found_files = []
-    for search_dir in ["/root", "/config", "/root/.gemini", "/root/.config", "/root/.local/share"]:
+    for search_dir in ["/root", "/config", "/homeassistant", "/data", "/share"]:
         if os.path.exists(search_dir):
             try:
                 for root, dirs, files in os.walk(search_dir):
-                    if len(found_files) > 40:
+                    if len(found_files) > 50:
                         break
                     for f in files:
-                        found_files.append(os.path.join(root, f))
+                        if any(k in f.lower() for k in ["gemini", "antigravity", "agy", "oauth", "token", "auth", "session"]):
+                            found_files.append(os.path.join(root, f))
             except Exception:
                 pass
 
