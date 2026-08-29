@@ -58,7 +58,8 @@ def execute_device_control_intent(prompt: str, states: list) -> str:
     is_open = any(k in clean for k in ["열어", "open"])
     is_close = any(k in clean for k in ["닫아", "close"])
 
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "현관", "베란다"]
+    from core.sensors import get_dynamic_rooms
+    rooms = get_dynamic_rooms(states)
     matched_room = next((r for r in rooms if r in clean), None)
 
     # 1. Curtains / Covers

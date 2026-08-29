@@ -1,7 +1,87 @@
 """Multi-Mode Responsive Markdown View Generators."""
 
-from core.sensors import get_room_env_summary
+from core.sensors import get_dynamic_rooms, get_room_env_summary
 from core.system_info import get_resource_usage
+
+
+def generate_dynamic_ai_recommendations(
+    outdoor_temp: float,
+    outdoor_hum: int,
+    temp_map: dict,
+    hum_map: dict,
+    active_fans: list,
+    on_lights: list,
+) -> list:
+    """Dynamically synthesize personalized smart home care recommendations from real-time conditions."""
+    recs = []
+
+    # 1. Ventilation & Humidity Difference
+    indoor_hums = [
+        float(v.replace("%", "").strip())
+        for v in hum_map.values()
+        if v and v.replace("%", "").strip().replace(".", "", 1).isdigit()
+    ]
+    avg_indoor_hum = sum(indoor_hums) / len(indoor_hums) if indoor_hums else 60.0
+
+    if outdoor_hum >= 70 and outdoor_hum > avg_indoor_hum:
+        recs.append(
+            f"• **환기 제어**: 외부 습도({outdoor_hum}%)가 실내 평균({avg_indoor_hum:.1f}%)보다 높습니다. 창문 개방 대신 **주방/화장실 환풍기 및 제습 장치 가동**을 권장합니다."
+        )
+    elif outdoor_hum <= 55 and outdoor_hum < avg_indoor_hum:
+        recs.append(
+            f"• **자연 환기**: 외부 습도가 {outdoor_hum}%로 쾌적합니다. 창문을 열어 **실내 공기 순환 및 자연 환기**를 진행하기 좋은 조건입니다."
+        )
+    else:
+        recs.append(
+            "• **공기질 관리**: 실내외 습도가 유사하므로 주방 및 화장실 환풍기를 필요에 따라 간헐적으로 가동하세요."
+        )
+
+    # 2. Overheated or Cold Rooms Targeting
+    hot_rooms = []
+    cold_rooms = []
+    indoor_temps = []
+    for r, v in temp_map.items():
+        try:
+            num = float(v.replace("°C", "").replace("°F", "").strip())
+            indoor_temps.append(num)
+            if num >= 30.0:
+                hot_rooms.append((r, num))
+            elif num <= 20.0:
+                cold_rooms.append((r, num))
+        except Exception:
+            pass
+
+    if hot_rooms:
+        hot_str = ", ".join([f"**{r}**({t}°C)" for r, t in hot_rooms[:2]])
+        recs.append(
+            f"• **온열 환경 케어**: 현재 {hot_str}의 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 공기를 순환시키거나 냉방을 가동하세요."
+        )
+    elif cold_rooms:
+        cold_str = ", ".join([f"**{r}**({t}°C)" for r, t in cold_rooms[:2]])
+        recs.append(
+            f"• **온열 환경 케어**: 현재 {cold_str}의 온도가 낮습니다. 단열 상태를 점검하거나 난방 설정을 확인하세요."
+        )
+    else:
+        avg_t = sum(indoor_temps) / len(indoor_temps) if indoor_temps else 25.0
+        recs.append(
+            f"• **온습도 최적화**: 전 구역 실내 온도가 쾌적 범위(평균 {avg_t:.1f}°C) 내에서 안정적으로 유지되고 있습니다."
+        )
+
+    # 3. Appliances & Energy Optimization
+    if len(on_lights) >= 5:
+        recs.append(
+            f"• **에너지 절약**: 현재 {len(on_lights)}개의 조명이 켜져 있습니다. 미사용 구역의 소등을 검토하세요."
+        )
+    elif len(active_fans) == 0 and hot_rooms:
+        recs.append(
+            "• **에너지 케어**: 실내 과열 구역이 있으나 팬이 정지 상태입니다. 공기 순환 팬 가동 시 냉방 효율을 높일 수 있습니다."
+        )
+    else:
+        recs.append(
+            "• **안심 스마트홈**: 주요 기기들이 정상 상태로 작동 중이며 취침 전 일괄 소등 자동화를 권장합니다."
+        )
+
+    return recs
 
 
 def get_weather_env_summary(states: list, is_mobile: bool = False) -> str:
@@ -18,12 +98,11 @@ def get_weather_env_summary(states: list, is_mobile: bool = False) -> str:
             hum = str(attrs.get("humidity", "66"))
             break
 
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    rooms = get_dynamic_rooms(states)
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
 
     if is_mobile:
-        # Compact Mobile Card
         lines = [
             "🌦️ **스마트홈 실시간 환경 대시보드 (모바일)**",
             f"> [!NOTE] 실외 기상: **{weather_cond}** ({temp}°C / {hum}%)",
@@ -36,7 +115,6 @@ def get_weather_env_summary(states: list, is_mobile: bool = False) -> str:
             lines.append(f"• **{r}**: `{t_val}` / `{h_val}`")
         return "\n".join(lines)
 
-    # Wide Desktop GFM Table
     table_rows = []
     for r in rooms:
         t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
@@ -55,7 +133,7 @@ def get_weather_env_summary(states: list, is_mobile: bool = False) -> str:
 
 
 def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: bool = False) -> str:
-    """Mode 1: Deep AI Brain Environmental Analysis & Responsive Markdown Synthesis."""
+    """Mode 1: Deep AI Brain Environmental Analysis & Dynamic Contextual Synthesis."""
     outdoor_temp = 27.0
     outdoor_hum = 66
     weather_cond = "cloudy"
@@ -68,12 +146,25 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
             outdoor_hum = int(attrs.get("humidity") or 66)
             break
 
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    rooms = get_dynamic_rooms(states)
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
 
+    temp_map = {}
+    hum_map = {}
+    for l in temp_summary.split("\n"):
+        if ":" in l:
+            k, v = l.split(":", 1)
+            temp_map[k.replace("•", "").strip()] = v.strip()
+    for l in hum_summary.split("\n"):
+        if ":" in l:
+            k, v = l.split(":", 1)
+            hum_map[k.replace("•", "").strip()] = v.strip()
+
     active_fans = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("fan.") and s.get("state") == "on"]
     on_lights = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in states if s.get("entity_id", "").startswith("light.") and s.get("state") == "on" and "all" not in s.get("entity_id").lower()]
+
+    recs = generate_dynamic_ai_recommendations(outdoor_temp, outdoor_hum, temp_map, hum_map, active_fans, on_lights)
 
     if is_mobile:
         lines = [
@@ -83,12 +174,9 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
             "🌡️ **실내 온습도 현황**",
         ]
         for r in rooms:
-            t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), None)
-            h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), None)
-            if t_val and h_val:
-                lines.append(f"• **{r}**: `{t_val}` / `{h_val}`")
-            elif t_val:
-                lines.append(f"• **{r}**: `{t_val}`")
+            t_val = temp_map.get(r, "--")
+            h_val = hum_map.get(r, "--")
+            lines.append(f"• **{r}**: `{t_val}` / `{h_val}`")
 
         lines.extend([
             "",
@@ -96,15 +184,15 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
             f"• 가동 팬: {len(active_fans)}대 가동 중",
             f"• 켜진 조명: {len(on_lights)}개 점등",
             "",
-            "> [!TIP] AI 맞춤 케어 제안",
-            "> 외부 습도가 높으므로 창문 개방 대신 환풍기와 서큘레이터를 가동하여 실내 공기를 순환시키세요.",
+            "> [!TIP] 🎯 AI 실시간 상황 맞춤 제안",
+            *recs,
         ])
         return "\n".join(lines)
 
     table_rows = []
     for r in rooms:
-        t_val = next((l.split(":", 1)[1].strip() for l in temp_summary.split("\n") if r in l and ":" in l), "--")
-        h_val = next((l.split(":", 1)[1].strip() for l in hum_summary.split("\n") if r in l and ":" in l), "--")
+        t_val = temp_map.get(r, "--")
+        h_val = hum_map.get(r, "--")
         
         eval_text = "🟢 쾌적"
         try:
@@ -132,17 +220,15 @@ def get_ai_deep_environment_analysis(states: list, prompt: str = "", is_mobile: 
         f"• 가동 중인 환풍기/팬: {', '.join(active_fans) if active_fans else '없음 (정지 상태)'}",
         f"• 점등 조명: 총 {len(on_lights)}개 켜짐 ({', '.join(on_lights[:3])}{' 외 ' + str(len(on_lights)-3) + '개' if len(on_lights) > 3 else ''})",
         "",
-        "> [!TIP] 🎯 AI 맞춤형 환경 케어 제안 (Recommendations)",
-        "> • **환기 제어**: 외부 습도가 실내 평균보다 높으므로, 창문 대신 **주방/화장실 환풍기와 공기 순환 팬 가동**을 권장합니다.",
-        "> • **온습도 최적화**: 안방 및 베란다 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 실내 공기를 순환시키세요.",
-        "> • **취침 모드 대비**: 취침 전 거실 및 미사용 공간의 조명을 자동 소등하고 적정 수면 온도(25~26°C) 유지를 권장합니다.",
+        "> [!TIP] 🎯 AI 실시간 상황 맞춤 제안 (Dynamic Recommendations)",
+        *recs,
     ]
     return "\n".join(lines)
 
 
 def get_terminal_cli_environment_view(states: list, is_mobile: bool = False) -> str:
     """Mode 2: Terminal Raw CLI Monitor Representation adapted for Mobile/Desktop."""
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    rooms = get_dynamic_rooms(states)
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
     usage = get_resource_usage()
@@ -230,7 +316,7 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
     else:
         lights_str = "• 💡 조명: 모든 조명이 꺼져 있습니다."
 
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    rooms = get_dynamic_rooms(states)
     temp_summary = get_room_env_summary(states, "temperature")
     hum_summary = get_room_env_summary(states, "humidity")
     env_lines = ["• 🌡️ 주요 공간 온습도:"]

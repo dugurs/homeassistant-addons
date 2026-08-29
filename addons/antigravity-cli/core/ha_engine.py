@@ -14,6 +14,7 @@ from core.renderers import (
 )
 from core.sensors import (
     get_automations_summary,
+    get_dynamic_rooms,
     get_room_env_summary,
     get_room_full_state,
     get_room_lights_summary,
@@ -49,7 +50,7 @@ def handle_agent_chat(
             return ctrl_result
 
     # 2. Specific Room Query (ha_list_floors_areas)
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "현관", "베란다"]
+    rooms = get_dynamic_rooms(states)
     matched_room = next((r for r in rooms if r in no_space), None)
     if matched_room:
         if any(w in no_space for w in ["온도", "기온"]):

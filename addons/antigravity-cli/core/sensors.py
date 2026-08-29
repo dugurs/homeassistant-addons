@@ -3,9 +3,43 @@
 from core.system_info import get_resource_usage
 
 
+def get_dynamic_rooms(states: list) -> list:
+    """Dynamically discover all defined rooms/areas from HA entity attributes and names."""
+    known_candidates = [
+        "거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다",
+        "현관", "서재", "아이방", "드레스룸", "다용도실", "팬트리", "침실", "욕실"
+    ]
+    discovered = []
+
+    # 1. Discover rooms from friendly_name and entity_ids
+    for s in states:
+        fn = s.get("attributes", {}).get("friendly_name", "")
+        eid = s.get("entity_id", "")
+        for c in known_candidates:
+            if c in fn or c in eid:
+                if c not in discovered:
+                    discovered.append(c)
+
+    # 2. Discover custom area suffixes (e.g. OO방, OO실, OO룸)
+    import re
+    for s in states:
+        fn = s.get("attributes", {}).get("friendly_name", "")
+        for word in re.findall(r"([가-힣]{2,4}(?:방|실|룸|홀|테라스|베란다|현관))", fn):
+            if word not in discovered and word not in ["알림", "설정", "동작", "스위치", "환풍기"]:
+                discovered.append(word)
+
+    priority_order = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다", "현관", "서재", "드레스룸", "아이방"]
+    sorted_rooms = [r for r in priority_order if r in discovered]
+    for r in discovered:
+        if r not in sorted_rooms:
+            sorted_rooms.append(r)
+
+    return sorted_rooms or priority_order[:8]
+
+
 def get_room_env_summary(states: list, kind: str = "temperature") -> str:
-    """Summarize temperatures or humidities for each room without battery or noise sensors."""
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
+    """Summarize temperatures or humidities for dynamically discovered rooms without battery or noise sensors."""
+    rooms = get_dynamic_rooms(states)
     room_vals = {}
     label = "온도" if kind == "temperature" else "습도"
     unit = "°C" if kind == "temperature" else "%"
