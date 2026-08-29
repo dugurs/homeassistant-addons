@@ -137,7 +137,15 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(res).encode("utf-8"))
             return
 
-        # 3. Serve Web UI
+        # 3. Headless Stream Test API
+        if clean_path.endswith("/api/test_stream"):
+            from core.streamer import test_headless_cli_execution
+            test_res = test_headless_cli_execution()
+            self._set_headers(200)
+            self.wfile.write(json.dumps(test_res, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 4. Serve Web UI
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(HTML_INDEX.encode("utf-8"))
 

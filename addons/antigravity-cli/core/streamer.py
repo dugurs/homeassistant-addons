@@ -105,3 +105,66 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int
     else:
         for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile):
             yield ev
+
+
+def test_headless_cli_execution(prompt: str = "In one sentence, what is a git rebase?") -> dict:
+    """Execute test run of agy headless CLI with stream-json format and return full diagnostic report."""
+    import shutil
+    import subprocess
+
+    agy_bin = shutil.which("agy") or "/usr/local/bin/agy"
+    exists = os.path.exists(agy_bin)
+
+    cmd = [
+        agy_bin,
+        "-p", prompt,
+        "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+    ]
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["FORCE_COLOR"] = "0"
+    env["TERM"] = "dumb"
+
+    t0 = time.time()
+    result = {
+        "agy_bin": agy_bin,
+        "exists": exists,
+        "cmd": cmd,
+        "lines": [],
+        "stderr": "",
+        "returncode": None,
+        "elapsed_sec": None,
+        "success": False,
+    }
+
+    if not exists:
+        result["stderr"] = f"Binary not found at {agy_bin}"
+        return result
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            env=env,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=10)
+            result["returncode"] = proc.returncode
+            result["lines"] = [line.strip() for line in stdout.splitlines() if line.strip()]
+            result["stderr"] = stderr.strip()
+            result["success"] = proc.returncode == 0 and len(result["lines"]) > 0
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            result["stderr"] = "Subprocess timed out after 10s"
+    except Exception as e:
+        result["stderr"] = str(e)
+
+    result["elapsed_sec"] = round(time.time() - t0, 3)
+    return result
+

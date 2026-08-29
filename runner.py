@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Web UI HTML and status."""
+"""Verify clean Web UI HTML without tool-box."""
 
 import sys
 import urllib.request
@@ -14,14 +14,12 @@ def verify_ui():
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=5) as resp:
         html = resp.read().decode("utf-8")
-        assert "switchMsgView" in html, "switchMsgView missing!"
-        assert "top-copy-btn" in html, "top-copy-btn missing!"
-        assert "raw-markdown-view" in html, "raw-markdown-view missing!"
-        print("[*] Web UI HTML loaded successfully.")
-        print("  ✓ switchMsgView function present")
-        print("  ✓ top-copy-btn class present")
-        print("  ✓ raw-markdown-view container present")
-        print("\n>>> MARKDOWN VIEW TOGGLER & TOP COPY BUTTON 100% VERIFIED <<<")
+        assert "tool-box" not in html, "tool-box still present in HTML template!"
+        assert "mode-badge" in html, "mode-badge missing from HTML template!"
+        print("[*] Web UI HTML Clean Verification:")
+        print("  ✓ tool-box completely removed")
+        print("  ✓ mode-badge present")
+        print("\n>>> CLEAN BUBBLE HEADER 100% VERIFIED <<<")
 
 
 if __name__ == "__main__":
