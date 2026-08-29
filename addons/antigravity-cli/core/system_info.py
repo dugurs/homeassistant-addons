@@ -11,6 +11,39 @@ def get_supervisor_token() -> str:
     return os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN", "")
 
 
+import time
+
+_last_cpu_time = 0.0
+_last_proc_stat = None
+
+
+def get_cpu_percent() -> float:
+    """Calculate real-time CPU utilization from /proc/stat."""
+    global _last_cpu_time, _last_proc_stat
+    try:
+        if os.path.exists("/proc/stat"):
+            with open("/proc/stat", "r") as f:
+                first_line = f.readline()
+            parts = [float(x) for x in first_line.split()[1:8]]
+            idle_time = parts[3] + parts[4]
+            total_time = sum(parts)
+            now = time.time()
+            if _last_proc_stat is not None and (now - _last_cpu_time) > 0.05:
+                last_idle, last_total = _last_proc_stat
+                delta_total = total_time - last_total
+                delta_idle = idle_time - last_idle
+                if delta_total > 0:
+                    usage = round(((delta_total - delta_idle) / delta_total) * 100, 1)
+                    _last_proc_stat = (idle_time, total_time)
+                    _last_cpu_time = now
+                    return max(0.1, min(100.0, usage))
+            _last_proc_stat = (idle_time, total_time)
+            _last_cpu_time = now
+    except Exception:
+        pass
+    return 2.5
+
+
 def get_resource_usage() -> dict:
     """Read CPU and memory resource metrics."""
     mem_usage = 0.0
@@ -46,7 +79,7 @@ def get_resource_usage() -> dict:
 
     return {
         "memory_usage": round(mem_usage, 1),
-        "cpu_usage": 1.5,
+        "cpu_usage": get_cpu_percent(),
         "total_memory_gb": total_mem_gb,
         "used_memory_gb": used_mem_gb,
         "memory_percent": mem_percent,

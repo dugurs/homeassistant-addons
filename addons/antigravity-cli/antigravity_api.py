@@ -125,6 +125,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 "version": "1.3.0",
                 "uptime": int(time.time() - SERVER_START_TIME),
                 "active_sessions": 1,
+                "memory_usage": resources["memory_usage"],
                 "addon_memory_mb": resources["memory_usage"],
                 "cpu_usage": resources["cpu_usage"],
                 "total_memory_gb": resources["total_memory_gb"],

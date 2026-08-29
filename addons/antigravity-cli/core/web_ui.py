@@ -539,7 +539,7 @@ HTML_INDEX = """<!DOCTYPE html>
       <span class="brand-badge">Real-time</span>
     </div>
     <div class="header-right">
-      <div class="session-token-badge">🪙 세션 누적: <strong id="session-tokens">0</strong> Tokens</div>
+      <div class="session-token-badge" onclick="resetTokens()" title="클릭 시 누적 토큰 초기화" style="cursor: pointer;">🪙 누적: <strong id="session-tokens">0</strong> Tokens</div>
       <button class="theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 테마 전환">🌙 다크</button>
       <div class="nav-tabs">
         <button class="tab-btn active" onclick="switchTab('chat')">💬 AI Chat</button>
@@ -770,7 +770,16 @@ HTML_INDEX = """<!DOCTYPE html>
       box.scrollTop = box.scrollHeight;
     }
 
-    let sessionTotalTokens = 0;
+    let sessionTotalTokens = parseInt(localStorage.getItem('antigravity_total_tokens') || '0', 10);
+
+    function resetTokens() {
+      if (confirm("누적 토큰 카운터를 0으로 초기화하시겠습니까?")) {
+        sessionTotalTokens = 0;
+        localStorage.setItem('antigravity_total_tokens', '0');
+        const sessBadge = document.getElementById('session-tokens');
+        if (sessBadge) sessBadge.textContent = '0';
+      }
+    }
 
     function createBotStreamMessage() {
       const box = document.getElementById('chat-box');
@@ -857,6 +866,7 @@ HTML_INDEX = """<!DOCTYPE html>
               tokensEl.style.display = 'inline';
             }
             sessionTotalTokens += tokensMeta.total;
+            localStorage.setItem('antigravity_total_tokens', sessionTotalTokens.toString());
             const sessBadge = document.getElementById('session-tokens');
             if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
           }
@@ -880,6 +890,8 @@ HTML_INDEX = """<!DOCTYPE html>
       const savedMode = localStorage.getItem('antigravity_stream_mode') || '1';
       const sel = document.getElementById('stream-mode');
       if (sel) sel.value = savedMode;
+      const sessBadge = document.getElementById('session-tokens');
+      if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
     });
 
     function updateSendBtn() {
