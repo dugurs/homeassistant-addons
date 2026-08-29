@@ -269,11 +269,24 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
         else:
             auth_files.append(f"{p}: NOT_FOUND")
 
+    found_files = []
+    for search_dir in ["/root", "/config", "/root/.gemini", "/root/.config", "/root/.local/share"]:
+        if os.path.exists(search_dir):
+            try:
+                for root, dirs, files in os.walk(search_dir):
+                    if len(found_files) > 40:
+                        break
+                    for f in files:
+                        found_files.append(os.path.join(root, f))
+            except Exception:
+                pass
+
     t0 = time.time()
     result = {
         "agy_bin": agy_bin,
         "exists": exists,
         "auth_dirs": auth_files,
+        "all_files": found_files,
         "cmd": cmd,
         "lines": [],
         "stderr": "",
@@ -291,6 +304,18 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
         result["agy_version"] = ver_proc.stdout.strip() or ver_proc.stderr.strip()
     except Exception as ex:
         result["agy_version"] = f"Error: {ex}"
+
+    try:
+        help_proc = subprocess.run([agy_bin, "--help"], capture_output=True, text=True, timeout=3)
+        result["agy_help"] = (help_proc.stdout.strip() or help_proc.stderr.strip())[:1000]
+    except Exception as ex:
+        result["agy_help"] = f"Error: {ex}"
+
+    try:
+        auth_proc = subprocess.run([agy_bin, "auth", "status"], capture_output=True, text=True, timeout=3, env=env)
+        result["agy_auth"] = auth_proc.stdout.strip() or auth_proc.stderr.strip()
+    except Exception as ex:
+        result["agy_auth"] = f"Error: {ex}"
 
     try:
         proc = subprocess.Popen(
