@@ -67,9 +67,11 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 # 6. Automatically install CLI packages (HA CLI, Python AI tools)
 RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli || true
 
-# 7. Copy run script
+# 7. Copy run script and API server
+COPY antigravity_api.py /usr/local/bin/antigravity_api.py
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
+RUN sed -i -e 's/\r$//' /run.sh /usr/local/bin/antigravity_api.py \
+    && chmod +x /run.sh /usr/local/bin/antigravity_api.py
 
 WORKDIR /config
 CMD [ "/run.sh" ]

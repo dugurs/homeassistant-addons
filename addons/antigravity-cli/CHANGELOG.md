@@ -1,3 +1,13 @@
+## 1.1.0
+
+### 추가 (Feature)
+- Home Assistant 커스텀 통합구성요소(`antigravity_cli`)와의 통신을 위한 백그라운드 REST/Status API 서버(포트 8000) 추가
+- `GET /api/status`, `GET /api/health`, `POST /api/restart` 엔드포인트 지원
+- 활성 tmux 세션 수 및 가동 시간(uptime) 상태 모니터링 연동
+- 포트 8000 매핑 및 API 키 인증 옵션 추가
+
+---
+
 ## 1.0.5
 
 ### 수정 (Fix)

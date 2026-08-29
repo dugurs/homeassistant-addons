@@ -87,6 +87,25 @@ else
 MCP_EOF
 fi
 
+# Auto-configure Antigravity CLI settings and permissions for HA MCP
+mkdir -p /root/.gemini/antigravity-cli
+SETTINGS_FILE="/root/.gemini/antigravity-cli/settings.json"
+if [ ! -f "$SETTINGS_FILE" ]; then
+    cat << 'SETTINGS_EOF' > "$SETTINGS_FILE"
+{
+  "permissions": {
+    "allow": [
+      "mcp(home-assistant/*)"
+    ]
+  }
+}
+SETTINGS_EOF
+else
+    if command -v jq >/dev/null 2>&1; then
+        jq '.permissions.allow = ((.permissions.allow // []) + ["mcp(home-assistant/*)"] | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" 2>/dev/null && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+    fi
+fi
+
 # Auto-configure global rules for HA MCP
 mkdir -p /root/.gemini/config/rules
 if [ ! -f /root/.gemini/config/rules/ha-guidelines.md ]; then
@@ -144,18 +163,14 @@ fi
 ARCH=$(uname -m)
 
 if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    # Foolproof check: Try running the binary natively. Capture all output to completely silence SIGILL messages.
-    if _dummy=$(bash -c '"$1" --help' _ "$TARGET_BIN" 2>&1); then
+    if ( "$TARGET_BIN" --help >/dev/null 2>&1 ) 2>/dev/null; then
         exec "$TARGET_BIN" "$@"
     else
-        echo "[WARNING] Native execution failed (Likely missing CPU instructions like pclmulqdq)."
-        echo "[WARNING] Falling back to QEMU emulation (Slower). Change VM CPU Type to 'Host' for native speed!"
         if command -v qemu-x86_64-static >/dev/null 2>&1; then
             exec qemu-x86_64-static -cpu max "$TARGET_BIN" "$@"
         elif command -v qemu-x86_64 >/dev/null 2>&1; then
             exec qemu-x86_64 -cpu max "$TARGET_BIN" "$@"
         else
-            echo "[ERROR] QEMU emulator not found. Execution will likely crash."
             exec "$TARGET_BIN" "$@"
         fi
     fi
@@ -186,10 +201,25 @@ done
 kill $PREWARM_PID 2>/dev/null || true
 wait $PREWARM_PID 2>/dev/null || true
 
-# Pre-initialize tmux session and auto-launch agy
+# Start background Antigravity Status API server for Home Assistant Custom Integration (antigravity_cli)
+if [ -f /usr/local/bin/antigravity_api.py ]; then
+    API_PORT="8000"
+    if [ -f /data/options.json ]; then
+        API_PORT=$(jq -r '.api_port // 8000' /data/options.json 2>/dev/null || echo "8000")
+        if [ "$API_PORT" = "null" ] || [ -z "$API_PORT" ]; then
+            API_PORT="8000"
+        fi
+    fi
+    export ANTIGRAVITY_API_PORT="${API_PORT}"
+    echo "[INFO] Starting Antigravity Status API server on port ${API_PORT}..."
+    python3 /usr/local/bin/antigravity_api.py &
+    API_PID=$!
+    trap "kill -TERM $API_PID 2>/dev/null || true; exit 0" SIGTERM SIGINT
+fi
+
+# Pre-initialize tmux session for web terminal (standby at bash)
 if ! tmux -u has-session -t main 2>/dev/null; then
     tmux -u new-session -d -s main -c "${WORKDIR}" bash
-    tmux -u send-keys -t main "agy" C-m
 fi
 
 # Launch ttyd attached to persistent tmux session (force UTF-8)

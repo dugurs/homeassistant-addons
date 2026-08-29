@@ -1,6 +1,6 @@
 name: "Google Antigravity CLI"
 description: "Run Google Antigravity CLI - HA Add-on"
-version: "1.0.5"
+version: "1.1.0"
 slug: "antigravity-cli"
 init: false
 arch:
@@ -14,6 +14,11 @@ ingress_port: 7681
 ingress_stream: true
 panel_icon: mdi:format-color-text
 panel_title: "Antigravity CLI"
+
+ports:
+  8000/tcp: 8000
+ports_description:
+  8000/tcp: "Antigravity Status & REST API"
 
 map:
   - addon_config:rw
@@ -29,5 +34,9 @@ hassio_role: manager
 
 options:
   ha_sse_url: ""
+  api_key: ""
+  api_port: 8000
 schema:
   ha_sse_url: "str?"
+  api_key: "str?"
+  api_port: "port?"
