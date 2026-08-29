@@ -201,31 +201,33 @@ done
 kill $PREWARM_PID 2>/dev/null || true
 wait $PREWARM_PID 2>/dev/null || true
 
-# Start background Antigravity Status API server for Home Assistant Custom Integration (antigravity_cli)
-if [ -f /usr/local/bin/antigravity_api.py ]; then
-    API_PORT="8000"
-    if [ -f /data/options.json ]; then
-        API_PORT=$(jq -r '.api_port // 8000' /data/options.json 2>/dev/null || echo "8000")
-        if [ "$API_PORT" = "null" ] || [ -z "$API_PORT" ]; then
-            API_PORT="8000"
-        fi
-    fi
-    export ANTIGRAVITY_API_PORT="${API_PORT}"
-    echo "[INFO] Starting Antigravity Status API server on port ${API_PORT}..."
-    python3 /usr/local/bin/antigravity_api.py &
-    API_PID=$!
-    trap "kill -TERM $API_PID 2>/dev/null || true; exit 0" SIGTERM SIGINT
-fi
-
 # Pre-initialize tmux session for web terminal (standby at bash)
 if ! tmux -u has-session -t main 2>/dev/null; then
     tmux -u new-session -d -s main -c "${WORKDIR}" bash
 fi
 
-# Launch ttyd attached to persistent tmux session (force UTF-8)
-exec /usr/local/bin/ttyd \
-    -p 7681 \
+# Launch internal ttyd on port 7682 in background
+echo "[INFO] Starting ttyd on internal port 7682..."
+/usr/local/bin/ttyd \
+    -p 7682 \
     -W \
+    -b /terminal \
     -t fontSize=15 \
     -t theme='{"background": "#1e1e1e"}' \
-    tmux -u new-session -A -s main -c "${WORKDIR}" bash
+    tmux -u new-session -A -s main -c "${WORKDIR}" bash &
+TTYD_PID=$!
+
+# Start Antigravity Dual Ingress Web UI (port 7681) & REST API (port 8000)
+API_PORT="8000"
+if [ -f /data/options.json ]; then
+    API_PORT=$(jq -r '.api_port // 8000' /data/options.json 2>/dev/null || echo "8000")
+    if [ "$API_PORT" = "null" ] || [ -z "$API_PORT" ]; then
+        API_PORT="8000"
+    fi
+fi
+export ANTIGRAVITY_API_PORT="${API_PORT}"
+echo "[INFO] Starting Antigravity Dual Ingress Server on 7681 and REST API on ${API_PORT}..."
+
+trap "kill -TERM $TTYD_PID 2>/dev/null || true; exit 0" SIGTERM SIGINT
+
+exec python3 /usr/local/bin/antigravity_api.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Antigravity CLI Background Status & REST API Server for Home Assistant Integration."""
+"""Antigravity CLI Dual Ingress Web UI (Chat Dashboard + ttyd Web Terminal) & REST API Server."""
 
 import json
 import os
@@ -8,6 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import sys
 import re
+import socket
 import select
 try:
     import pty
@@ -15,8 +16,10 @@ except ImportError:
     pty = None
 
 START_TIME = time.time()
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_PORT = 8000
+INGRESS_PORT = 7681
+TTYD_INTERNAL_PORT = 7682
 
 
 def get_options():
@@ -81,7 +84,6 @@ def get_resource_usage() -> dict:
         "memory_percent": 0.0,
     }
     try:
-        # System RAM info from /proc/meminfo
         if os.path.exists("/proc/meminfo"):
             mem = {}
             with open("/proc/meminfo", "r") as f:
@@ -97,7 +99,6 @@ def get_resource_usage() -> dict:
                 res["used_memory_gb"] = round(used_kb / 1024 / 1024, 2)
                 res["memory_percent"] = round((used_kb / total_kb) * 100, 1)
 
-        # Addon container memory usage (sum of RSS) & CPU %
         proc = subprocess.run(["ps", "-eo", "%cpu,rss"], capture_output=True, text=True, timeout=2)
         if proc.returncode == 0:
             lines = proc.stdout.strip().split("\n")[1:]
@@ -605,8 +606,380 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
     return f"'{clean_prompt}' 요청에 대한 스마트홈 상태가 정상 확인되었습니다."
 
 
+HTML_INDEX = """<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Antigravity CLI Dashboard</title>
+  <style>
+    :root {
+      --bg-main: #0b0f19;
+      --bg-card: #151d30;
+      --bg-bubble-user: #2563eb;
+      --bg-bubble-bot: #1e293b;
+      --border-color: #2e3d5b;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-green: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+    body { background-color: var(--bg-main); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Header */
+    header {
+      background-color: var(--bg-card);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; color: #fff; }
+    .brand-badge { background: #1e40af; color: #93c5fd; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; }
+    .nav-tabs { display: flex; gap: 8px; }
+    .tab-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .tab-btn.active { background: var(--bg-bubble-user); color: #fff; border-color: var(--bg-bubble-user); }
+    .tab-btn:hover:not(.active) { background: #1f293d; color: var(--text-main); }
+
+    /* Content Area */
+    main { flex: 1; position: relative; overflow: hidden; }
+    .tab-view { width: 100%; height: 100%; display: none; }
+    .tab-view.active { display: flex; flex-direction: column; }
+
+    /* Chat View */
+    #chat-view { height: 100%; display: none; flex-direction: column; }
+    #chat-view.active { display: flex; }
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+
+    /* Welcome Hero */
+    .hero-card {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px 20px;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .hero-card h2 { font-size: 1.1rem; margin-bottom: 6px; color: var(--accent-blue); }
+    .hero-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; }
+    .quick-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .chip {
+      background: #1e293b;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .chip:hover { background: var(--bg-bubble-user); border-color: var(--bg-bubble-user); transform: translateY(-1px); }
+
+    /* Messages */
+    .msg-row { display: flex; width: 100%; }
+    .msg-row.user { justify-content: flex-end; }
+    .msg-row.bot { justify-content: flex-start; }
+    .bubble {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: 14px;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .msg-row.user .bubble { background: var(--bg-bubble-user); color: #fff; border-bottom-right-radius: 2px; }
+    .msg-row.bot .bubble {
+      background: var(--bg-bubble-bot);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-bottom-left-radius: 2px;
+    }
+
+    /* Markdown Formats in Bubble */
+    .bubble table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.85rem; }
+    .bubble th, .bubble td { border: 1px solid var(--border-color); padding: 6px 10px; text-align: left; }
+    .bubble th { background: #0f172a; color: var(--accent-blue); }
+    .bubble tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+    .bubble pre { background: #0b0f19; padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; font-size: 0.82rem; }
+    .bubble code { font-family: monospace; color: #38bdf8; }
+    .bubble ul, .bubble ol { margin-left: 20px; margin-top: 6px; margin-bottom: 6px; }
+
+    /* Tool Accordion */
+    .tool-box {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      font-size: 0.82rem;
+    }
+    .tool-header {
+      padding: 6px 12px;
+      background: #1e293b;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      font-weight: 600;
+      color: var(--accent-blue);
+    }
+    .tool-content { padding: 8px 12px; display: none; max-height: 200px; overflow-y: auto; color: var(--text-muted); }
+    .tool-box.open .tool-content { display: block; }
+
+    /* Input Area */
+    .input-bar-wrap {
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-color);
+      padding: 12px 20px;
+      flex-shrink: 0;
+    }
+    .input-bar {
+      display: flex;
+      gap: 10px;
+      background: var(--bg-main);
+      border: 1px solid var(--border-color);
+      border-radius: 24px;
+      padding: 6px 12px 6px 16px;
+      align-items: center;
+    }
+    .input-bar textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-size: 0.95rem;
+      outline: none;
+      resize: none;
+      height: 24px;
+      max-height: 100px;
+      line-height: 1.5;
+    }
+    .send-btn {
+      background: var(--bg-bubble-user);
+      border: none;
+      color: #fff;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: opacity 0.2s;
+    }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Terminal View */
+    #terminal-view { height: 100%; display: none; width: 100%; }
+    #terminal-view.active { display: block; }
+    iframe { width: 100%; height: 100%; border: none; background: #1e1e1e; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>🤖 Antigravity AI</span>
+      <span class="brand-badge">Assistant</span>
+    </div>
+    <div class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('chat')">💬 AI Chat</button>
+      <button class="tab-btn" onclick="switchTab('terminal')">🖥️ Terminal</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Chat View -->
+    <section id="chat-view" class="tab-view active">
+      <div class="chat-container" id="chat-box">
+        <div class="hero-card">
+          <h2>Google Antigravity 스마트홈 어시스턴트</h2>
+          <p>자연어 발화 및 Antigravity CLI AI 딥 브레인이 연동된 스마트홈 제어기입니다.</p>
+          <div class="quick-chips">
+            <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
+            <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
+            <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
+            <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
+            <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
+            <div class="chip" onclick="sendQuick('ai 오늘 날씨와 환경 분석해줘')">🤖 AI 심층 분석</div>
+          </div>
+        </div>
+      </div>
+      <div class="input-bar-wrap">
+        <div class="input-bar">
+          <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" onkeydown="handleKey(event)"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Terminal View -->
+    <section id="terminal-view" class="tab-view">
+      <iframe id="terminal-iframe" src="./terminal/"></iframe>
+    </section>
+  </main>
+
+  <script>
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+      if (tab === 'chat') {
+        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.getElementById('chat-view').classList.add('active');
+      } else {
+        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        document.getElementById('terminal-view').classList.add('active');
+      }
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return "";
+      let raw = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      
+      // Tables
+      raw = raw.replace(/\\|(.+)\\|\\n\\|[-|\\s]+\\|\\n((?:\\|.*\\|\\n?)*)/g, function(match, header, rows) {
+        let headers = header.split('|').map(h => h.trim()).filter(h => h);
+        let rowLines = rows.trim().split('\\n');
+        let html = '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+        rowLines.forEach(r => {
+          let cols = r.split('|').map(c => c.trim()).filter(c => c);
+          if (cols.length) {
+            html += '<tr>' + cols.map(c => `<td>${c}</td>`).join('') + '</tr>';
+          }
+        });
+        html += '</tbody></table>';
+        return html;
+      });
+
+      // Code blocks
+      raw = raw.replace(/```([a-z]*)\\n([\\s\\S]*?)```/g, '<pre><code>$2</code></pre>');
+      // Bold
+      raw = raw.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+      // Lists & bullets
+      raw = raw.replace(/^[•\\-] (.*)$/gm, '<li>$1</li>');
+      raw = raw.replace(/((?:<li>.*<\\/li>\\s*)+)/g, '<ul>$1</ul>');
+      // Line breaks
+      raw = raw.replace(/\\n/g, '<br>');
+      return raw;
+    }
+
+    function appendMessage(role, text) {
+      const box = document.getElementById('chat-box');
+      const row = document.createElement('div');
+      row.className = `msg-row ${role}`;
+
+      let toolsHtml = "";
+      let cleanText = text;
+
+      // Extract Tool Calls / Thoughts if present
+      if (role === 'bot' && (text.includes('● ') || text.includes('▸ Thought'))) {
+        const lines = text.split('\\n');
+        const toolLines = [];
+        const answerLines = [];
+        lines.forEach(l => {
+          if (l.startsWith('● ') || l.startsWith('▸ Thought') || l.startsWith('Initiating') || l.startsWith('Discovering')) {
+            toolLines.push(l);
+          } else {
+            answerLines.push(l);
+          }
+        });
+        if (toolLines.length > 0) {
+          toolsHtml = `
+            <div class="tool-box" onclick="this.classList.toggle('open')">
+              <div class="tool-header">
+                <span>🔍 AI 도구 호출 및 사고 과정 (${toolLines.length}단계)</span>
+                <span>▼</span>
+              </div>
+              <div class="tool-content">${toolLines.map(t => '• ' + t).join('<br>')}</div>
+            </div>
+          `;
+          cleanText = answerLines.join('\\n').trim();
+        }
+      }
+
+      row.innerHTML = `<div class="bubble">${toolsHtml}${formatMarkdown(cleanText)}</div>`;
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function sendQuick(prompt) {
+      document.getElementById('user-input').value = prompt;
+      sendMessage();
+    }
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('user-input');
+      const btn = document.getElementById('send-btn');
+      const prompt = input.value.trim();
+      if (!prompt) return;
+
+      appendMessage('user', prompt);
+      input.value = '';
+      btn.disabled = true;
+
+      // Loading bubble
+      const box = document.getElementById('chat-box');
+      const loadRow = document.createElement('div');
+      loadRow.className = 'msg-row bot';
+      loadRow.id = 'loading-bubble';
+      loadRow.innerHTML = '<div class="bubble" style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</div>';
+      box.appendChild(loadRow);
+      box.scrollTop = box.scrollHeight;
+
+      try {
+        const res = await fetch('./api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt, is_direct_llm: prompt.startsWith('ai ') || prompt.startsWith('/llm') })
+        });
+        const data = await res.json();
+        const lb = document.getElementById('loading-bubble');
+        if (lb) lb.remove();
+        appendMessage('bot', data.response || "응답을 수신하지 못했습니다.");
+      } catch (err) {
+        const lb = document.getElementById('loading-bubble');
+        if (lb) lb.remove();
+        appendMessage('bot', `[오류] 통신에 실패했습니다: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+
+
 class AntigravityAPIHandler(BaseHTTPRequestHandler):
-    """HTTP Request Handler for Antigravity CLI status API."""
+    """HTTP Request Handler for Ingress Dual Web UI, Proxy, and REST API."""
 
     def _set_headers(self, status_code=200, content_type="application/json"):
         self.send_response(status_code)
@@ -627,14 +1000,72 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             return token == expected_key
         return False
 
-    def do_GET(self):
-        """Handle GET requests."""
-        if not self._check_auth():
-            self._set_headers(401)
-            self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
+    def _proxy_to_ttyd(self):
+        """Proxy HTTP and WebSocket requests to internal ttyd on port 7682."""
+        # Handle WebSocket Upgrade
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            try:
+                target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                target_sock.connect(("127.0.0.1", TTYD_INTERNAL_PORT))
+                
+                req_lines = [f"{self.command} {self.path} {self.request_version}"]
+                for k, v in self.headers.items():
+                    req_lines.append(f"{k}: {v}")
+                req_lines.append("\r\n")
+                target_sock.sendall("\r\n".join(req_lines).encode("utf-8"))
+
+                client_sock = self.connection
+                client_sock.setblocking(0)
+                target_sock.setblocking(0)
+                sockets = [client_sock, target_sock]
+                while True:
+                    r, _, x = select.select(sockets, [], sockets, 30.0)
+                    if x or not r:
+                        break
+                    for s in r:
+                        other = target_sock if s is client_sock else client_sock
+                        try:
+                            data = s.recv(16384)
+                            if not data:
+                                return
+                            other.sendall(data)
+                        except Exception:
+                            return
+            except Exception:
+                pass
             return
 
+        # Handle Standard HTTP Assets
+        import urllib.request
+        target_url = f"http://127.0.0.1:{TTYD_INTERNAL_PORT}{self.path}"
+        try:
+            req_headers = {k: v for k, v in self.headers.items() if k.lower() != "host"}
+            req = urllib.request.Request(target_url, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.send_response(resp.status)
+                for k, v in resp.getheaders():
+                    if k.lower() not in ("transfer-encoding", "content-length"):
+                        self.send_header(k, v)
+                body = resp.read()
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        except Exception as e:
+            self.send_error(502, f"Bad Gateway to ttyd: {e}")
+
+    def do_GET(self):
+        """Handle GET requests."""
+        # 1. Forward /terminal traffic to ttyd
+        if self.path.startswith("/terminal") or "/terminal" in self.path:
+            self._proxy_to_ttyd()
+            return
+
+        # 2. REST Status API
         if self.path in ("/api/status", "/api/status/"):
+            if not self._check_auth():
+                self._set_headers(401)
+                self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
+                return
             uptime = int(time.time() - START_TIME)
             usage = get_resource_usage()
             data = {
@@ -646,15 +1077,24 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             }
             self._set_headers(200)
             self.wfile.write(json.dumps(data).encode("utf-8"))
-        elif self.path in ("/api/health", "/"):
+            return
+
+        elif self.path in ("/api/health", "/api/health/"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"status": "healthy", "version": VERSION}).encode("utf-8"))
-        else:
-            self._set_headers(404)
-            self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
+            return
+
+        # 3. Serve Main Ingress Web UI (Dashboard)
+        self._set_headers(200, "text/html; charset=utf-8")
+        self.wfile.write(HTML_INDEX.encode("utf-8"))
 
     def do_POST(self):
         """Handle POST requests."""
+        # 1. Forward /terminal traffic to ttyd
+        if self.path.startswith("/terminal") or "/terminal" in self.path:
+            self._proxy_to_ttyd()
+            return
+
         if not self._check_auth():
             self._set_headers(401)
             self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
@@ -698,22 +1138,34 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_server(port: int = DEFAULT_PORT):
-    """Run HTTP API Server."""
-    server_address = ("0.0.0.0", port)
-    httpd = ThreadingHTTPServer(server_address, AntigravityAPIHandler)
-    print(f"[INFO] Antigravity Status API server running on port {port}")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        httpd.server_close()
+def run_dual_server():
+    """Run HTTP Ingress Server on 7681 and REST API Server on 8000."""
+    api_port_env = os.environ.get("ANTIGRAVITY_API_PORT")
+    api_port = int(api_port_env) if api_port_env and api_port_env.isdigit() else DEFAULT_PORT
+
+    import threading
+
+    def serve_ingress():
+        try:
+            httpd_ingress = ThreadingHTTPServer(("0.0.0.0", INGRESS_PORT), AntigravityAPIHandler)
+            print(f"[INFO] Dual Ingress Web UI server running on port {INGRESS_PORT}")
+            httpd_ingress.serve_forever()
+        except Exception as e:
+            print(f"[ERR] Ingress server error: {e}")
+
+    def serve_api():
+        try:
+            httpd_api = ThreadingHTTPServer(("0.0.0.0", api_port), AntigravityAPIHandler)
+            print(f"[INFO] Antigravity REST API server running on port {api_port}")
+            httpd_api.serve_forever()
+        except Exception as e:
+            print(f"[ERR] API server error: {e}")
+
+    t_ingress = threading.Thread(target=serve_ingress, daemon=True)
+    t_ingress.start()
+
+    serve_api()
 
 
 if __name__ == "__main__":
-    port_env = os.environ.get("ANTIGRAVITY_API_PORT")
-    port = int(port_env) if port_env and port_env.isdigit() else DEFAULT_PORT
-    if len(sys.argv) > 1 and sys.argv[1].isdigit():
-        port = int(sys.argv[1])
-    run_server(port)
+    run_dual_server()
