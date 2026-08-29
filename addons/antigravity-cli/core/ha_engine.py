@@ -192,33 +192,62 @@ def get_terminal_cli_environment_view(states: list) -> str:
 
 
 def get_room_env_summary(states: list, kind: str = "temperature") -> str:
-    """Summarize temperatures or humidities for each room."""
+    """Summarize temperatures or humidities for each room without battery or noise sensors."""
     rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
     room_vals = {}
     label = "온도" if kind == "temperature" else "습도"
     unit = "°C" if kind == "temperature" else "%"
 
+    exclude_keywords = [
+        "배터리", "battery", "전압", "voltage", "calibration", "보정",
+        "플러그", "스토브", "cpu", "최고", "최저", "지수", "임계", "threshold",
+        "illuminance", "조도", "power", "energy", "전력", "전력량", "soil"
+    ]
+
     for s in states:
-        eid = s.get("entity_id", "")
+        eid = s.get("entity_id", "").lower()
         fn = s.get("attributes", {}).get("friendly_name", "")
-        st = s.get("state", "")
+        fn_lower = fn.lower()
+        st = s.get("state", "").strip()
         uom = s.get("attributes", {}).get("unit_of_measurement", "")
+        dev_class = s.get("attributes", {}).get("device_class", "")
 
         if not eid.startswith("sensor.") or st in ("unavailable", "unknown", ""):
             continue
 
-        if kind == "temperature" and ("온도" in fn or uom in ("°C", "°F")):
-            if any(ex in fn for ex in ["플러그", "스토브", "배터리", "CPU", "최고", "최저"]):
-                continue
-            for r in rooms:
-                if r in fn and r not in room_vals:
-                    room_vals[r] = f"{st}{uom or unit}"
-        elif kind == "humidity" and ("습도" in fn or uom == "%"):
-            if "지수" in fn or "임계" in fn:
-                continue
-            for r in rooms:
-                if r in fn and r not in room_vals:
-                    room_vals[r] = f"{st}{uom or unit}"
+        if any(ex in fn_lower or ex in eid for ex in exclude_keywords):
+            continue
+
+        if kind == "temperature":
+            is_temp = (
+                dev_class == "temperature"
+                or eid.endswith("_temperature")
+                or ("온도" in fn and "습도" not in fn)
+                or uom in ("°C", "°F")
+            )
+            if is_temp:
+                try:
+                    float(st)
+                    for r in rooms:
+                        if r in fn and r not in room_vals:
+                            room_vals[r] = f"{st}{uom or unit}"
+                except ValueError:
+                    pass
+
+        elif kind == "humidity":
+            is_hum = (
+                dev_class == "humidity"
+                or eid.endswith("_humidity")
+                or ("습도" in fn and "온도" not in fn)
+            )
+            if is_hum:
+                try:
+                    float(st)
+                    for r in rooms:
+                        if r in fn and r not in room_vals:
+                            room_vals[r] = f"{st}{uom or unit}"
+                except ValueError:
+                    pass
 
     lines = [f"현재 각 방별 실내 {label}입니다:"]
     for r in rooms:
@@ -440,8 +469,8 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
             return get_all_addons_memory()
         usage = get_resource_usage()
         return (
-            f"현재 Antigravity CLI 애드온의 메모리 사용량은 약 {usage['memory_usage']}MB 이며, "
-            f"시스템 전체 메모리는 {usage['used_memory_gb']}GB / {usage['total_memory_gb']}GB ({usage['memory_percent']}%) 사용 중입니다."
+            f"현재 Antigravity CLI 애드온의 메모리 사용량은 {usage['memory_usage']} MB 이며, "
+            f"시스템 전체 메모리는 {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) 사용 중입니다."
         )
 
     # Introduction / Greetings
