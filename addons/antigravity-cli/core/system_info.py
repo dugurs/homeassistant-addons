@@ -39,6 +39,44 @@ _last_cpu_time = 0.0
 _last_proc_stat = None
 
 
+_last_cgroup_cpu_time = 0.0
+_last_cgroup_usage = None
+
+
+def get_addon_cpu_percent() -> float:
+    """Calculate real-time CPU utilization of the add-on container via cgroups."""
+    global _last_cgroup_cpu_time, _last_cgroup_usage
+    usage_usec = None
+    try:
+        if os.path.exists("/sys/fs/cgroup/cpu.stat"):
+            with open("/sys/fs/cgroup/cpu.stat", "r") as f:
+                for line in f:
+                    if line.startswith("usage_usec"):
+                        usage_usec = int(line.split()[1])
+                        break
+        elif os.path.exists("/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage"):
+            with open("/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage", "r") as f:
+                usage_usec = int(f.read().strip()) // 1000
+    except Exception:
+        pass
+
+    now = time.time()
+    if usage_usec is not None and _last_cgroup_usage is not None:
+        dt = now - _last_cgroup_cpu_time
+        d_usec = usage_usec - _last_cgroup_usage
+        _last_cgroup_usage = usage_usec
+        _last_cgroup_cpu_time = now
+        if dt > 0.05:
+            pct = round((d_usec / (dt * 1_000_000)) * 100, 1)
+            return max(0.0, min(100.0, pct))
+
+    if usage_usec is not None:
+        _last_cgroup_usage = usage_usec
+        _last_cgroup_cpu_time = now
+
+    return 0.5
+
+
 def get_cpu_percent() -> float:
     """Calculate real-time CPU utilization from /proc/stat."""
     global _last_cpu_time, _last_proc_stat
@@ -67,7 +105,7 @@ def get_cpu_percent() -> float:
 
 
 def get_resource_usage() -> dict:
-    """Read CPU and memory resource metrics."""
+    """Read CPU and memory resource metrics for both Addon and System."""
     mem_usage = 0.0
     try:
         if os.path.exists("/sys/fs/cgroup/memory.current"):
@@ -99,12 +137,22 @@ def get_resource_usage() -> dict:
     except Exception:
         pass
 
+    addon_cpu = get_addon_cpu_percent()
+    system_cpu = get_cpu_percent()
+    addon_mem_mb = round(mem_usage, 1)
+    addon_mem_pct = round((mem_usage / max(1.0, total_mem_gb * 1024)) * 100, 1)
+
     return {
-        "memory_usage": round(mem_usage, 1),
-        "cpu_usage": get_cpu_percent(),
+        "memory_usage": addon_mem_mb,
+        "addon_memory_mb": addon_mem_mb,
+        "addon_memory_percent": addon_mem_pct,
+        "cpu_usage": addon_cpu,
+        "addon_cpu_usage": addon_cpu,
+        "system_cpu_usage": system_cpu,
         "total_memory_gb": total_mem_gb,
         "used_memory_gb": used_mem_gb,
         "memory_percent": mem_percent,
+        "system_memory_percent": mem_percent,
     }
 
 

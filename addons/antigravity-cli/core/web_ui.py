@@ -140,128 +140,133 @@ HTML_INDEX = """<!DOCTYPE html>
       opacity: 0.8;
     }
 
-    /* Resource Monitor Modal */
-    .resource-modal-overlay {
+    /* Sticky Top Resource Panel */
+    .top-resource-panel {
       display: none;
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(4px);
-      z-index: 1000;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    .resource-modal-overlay.open {
-      display: flex;
-    }
-    .resource-modal-card {
       background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 14px;
-      width: 100%;
-      max-width: 480px;
-      box-shadow: 0 12px 36px rgba(0,0,0,0.3);
-      overflow: hidden;
+      border-bottom: 1px solid var(--border-color);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+      padding: 12px 20px;
+      animation: panelSlide 0.2s ease-out;
+      z-index: 50;
+    }
+    .top-resource-panel.open {
+      display: block;
+    }
+    @keyframes panelSlide {
+      0% { opacity: 0; transform: translateY(-8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    .panel-inner {
+      max-width: 1080px;
+      margin: 0 auto;
       display: flex;
       flex-direction: column;
-      animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      gap: 10px;
     }
-    @keyframes modalPop {
-      0% { opacity: 0; transform: scale(0.95) translateY(8px); }
-      100% { opacity: 1; transform: scale(1) translateY(0); }
-    }
-    .modal-header {
+    .panel-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 12px 18px;
-      border-bottom: 1px solid var(--border-color);
-      background: var(--bg-base);
     }
-    .modal-title {
-      font-size: 0.92rem;
-      font-weight: 700;
-      color: var(--text-bold);
+    .panel-title {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text-bold);
     }
-    .modal-close-btn {
-      background: transparent;
-      border: none;
+    .panel-sub {
+      font-size: 0.72rem;
+      font-weight: 400;
       color: var(--text-muted);
-      font-size: 1.1rem;
+    }
+    .panel-close-btn {
+      background: var(--bg-base);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      font-size: 0.76rem;
+      font-weight: 600;
       cursor: pointer;
-      padding: 4px 8px;
+      padding: 3px 8px;
       border-radius: 6px;
       transition: all 0.15s ease;
     }
-    .modal-close-btn:hover {
-      color: var(--text-main);
-      background: var(--border-color);
+    .panel-close-btn:hover {
+      color: var(--accent-blue);
+      border-color: var(--accent-blue);
     }
-    .modal-body {
-      padding: 16px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      max-height: 80vh;
-      overflow-y: auto;
+    .panel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
     }
-    .chart-section {
+    @media (max-width: 768px) {
+      .panel-grid { grid-template-columns: 1fr; }
+    }
+    .chart-box {
       background: var(--bg-base);
       border: 1px solid var(--border-color);
       border-radius: 10px;
       padding: 10px 14px;
     }
-    .chart-header {
+    .chart-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 6px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
     }
-    .chart-name {
-      font-weight: 600;
-      color: var(--text-main);
-    }
-    .chart-val {
+    .chart-title {
       font-weight: 700;
-      color: var(--accent-blue);
-      font-family: 'Fira Code', monospace;
+      color: var(--text-bold);
     }
-    .canvas-wrap {
+    .chart-legend {
+      display: flex;
+      gap: 8px;
+      font-size: 0.73rem;
+    }
+    .lg-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .lg-purple { color: #c084fc; }
+    .lg-blue { color: var(--accent-blue); }
+    .lg-green { color: var(--accent-green); }
+    .lg-cyan { color: #06b6d4; }
+
+    .canvas-holder {
       width: 100%;
-      height: 80px;
+      height: 70px;
       position: relative;
     }
-    .canvas-wrap canvas {
+    .canvas-holder canvas {
       width: 100%;
       height: 100%;
       display: block;
     }
-    .resource-stats-grid {
+    .panel-stats {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
     }
-    .stat-box {
+    @media (max-width: 768px) {
+      .panel-stats { grid-template-columns: 1fr 1fr; }
+    }
+    .pstat {
       background: var(--bg-base);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 8px 12px;
+      padding: 6px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.74rem;
     }
-    .stat-lbl {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      margin-bottom: 3px;
-    }
-    .stat-val {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: var(--text-bold);
-    }
+    .pstat span { color: var(--text-muted); }
+    .pstat strong { color: var(--text-bold); }
 
     .theme-toggle-btn {
       background: var(--bg-base);
@@ -776,10 +781,10 @@ HTML_INDEX = """<!DOCTYPE html>
       <span class="brand-badge">Real-time</span>
     </div>
     <div class="header-right">
-      <div class="resource-badge" id="resource-badge" onclick="toggleResourceModal()" title="클릭하여 실시간 CPU/RAM 상세 그래프 보기">
-        <span id="header-cpu">⚙️ CPU 0.0%</span>
+      <div class="resource-badge" id="resource-badge" onclick="toggleResourcePanel()" title="클릭하여 상단 실시간 그래프 패널 고정/해제">
+        <span id="header-cpu">⚙️ CPU: 애드온 0.0% (전체 0.0%)</span>
         <span class="badge-pipe">|</span>
-        <span id="header-ram">💾 RAM 0MB</span>
+        <span id="header-ram">💾 RAM: 0MB</span>
       </div>
       <div class="session-token-badge" onclick="resetTokens()" title="클릭 시 누적 토큰 초기화" style="cursor: pointer;">🪙 누적: <strong id="session-tokens">0</strong> Tokens</div>
       <button class="theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 테마 전환">🌙 다크</button>
@@ -790,52 +795,47 @@ HTML_INDEX = """<!DOCTYPE html>
     </div>
   </header>
 
-  <!-- Resource Monitor Modal -->
-  <div id="resource-modal" class="resource-modal-overlay" onclick="closeResourceModal(event)">
-    <div class="resource-modal-card" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <div class="modal-title">
-          <span>📊 시스템 리소스 실시간 모니터링</span>
+  <!-- Top Pinned Resource Panel (Collapsible) -->
+  <div id="top-resource-panel" class="top-resource-panel">
+    <div class="panel-inner">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>📊 시스템 및 애드온 리소스 실시간 모니터</span>
+          <span class="panel-sub">3초 실시간 갱신 · 듀얼 오버레이 차트</span>
         </div>
-        <button class="modal-close-btn" onclick="toggleResourceModal()">✕</button>
+        <button class="panel-close-btn" onclick="toggleResourcePanel()" title="상단 고정 패널 닫기">✕ 닫기</button>
       </div>
-      <div class="modal-body">
-        <div class="chart-section">
-          <div class="chart-header">
-            <span class="chart-name">⚙️ CPU 사용률 추이 (실시간)</span>
-            <strong id="modal-cpu-val" class="chart-val">0.0%</strong>
+      <div class="panel-grid">
+        <div class="chart-box">
+          <div class="chart-top">
+            <span class="chart-title">⚙️ CPU 사용률 추이 (듀얼)</span>
+            <div class="chart-legend">
+              <span class="lg-item lg-purple">● 애드온: <strong id="val-addon-cpu">0.0%</strong></span>
+              <span class="lg-item lg-blue">● 시스템 전체: <strong id="val-sys-cpu">0.0%</strong></span>
+            </div>
           </div>
-          <div class="canvas-wrap">
-            <canvas id="cpu-chart" width="440" height="80"></canvas>
-          </div>
-        </div>
-        <div class="chart-section">
-          <div class="chart-header">
-            <span class="chart-name">💾 RAM 점유율 추이 (시스템 전체)</span>
-            <strong id="modal-ram-val" class="chart-val">0MB (0%)</strong>
-          </div>
-          <div class="canvas-wrap">
-            <canvas id="ram-chart" width="440" height="80"></canvas>
+          <div class="canvas-holder">
+            <canvas id="cpu-dual-chart" width="460" height="75"></canvas>
           </div>
         </div>
-        <div class="resource-stats-grid">
-          <div class="stat-box">
-            <div class="stat-lbl">애드온 메모리</div>
-            <div class="stat-val" id="stat-addon-ram">-</div>
+        <div class="chart-box">
+          <div class="chart-top">
+            <span class="chart-title">💾 RAM 점유율 추이 (듀얼)</span>
+            <div class="chart-legend">
+              <span class="lg-item lg-green">● 애드온: <strong id="val-addon-ram">0MB (0%)</strong></span>
+              <span class="lg-item lg-cyan">● 시스템 전체: <strong id="val-sys-ram">0GB (0%)</strong></span>
+            </div>
           </div>
-          <div class="stat-box">
-            <div class="stat-lbl">전체 시스템 RAM</div>
-            <div class="stat-val" id="stat-total-ram">-</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-lbl">가동 시간 (Uptime)</div>
-            <div class="stat-val" id="stat-uptime">-</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-lbl">Antigravity Stream</div>
-            <div class="stat-val" id="stat-agy-stream">-</div>
+          <div class="canvas-holder">
+            <canvas id="ram-dual-chart" width="460" height="75"></canvas>
           </div>
         </div>
+      </div>
+      <div class="panel-stats">
+        <div class="pstat"><span>애드온 메모리</span><strong id="pstat-addon-ram">-</strong></div>
+        <div class="pstat"><span>시스템 전체 RAM</span><strong id="pstat-sys-ram">-</strong></div>
+        <div class="pstat"><span>가동 시간 (Uptime)</span><strong id="pstat-uptime">-</strong></div>
+        <div class="pstat"><span>Antigravity Stream</span><strong id="pstat-stream">-</strong></div>
       </div>
     </div>
   </div>
@@ -1227,27 +1227,21 @@ HTML_INDEX = """<!DOCTYPE html>
       };
     }
 
-    // Resource Monitor History & Charting
-    const MAX_HISTORY = 20;
-    const cpuHistory = [];
-    const ramHistory = [];
-    let isResourceModalOpen = false;
+    // Sticky Resource Panel & Dual-Line History
+    const MAX_HISTORY = 24;
+    const addonCpuHistory = [];
+    const sysCpuHistory = [];
+    const addonRamHistory = [];
+    const sysRamHistory = [];
+    let isResourcePanelOpen = false;
 
-    function toggleResourceModal() {
-      const modal = document.getElementById('resource-modal');
-      if (!modal) return;
-      isResourceModalOpen = !modal.classList.contains('open');
-      modal.classList.toggle('open', isResourceModalOpen);
-      if (isResourceModalOpen) {
+    function toggleResourcePanel() {
+      const panel = document.getElementById('top-resource-panel');
+      if (!panel) return;
+      isResourcePanelOpen = !panel.classList.contains('open');
+      panel.classList.toggle('open', isResourcePanelOpen);
+      if (isResourcePanelOpen) {
         renderCharts();
-      }
-    }
-
-    function closeResourceModal(e) {
-      const modal = document.getElementById('resource-modal');
-      if (modal) {
-        modal.classList.remove('open');
-        isResourceModalOpen = false;
       }
     }
 
@@ -1261,7 +1255,7 @@ HTML_INDEX = """<!DOCTYPE html>
       return `${s}초`;
     }
 
-    function drawSparkline(canvasId, dataList, maxScale, strokeColor, fillColor) {
+    function drawDualSparkline(canvasId, dataSys, dataAddon, maxScale, colorSys, colorAddon, fillAddon) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -1270,9 +1264,9 @@ HTML_INDEX = """<!DOCTYPE html>
 
       ctx.clearRect(0, 0, w, h);
 
-      if (!dataList || dataList.length === 0) return;
+      if (!dataSys || dataSys.length === 0) return;
 
-      // Draw subtle horizontal grid lines
+      // Draw subtle horizontal grid lines (25%, 50%, 75%)
       ctx.strokeStyle = 'rgba(150, 150, 150, 0.15)';
       ctx.lineWidth = 1;
       for (let y of [0.25, 0.5, 0.75]) {
@@ -1282,72 +1276,98 @@ HTML_INDEX = """<!DOCTYPE html>
         ctx.stroke();
       }
 
-      const points = [];
       const step = w / Math.max(MAX_HISTORY - 1, 1);
-      const startX = w - ((dataList.length - 1) * step);
+      const len = dataSys.length;
+      const startX = w - ((len - 1) * step);
 
-      dataList.forEach((val, i) => {
-        const x = startX + (i * step);
-        const ratio = Math.min(1, Math.max(0, val / maxScale));
-        const y = h - 8 - (ratio * (h - 16));
-        points.push({ x, y, val });
-      });
+      const makePoints = (dList) => {
+        return dList.map((val, i) => {
+          const x = startX + (i * step);
+          const ratio = Math.min(1, Math.max(0, val / maxScale));
+          const y = h - 6 - (ratio * (h - 12));
+          return { x, y, val };
+        });
+      };
 
-      if (points.length < 2) {
-        const p = points[0];
-        ctx.fillStyle = strokeColor;
+      const ptsSys = makePoints(dataSys);
+      const ptsAddon = makePoints(dataAddon);
+
+      // 1. Draw Addon Gradient Area Fill
+      if (ptsAddon.length >= 2) {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.moveTo(ptsAddon[0].x, h);
+        ctx.lineTo(ptsAddon[0].x, ptsAddon[0].y);
+        for (let i = 1; i < ptsAddon.length; i++) {
+          ctx.lineTo(ptsAddon[i].x, ptsAddon[i].y);
+        }
+        ctx.lineTo(ptsAddon[ptsAddon.length - 1].x, h);
+        ctx.closePath();
+
+        const grad = ctx.createLinearGradient(0, 0, 0, h);
+        grad.addColorStop(0, fillAddon);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
         ctx.fill();
-        return;
       }
 
-      // Draw Gradient Area Fill
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, h);
-      ctx.lineTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
+      // 2. Draw System Line (dashed or solid)
+      if (ptsSys.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(ptsSys[0].x, ptsSys[0].y);
+        for (let i = 1; i < ptsSys.length; i++) {
+          ctx.lineTo(ptsSys[i].x, ptsSys[i].y);
+        }
+        ctx.strokeStyle = colorSys;
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.lineTo(points[points.length - 1].x, h);
-      ctx.closePath();
 
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, fillColor);
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grad;
-      ctx.fill();
-
-      // Draw Line Stroke
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
+      // 3. Draw Addon Line (Solid thick)
+      if (ptsAddon.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(ptsAddon[0].x, ptsAddon[0].y);
+        for (let i = 1; i < ptsAddon.length; i++) {
+          ctx.lineTo(ptsAddon[i].x, ptsAddon[i].y);
+        }
+        ctx.strokeStyle = colorAddon;
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
       }
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 2;
-      ctx.stroke();
 
-      // Draw Current Point Dot
-      const lastP = points[points.length - 1];
-      ctx.fillStyle = strokeColor;
-      ctx.beginPath();
-      ctx.arc(lastP.x, lastP.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      // 4. Draw Current Endpoint Dots
+      if (ptsSys.length > 0) {
+        const lpSys = ptsSys[ptsSys.length - 1];
+        ctx.fillStyle = colorSys;
+        ctx.beginPath();
+        ctx.arc(lpSys.x, lpSys.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (ptsAddon.length > 0) {
+        const lpAddon = ptsAddon[ptsAddon.length - 1];
+        ctx.fillStyle = colorAddon;
+        ctx.beginPath();
+        ctx.arc(lpAddon.x, lpAddon.y, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
     }
 
     function renderCharts() {
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      const cpuStroke = isDark ? '#60a5fa' : '#2563eb';
-      const cpuFill = isDark ? 'rgba(96, 165, 250, 0.35)' : 'rgba(37, 99, 235, 0.25)';
-      const ramStroke = isDark ? '#34d399' : '#059669';
-      const ramFill = isDark ? 'rgba(52, 211, 153, 0.35)' : 'rgba(5, 150, 105, 0.25)';
+      const sysCpuCol = isDark ? '#60a5fa' : '#2563eb';
+      const addonCpuCol = isDark ? '#c084fc' : '#9333ea';
+      const addonCpuFill = isDark ? 'rgba(192, 132, 252, 0.3)' : 'rgba(147, 51, 234, 0.2)';
 
-      drawSparkline('cpu-chart', cpuHistory, 100, cpuStroke, cpuFill);
-      drawSparkline('ram-chart', ramHistory, 100, ramStroke, ramFill);
+      const sysRamCol = isDark ? '#38bdf8' : '#0284c7';
+      const addonRamCol = isDark ? '#34d399' : '#059669';
+      const addonRamFill = isDark ? 'rgba(52, 211, 153, 0.3)' : 'rgba(5, 150, 105, 0.2)';
+
+      drawDualSparkline('cpu-dual-chart', sysCpuHistory, addonCpuHistory, 100, sysCpuCol, addonCpuCol, addonCpuFill);
+      drawDualSparkline('ram-dual-chart', sysRamHistory, addonRamHistory, 100, sysRamCol, addonRamCol, addonRamFill);
     }
 
     async function pollStatus() {
@@ -1356,39 +1376,54 @@ HTML_INDEX = """<!DOCTYPE html>
         if (!res.ok) return;
         const data = await res.json();
 
-        // Update CPU History
-        const cpuVal = typeof data.cpu_usage === 'number' ? data.cpu_usage : 0;
-        cpuHistory.push(cpuVal);
-        if (cpuHistory.length > MAX_HISTORY) cpuHistory.shift();
+        // Addon vs System CPU
+        const addonCpu = typeof data.addon_cpu_usage === 'number' ? data.addon_cpu_usage : (typeof data.cpu_usage === 'number' ? data.cpu_usage : 0);
+        const sysCpu = typeof data.system_cpu_usage === 'number' ? data.system_cpu_usage : (typeof data.cpu_usage === 'number' ? data.cpu_usage : 0);
 
-        // Update RAM History
-        const ramPct = typeof data.memory_percent === 'number' ? data.memory_percent : 0;
-        ramHistory.push(ramPct);
-        if (ramHistory.length > MAX_HISTORY) ramHistory.shift();
+        addonCpuHistory.push(addonCpu);
+        if (addonCpuHistory.length > MAX_HISTORY) addonCpuHistory.shift();
+        sysCpuHistory.push(sysCpu);
+        if (sysCpuHistory.length > MAX_HISTORY) sysCpuHistory.shift();
+
+        // Addon vs System RAM
+        const addonRamMb = data.addon_memory_mb || data.memory_usage || 0;
+        const addonRamPct = typeof data.addon_memory_percent === 'number' ? data.addon_memory_percent : 0;
+        const sysRamPct = typeof data.system_memory_percent === 'number' ? data.system_memory_percent : (typeof data.memory_percent === 'number' ? data.memory_percent : 0);
+
+        addonRamHistory.push(addonRamPct);
+        if (addonRamHistory.length > MAX_HISTORY) addonRamHistory.shift();
+        sysRamHistory.push(sysRamPct);
+        if (sysRamHistory.length > MAX_HISTORY) sysRamHistory.shift();
 
         // Update Header Badge
         const headerCpu = document.getElementById('header-cpu');
         const headerRam = document.getElementById('header-ram');
-        if (headerCpu) headerCpu.textContent = `⚙️ CPU ${cpuVal.toFixed(1)}%`;
-        if (headerRam) headerRam.textContent = `💾 RAM ${data.memory_usage || 0}MB (${ramPct.toFixed(0)}%)`;
+        if (headerCpu) headerCpu.textContent = `⚙️ CPU: 애드온 ${addonCpu.toFixed(1)}% (전체 ${sysCpu.toFixed(1)}%)`;
+        if (headerRam) headerRam.textContent = `💾 RAM: ${addonRamMb}MB (${addonRamPct.toFixed(1)}%) | 전체 ${sysRamPct.toFixed(0)}%`;
 
-        // Update Modal Details
-        const modalCpu = document.getElementById('modal-cpu-val');
-        const modalRam = document.getElementById('modal-ram-val');
-        if (modalCpu) modalCpu.textContent = `${cpuVal.toFixed(1)}%`;
-        if (modalRam) modalRam.textContent = `${data.used_memory_gb || 0}GB / ${data.total_memory_gb || 0}GB (${ramPct.toFixed(1)}%)`;
+        // Update Panel Legend Numbers
+        const valAddonCpu = document.getElementById('val-addon-cpu');
+        const valSysCpu = document.getElementById('val-sys-cpu');
+        const valAddonRam = document.getElementById('val-addon-ram');
+        const valSysRam = document.getElementById('val-sys-ram');
 
-        const statAddonRam = document.getElementById('stat-addon-ram');
-        const statTotalRam = document.getElementById('stat-total-ram');
-        const statUptime = document.getElementById('stat-uptime');
-        const statAgyStream = document.getElementById('stat-agy-stream');
+        if (valAddonCpu) valAddonCpu.textContent = `${addonCpu.toFixed(1)}%`;
+        if (valSysCpu) valSysCpu.textContent = `${sysCpu.toFixed(1)}%`;
+        if (valAddonRam) valAddonRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
+        if (valSysRam) valSysRam.textContent = `${data.used_memory_gb || 0}GB (${sysRamPct.toFixed(1)}%)`;
 
-        if (statAddonRam) statAddonRam.textContent = `${data.memory_usage || 0} MB`;
-        if (statTotalRam) statTotalRam.textContent = `${data.used_memory_gb || 0} GB (${ramPct.toFixed(0)}%)`;
-        if (statUptime) statUptime.textContent = formatUptime(data.uptime);
-        if (statAgyStream) {
-          statAgyStream.textContent = data.agy_stream_supported ? '✅ 지원 (Host 모드)' : '❌ 미지원 (kvm64)';
-          statAgyStream.style.color = data.agy_stream_supported ? 'var(--accent-green)' : 'var(--text-muted)';
+        // Update Panel Stat Boxes
+        const pstatAddonRam = document.getElementById('pstat-addon-ram');
+        const pstatSysRam = document.getElementById('pstat-sys-ram');
+        const pstatUptime = document.getElementById('pstat-uptime');
+        const pstatStream = document.getElementById('pstat-stream');
+
+        if (pstatAddonRam) pstatAddonRam.textContent = `${addonRamMb} MB (${addonRamPct.toFixed(1)}%)`;
+        if (pstatSysRam) pstatSysRam.textContent = `${data.used_memory_gb || 0}GB / ${data.total_memory_gb || 0}GB (${sysRamPct.toFixed(0)}%)`;
+        if (pstatUptime) pstatUptime.textContent = formatUptime(data.uptime);
+        if (pstatStream) {
+          pstatStream.textContent = data.agy_stream_supported ? '✅ 지원 (Host 모드)' : '❌ 미지원 (kvm64)';
+          pstatStream.style.color = data.agy_stream_supported ? 'var(--accent-green)' : 'var(--text-muted)';
         }
 
         // Mode 3 Conditional Enable/Disable
@@ -1408,7 +1443,7 @@ HTML_INDEX = """<!DOCTYPE html>
           }
         }
 
-        if (isResourceModalOpen) {
+        if (isResourcePanelOpen) {
           renderCharts();
         }
       } catch (e) {}
