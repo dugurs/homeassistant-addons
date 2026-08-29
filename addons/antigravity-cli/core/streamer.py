@@ -188,11 +188,13 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
         """Monitor conversation transcript on disk in real time and emit thoughts/tool actions."""
         candidate_paths = [
             f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
+            f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/transcript.jsonl",
             f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
+            f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/transcript.jsonl",
         ]
         
         file_obj = None
-        for _ in range(60):
+        for _ in range(80):
             if done_event.is_set():
                 break
             for cp in candidate_paths:
@@ -230,7 +232,7 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                         clean_think = thinking.replace("\n\n", " · ").replace("\n", " ")
                         if len(clean_think) > 220:
                             clean_think = clean_think[:220] + "..."
-                        event_queue.put(("chunk", f"> 💭 **[추론]** *{clean_think}*\n\n"))
+                        event_queue.put(("live_log", f"💭 [추론] {clean_think}"))
 
                     # 2. Tool Calls
                     tcs = step_data.get("tool_calls", [])
@@ -253,19 +255,19 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                             arg_str = json.dumps(targs, ensure_ascii=False) if isinstance(targs, dict) else str(targs)
                             if len(arg_str) > 70:
                                 arg_str = arg_str[:70] + "..."
-                            event_queue.put(("chunk", f"> 🔧 **[HA 도구]** `{tcalled}` {f'— *{desc}*' if desc else ''} `{arg_str}`\n\n"))
+                            event_queue.put(("live_log", f"🔧 [HA 도구] {tcalled} {arg_str}"))
                         elif tname == "view_file" and isinstance(args, dict):
                             fpath = args.get("AbsolutePath", "")
                             fname = os.path.basename(fpath) if fpath else "file"
-                            event_queue.put(("chunk", f"> 📄 **[파일 확인]** `{fname}` {f'— *{desc}*' if desc else ''}\n\n"))
+                            event_queue.put(("live_log", f"📄 [파일 확인] {fname} {f'({desc})' if desc else ''}"))
                         elif tname == "run_command" and isinstance(args, dict):
                             cmd_str = args.get("CommandLine", "")
-                            event_queue.put(("chunk", f"> ⚙️ **[명령어]** `{cmd_str[:60]}` {f'— *{desc}*' if desc else ''}\n\n"))
+                            event_queue.put(("live_log", f"⚙️ [명령어] {cmd_str[:60]}"))
                         elif tname == "search_web":
                             q = args.get("query", "") if isinstance(args, dict) else str(args)
-                            event_queue.put(("chunk", f"> 🌐 **[웹 검색]** *\"{q[:50]}\"*\n\n"))
+                            event_queue.put(("live_log", f"🌐 [웹 검색] {q[:50]}"))
                         else:
-                            event_queue.put(("chunk", f"> 🔧 **[도구 실행]** `{tname}` {f'— *{desc}*' if desc else ''}\n\n"))
+                            event_queue.put(("live_log", f"🔧 [도구 실행] {tname} {desc[:50] if desc else ''}"))
 
                     # 3. Model Response (Final output)
                     content = step_data.get("content", "")
@@ -301,8 +303,7 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                 if evt == "init":
                     tools = data.get("init", {}).get("tools", [])
                     cid = data.get("conversation_id", "")
-                    init_msg = f"> 🚀 **[Antigravity CLI]** 세션 개시 (`{len(tools)}`개 도구 로드됨)\n\n"
-                    event_queue.put(("chunk", init_msg))
+                    event_queue.put(("live_log", f"🚀 [세션 시작] Antigravity CLI v2.0 ({len(tools)}개 도구 로드됨)"))
                     if cid:
                         t_tail = threading.Thread(target=tail_transcript, args=(cid,), daemon=True)
                         t_tail.start()
@@ -327,7 +328,7 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                     if any(w in msg.lower() for w in ["auth", "login", "oauth", "unauthorized"]):
                         auth_failed = True
                         break
-                    event_queue.put(("chunk", f"> ⚠️ **[오류]** {msg}\n\n"))
+                    event_queue.put(("live_log", f"⚠️ [오류] {msg}"))
         finally:
             done_event.set()
             try:
@@ -343,7 +344,9 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
     while True:
         try:
             ev_type, ev_data = event_queue.get(timeout=0.08)
-            if ev_type == "chunk":
+            if ev_type == "live_log":
+                yield make_sse("live_log", ev_data)
+            elif ev_type == "chunk":
                 full_text_parts.append(ev_data)
                 output_chars += len(ev_data)
                 has_emitted_chunk = True
@@ -401,6 +404,7 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
         return
 
     if auth_failed:
+        yield make_sse("live_log", "🔑 [인증 필요] Terminal 탭에서 agy 실행 후 로그인하세요.")
         yield make_sse("chunk", "> 🔑 **[인증 필요]** Terminal 탭에서 `agy` 실행 후 Google 계정으로 1회 로그인하세요.\n\n")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev

@@ -721,7 +721,98 @@ HTML_INDEX = """<!DOCTYPE html>
       color: #6ee7b7;
       font-size: 0.80rem;
     }
-    .callout strong { color: var(--text-bold); }
+    /* Terminal Console Window Box (Real-time Live Operation Stream) */
+    .term-box {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+    }
+    .term-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #161b22;
+      padding: 5px 10px;
+      border-bottom: 1px solid #30363d;
+      font-size: 0.70rem;
+      color: #8b949e;
+      font-family: 'Fira Code', Consolas, monospace;
+      user-select: none;
+    }
+    .term-dots {
+      display: flex;
+      gap: 5px;
+    }
+    .term-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+    .term-dot.red { background: #ff5f56; }
+    .term-dot.yellow { background: #ffbd2e; }
+    .term-dot.green { background: #27c93f; }
+    .term-title {
+      font-weight: 600;
+      color: #c9d1d9;
+      font-size: 0.72rem;
+    }
+    .term-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 10px;
+      letter-spacing: 0.5px;
+    }
+    .term-badge.live {
+      background: rgba(35, 134, 54, 0.2);
+      color: #3fb950;
+      border: 1px solid rgba(63, 185, 80, 0.3);
+      animation: pulseLive 1.2s infinite ease-in-out;
+    }
+    .term-badge.done {
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      border: 1px solid #30363d;
+    }
+    .term-body {
+      padding: 8px 12px;
+      max-height: 180px;
+      overflow-y: auto;
+      font-family: 'Fira Code', Consolas, Monaco, monospace;
+      font-size: 0.72rem;
+      line-height: 1.4;
+      color: #c9d1d9;
+      background: #0d1117;
+    }
+    .term-body::-webkit-scrollbar {
+      width: 5px;
+    }
+    .term-body::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 3px;
+    }
+    .term-line {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 2px;
+      word-break: break-all;
+    }
+    .term-time {
+      color: #6e7681;
+      flex-shrink: 0;
+      font-size: 0.68rem;
+    }
+    .term-text { flex: 1; }
+    .term-text.init { color: #58a6ff; font-weight: 600; }
+    .term-text.think { color: #d2a8ff; font-style: italic; }
+    .term-text.tool { color: #79c0ff; }
+    .term-text.file { color: #56d364; }
+    .term-text.cmd { color: #e3b341; }
+    .term-text.done { color: #3fb950; font-weight: 600; }
+    .term-text.error { color: #f85149; }
 
     /* Tables */
     .table-wrapper {
@@ -1255,7 +1346,21 @@ HTML_INDEX = """<!DOCTYPE html>
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
-            <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 스트림 연결 중...</span></div>
+            <!-- Mini Terminal Live Window for real-time operations -->
+            <div class="term-box" style="display: none;">
+              <div class="term-header">
+                <div class="term-dots">
+                  <span class="term-dot red"></span>
+                  <span class="term-dot yellow"></span>
+                  <span class="term-dot green"></span>
+                </div>
+                <span class="term-title">💻 Antigravity Terminal Live</span>
+                <span class="term-badge live">● LIVE</span>
+              </div>
+              <div class="term-body"></div>
+            </div>
+            <!-- Main Final Answer Content -->
+            <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 처리 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
           <div class="msg-meta bot">
@@ -1269,6 +1374,9 @@ HTML_INDEX = """<!DOCTYPE html>
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
+      const termBox = row.querySelector('.term-box');
+      const termBody = row.querySelector('.term-body');
+      const termBadge = row.querySelector('.term-badge');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
@@ -1276,6 +1384,7 @@ HTML_INDEX = """<!DOCTYPE html>
 
       let answerText = "";
       let finished = false;
+      let hasAnswerStarted = false;
 
       const liveTimer = setInterval(() => {
         if (finished) return;
@@ -1287,16 +1396,44 @@ HTML_INDEX = """<!DOCTYPE html>
       }, 100);
 
       return {
+        addLiveLog: function(logStr) {
+          if (!termBox || !termBody) return;
+          termBox.style.display = 'block';
+          const lineEl = document.createElement('div');
+          lineEl.className = 'term-line';
+          
+          let lineClass = 'term-text';
+          if (logStr.includes('💭') || logStr.includes('[추론]')) lineClass += ' think';
+          else if (logStr.includes('🔧') || logStr.includes('[도구') || logStr.includes('[HA 도구]')) lineClass += ' tool';
+          else if (logStr.includes('📄') || logStr.includes('[파일')) lineClass += ' file';
+          else if (logStr.includes('⚙️') || logStr.includes('[명령어')) lineClass += ' cmd';
+          else if (logStr.includes('🚀') || logStr.includes('[세션')) lineClass += ' init';
+          else if (logStr.includes('✅') || logStr.includes('[완료')) lineClass += ' done';
+          else if (logStr.includes('⚠️') || logStr.includes('오류') || logStr.includes('인증')) lineClass += ' error';
+
+          const now = new Date();
+          const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+          
+          lineEl.innerHTML = `<span class="term-time">[${ts}]</span> <span class="${lineClass}">${logStr}</span>`;
+          termBody.appendChild(lineEl);
+          termBody.scrollTop = termBody.scrollHeight;
+          box.scrollTop = box.scrollHeight;
+        },
         addTool: function(toolStr) {
-          // Tool info is now directly delivered via inline chunks in real-time
+          this.addLiveLog(toolStr);
         },
         appendChunk: function(chunk) {
+          if (!hasAnswerStarted) {
+            hasAnswerStarted = true;
+            answerText = "";
+          }
           answerText += chunk;
           answerContent.innerHTML = formatMarkdown(answerText);
           if (rawCode) rawCode.textContent = answerText;
           box.scrollTop = box.scrollHeight;
         },
         setText: function(text) {
+          hasAnswerStarted = true;
           answerText = text;
           answerContent.innerHTML = formatMarkdown(answerText);
           if (rawCode) rawCode.textContent = answerText;
@@ -1309,6 +1446,11 @@ HTML_INDEX = """<!DOCTYPE html>
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
+          if (termBadge) {
+            termBadge.textContent = '● COMPLETED';
+            termBadge.classList.remove('live');
+            termBadge.classList.add('done');
+          }
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초 완료`;
@@ -1324,9 +1466,9 @@ HTML_INDEX = """<!DOCTYPE html>
             const sessBadge = document.getElementById('session-tokens');
             if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
           }
-          if (!answerText) {
-            answerContent.innerHTML = "답변 작성을 완료했습니다.";
-            if (rawCode) rawCode.textContent = "답변 작성을 완료했습니다.";
+          if (!hasAnswerStarted || !answerText) {
+            answerContent.innerHTML = "<span style='color: var(--text-muted);'>✅ 작업이 완료되었습니다.</span>";
+            if (rawCode) rawCode.textContent = "작업이 완료되었습니다.";
           }
           answerContent.setAttribute('data-raw', answerText);
           box.scrollTop = box.scrollHeight;
@@ -1655,8 +1797,8 @@ HTML_INDEX = """<!DOCTYPE html>
             const jsonStr = trimmed.slice(5).trim();
             try {
               const ev = JSON.parse(jsonStr);
-              if (ev.type === 'tool') {
-                streamUI.addTool(ev.content);
+              if (ev.type === 'live_log' || ev.type === 'tool') {
+                streamUI.addLiveLog(ev.content);
               } else if (ev.type === 'chunk') {
                 streamUI.appendChunk(ev.content);
               } else if (ev.type === 'text') {

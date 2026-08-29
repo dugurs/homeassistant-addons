@@ -46,8 +46,8 @@ def test_chat(prompt: str = "", stream_mode: int = 3):
                         if ev_type in ("text", "chunk"):
                             content = ev.get("content", "")
                             print(f"[+{elapsed:06.3f}s] [chunk] {content}", flush=True)
-                        elif ev_type == "tool":
-                            print(f"[+{elapsed:06.3f}s] [tool]  {ev.get('content')}", flush=True)
+                        elif ev_type in ("live_log", "tool"):
+                            print(f"[+{elapsed:06.3f}s] [log]   {ev.get('content')}", flush=True)
                         elif ev_type == "done":
                             print(f"[+{elapsed:06.3f}s] [done]  {ev.get('tokens')}", flush=True)
                             print("[OK] Stream completed successfully.", flush=True)
