@@ -1,30 +1,53 @@
 #!/usr/bin/env python3
-"""Inspect exact entity names and states for humidity and battery in each room."""
+"""Verify exact room humidity extraction without battery values or '약' prefixes."""
 
 import json
+import sys
+import time
 import urllib.request
 
-url = "http://192.168.0.14:8000/api/status"
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-def inspect_entities():
-    # Let's inspect via Home Assistant API through runner
-    from core.ha_engine import get_ha_states
-    states = get_ha_states()
-    print(f"Total entities fetched: {len(states)}")
-    rooms = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다"]
-    
-    print("\n--- [Entities with % or 습도] ---")
-    for s in states:
-        eid = s.get("entity_id", "")
-        fn = s.get("attributes", {}).get("friendly_name", "")
-        st = s.get("state", "")
-        uom = s.get("attributes", {}).get("unit_of_measurement", "")
-        device_class = s.get("attributes", {}).get("device_class", "")
-        
-        if any(r in fn for r in rooms) and (uom == "%" or "습도" in fn or "humidity" in eid):
-            print(f"EID: {eid:40} | FN: {fn:30} | State: {st:6} | UOM: {uom:3} | Class: {device_class}")
+def p(msg: str):
+    print(msg, flush=True)
+
+
+def test_humidity():
+    ha_ip = "192.168.0.14"
+    url = f"http://{ha_ip}:8000/api/chat"
+    prompt = "각 방 습도 알려줘"
+    p(f"\n[*] Testing Prompt: '{prompt}' on Mode 3 (Fast)...")
+
+    payload = json.dumps({"prompt": prompt, "is_direct_llm": False, "stream_mode": 3}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
+    content = ""
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        for line in resp:
+            l = line.decode("utf-8", errors="replace").strip()
+            if l.startswith("data:"):
+                ev = json.loads(l[5:].strip())
+                if ev.get("type") in ("text", "chunk"):
+                    content += ev.get("content", "")
+                elif ev.get("type") == "done":
+                    break
+
+    p("--- [Result Output] ---")
+    p(content)
+
+    p("\n--- [Accuracy Verification] ---")
+    has_100 = "100%" in content
+    has_approx = "약" in content
+    p(f"• Contains 100% (Suspicious Battery Value): {'YES [FAIL]' if has_100 else 'NO [PASS]'}")
+    p(f"• Contains '약' Prefix                   : {'YES [FAIL]' if has_approx else 'NO [PASS]'}")
+
+    if not has_100 and not has_approx:
+        p("\nHUMIDITY ACCURACY TEST PASSED PERFECTLY!")
+    else:
+        p("\nHUMIDITY TEST FAILED!")
 
 
 if __name__ == "__main__":
-    inspect_entities()
+    test_humidity()
