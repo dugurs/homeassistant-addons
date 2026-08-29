@@ -213,10 +213,13 @@ def stream_pty_interactive(prompt: str, is_mobile: bool = False):
         yield make_sse("done")
         return
 
+    yield make_sse("tool", "⚙️ [PTY 세션] Antigravity CLI 에이전트 구동 및 가상 터미널 파이프 연결 중...")
+    time.sleep(0.04)
+
     os.close(slave_fd)
     buffer = ""
     start_time = time.time()
-    timeout = 30
+    timeout = 6
     streamed_any = False
 
     try:
