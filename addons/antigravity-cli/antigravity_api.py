@@ -419,10 +419,20 @@ def make_sse(ev_type: str, content: str = "") -> str:
 def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
     """Generator that yields real-time SSE stream events for Antigravity AI."""
     clean_prompt = prompt.strip()
-    lower = clean_prompt.lower()
+    actual_prompt = re.sub(r'^(ai|/llm)\s*', '', clean_prompt, flags=re.IGNORECASE).strip()
+    lower = actual_prompt.lower()
 
-    # 1. Real-Time Deep Brain AI via PTY
+    # 1. If it is a smart home query (weather, lights, rooms, status, error logs), use ultra-fast analyzer first
+    if not is_direct_llm or any(w in lower for w in ["상태", "상황", "현황", "요약", "브리핑", "날씨", "환경", "기상", "온도", "습도", "조명", "에러"]):
+        yield make_sse("tool", "스마트홈 실시간 엔티티 데이터 수집 중...")
+        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        yield make_sse("text", full_text)
+        yield make_sse("done")
+        return
+
+    # 2. Real-Time Deep Brain AI via PTY for generic code/reasoning prompts
     if is_direct_llm:
+        yield make_sse("tool", f"Antigravity CLI AI 모델 가동: '{actual_prompt}'")
         if pty is None:
             yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
             yield make_sse("done")
@@ -451,7 +461,7 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
             "PATH": f"/root/.local/bin:/usr/local/bin:{os.environ.get('PATH', '')}:/usr/bin:/bin",
         }
 
-        cmd = [agy_bin, "--dangerously-skip-permissions", "--print", clean_prompt]
+        cmd = [agy_bin, "--dangerously-skip-permissions", "--print", actual_prompt]
         proc = subprocess.Popen(
             cmd,
             stdin=slave_fd,
@@ -1053,7 +1063,7 @@ HTML_INDEX = """<!DOCTYPE html>
             <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
             <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
             <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
-            <div class="chip" onclick="sendQuick('ai 오늘 날씨와 환경 분석해줘')">🤖 AI 실시간 추론</div>
+            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</div>
           </div>
         </div>
       </div>
