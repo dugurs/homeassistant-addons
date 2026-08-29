@@ -228,16 +228,21 @@ def get_room_env_matrix(states: list) -> dict:
 
         try:
             num_val = float(st.replace(",", ""))
+            if num_val.is_integer():
+                fmt_val = str(int(num_val))
+            else:
+                fmt_val = f"{num_val:.2f}".rstrip("0").rstrip(".")
         except ValueError:
             continue
 
         for r in rooms:
             if r in fn or r in eid:
                 if metric not in matrix[r]:
+                    unit_str = uom or default_unit
                     matrix[r][metric] = {
                         "value": num_val,
-                        "unit": uom or default_unit,
-                        "formatted": f"{st}{uom or default_unit}",
+                        "unit": unit_str,
+                        "formatted": f"{fmt_val}{unit_str}",
                         "raw_state": st,
                         "entity_id": eid,
                         "friendly_name": fn,
