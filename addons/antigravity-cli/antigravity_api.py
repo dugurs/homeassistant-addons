@@ -383,7 +383,32 @@ def get_room_env_summary(states: list, env_type: str = "temperature") -> str:
     return f"현재 등록된 각 방별 {label} 센서가 없습니다."
 
 
-def run_agy_with_pty(prompt: str, timeout: int = 60) -> str:
+def get_weather_env_summary(states: list) -> str:
+    """Synthesize outdoor weather and indoor room environment into a comprehensive briefing."""
+    weather_lines = []
+    for s in states:
+        eid = s.get("entity_id", "")
+        fn = s.get("attributes", {}).get("friendly_name") or eid
+        state = s.get("state", "")
+        if eid.startswith("weather.") or "날씨" in fn or "기상" in fn:
+            attrs = s.get("attributes", {})
+            temp = attrs.get("temperature", "")
+            hum = attrs.get("humidity", "")
+            weather_lines.append(f"• 실외 기상: 현재 {state}, 기온 {temp}°C, 습도 {hum}%")
+            break
+
+    indoor_temp = get_room_env_summary(states, "temperature")
+    indoor_hum = get_room_env_summary(states, "humidity")
+
+    res = ["🌦️ 오늘 날씨 및 실내외 환경 분석 리포트입니다:"]
+    if weather_lines:
+        res.extend(weather_lines)
+    res.append("\n" + indoor_temp)
+    res.append("\n" + indoor_hum)
+    return "\n".join(res)
+
+
+def run_agy_with_pty(prompt: str, timeout: int = 120) -> str:
     """Execute agy CLI inside a virtual pseudo-terminal (PTY) and capture pure output."""
     if pty is None:
         return ""
@@ -499,11 +524,18 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
     clean_prompt = prompt.strip()
     lower = clean_prompt.lower()
 
-    # 1. Pure AI Direct Pass-Through: If user explicitly invoked LLM (/llm, ai), try PTY execution first
+    # 1. Pure AI Direct Pass-Through: If user explicitly invoked LLM (/llm, ai), try PTY execution with 120s timeout
     if is_direct_llm:
-        return run_agy_with_pty(clean_prompt, timeout=60)
+        return run_agy_with_pty(clean_prompt, timeout=120)
 
-    # 2. System Log Query (에러 로그, 시스템 로그, 오류 확인)
+    # 2. Weather & Environment Analysis Query
+    if any(w in lower for w in ["날씨", "환경", "기상", "일기예보", "온습도"]):
+        if not any(ctrl in lower for ctrl in ["켜", "꺼", "틀어", "시작", "정지"]):
+            states = get_ha_states()
+            if states:
+                return get_weather_env_summary(states)
+
+    # 3. System Log Query (에러 로그, 시스템 로그, 오류 확인)
     if any(w in lower for w in ["에러 로그", "오류 로그", "에러 확인", "오류 확인", "시스템 로그", "최근 에러", "로그 확인"]):
         return get_ha_error_logs()
 
@@ -821,7 +853,7 @@ HTML_INDEX = """<!DOCTYPE html>
             <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
             <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
             <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
-            <div class="chip" onclick="sendQuick('ai 오늘 날씨와 환경 분석해줘')">🤖 AI 심층 분석</div>
+            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌦️ 날씨/환경 분석</div>
           </div>
         </div>
       </div>
