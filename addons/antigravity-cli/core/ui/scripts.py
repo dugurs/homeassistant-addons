@@ -1,159 +1,7 @@
+"""Web UI Frontend Client JavaScript Application."""
 
-    // Theme Management
-    function initTheme() {
-      const savedTheme = localStorage.getItem('antigravity_theme') || 'dark';
-      document.documentElement.setAttribute('data-theme', savedTheme);
-      updateThemeBtn(savedTheme);
-    }
-
-    function toggleTheme() {
-      const current = document.documentElement.getAttribute('data-theme') || 'dark';
-      const next = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('antigravity_theme', next);
-      updateThemeBtn(next);
-    }
-
-    function updateThemeBtn(theme) {
-      const btn = document.getElementById('theme-toggle-btn');
-      if (btn) {
-        btn.innerHTML = theme === 'dark' ? '🌙 다크' : '☀️ 라이트';
-      }
-    }
-
-    initTheme();
-
-    function switchTab(tab) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
-      if (tab === 'chat') {
-        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
-        document.getElementById('chat-view').classList.add('active');
-      } else {
-        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
-        document.getElementById('terminal-view').classList.add('active');
-      }
-    }
-
-    function copyCodeBlock(btn) {
-      const code = btn.closest('.code-block-wrap').querySelector('code').innerText;
-      navigator.clipboard.writeText(code).then(() => {
-        btn.textContent = '✓ 복사완료';
-        setTimeout(() => { btn.textContent = '📋 복사'; }, 2000);
-      });
-    }
-
-    // =========================================================================
-    // Robust Standard GFM Markdown Formatter with Nested Lists & Callouts
-    // =========================================================================
-    function formatMarkdown(text) {
-      if (!text) return "";
-      
-      // 1. Escape HTML
-      let src = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-      // 2. Multi-line Blockquotes & Terminal Callouts
-      src = src.replace(/((?:^&gt;.*(?:\r?\n|$))+)/gm, function(match) {
-        let lines = match.trim().split(/\r?\n/).map(l => l.replace(/^&gt;\s?/, '').trim());
-        let firstLine = lines[0] || '';
-        let calloutType = 'tip';
-        
-        if (firstLine.includes('💭') || firstLine.includes('[추론]')) {
-          calloutType = 'thinking';
-        } else if (firstLine.includes('🔧') || firstLine.includes('[HA 도구]') || firstLine.includes('[도구')) {
-          calloutType = 'tool';
-        } else if (firstLine.includes('📄') || firstLine.includes('[파일')) {
-          calloutType = 'file';
-        } else if (firstLine.includes('⚙️') || firstLine.includes('[명령어')) {
-          calloutType = 'cmd';
-        } else if (firstLine.includes('🚀') || firstLine.includes('[Antigravity')) {
-          calloutType = 'init';
-        } else if (firstLine.includes('✅') || firstLine.includes('[완료]')) {
-          calloutType = 'done';
-        } else if (/^\[!(WARNING|CAUTION|IMPORTANT)\]/i.test(firstLine)) {
-          calloutType = 'warning';
-          lines[0] = lines[0].replace(/^\[!(WARNING|CAUTION|IMPORTANT)\]\s*/i, '⚠️ ');
-        } else if (/^\[!(NOTE|INFO|TIP)\]/i.test(firstLine)) {
-          calloutType = 'tip';
-          lines[0] = lines[0].replace(/^\[!(NOTE|INFO|TIP)\]\s*/i, '💡 ');
-        }
-        
-        let inner = lines.filter(l => l.length > 0).join('<br>');
-        return '<div class="callout ' + calloutType + '">' + inner + '</div>';
-      });
-
-      // 3. Fenced Code Blocks
-      src = src.replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g, function(match, lang, code) {
-        const langStr = lang || 'text';
-        return '<div class="code-block-wrap">' +
-               '<div class="code-header"><span>' + langStr + '</span>' +
-               '<button class="code-copy-btn" onclick="copyCodeBlock(this)">📋 복사</button></div>' +
-               '<pre><code>' + code.trim() + '</code></pre></div>';
-      });
-
-      // 4. Tables
-      src = src.replace(/\|(.+)\|\r?\n\|[-|\s:]+\|\r?\n((?:\|.*\|\r?\n?)*)/g, function(match, header, rows) {
-        let headers = header.split('|').map(h => h.trim()).filter(h => h);
-        let rowLines = rows.trim().split(/\r?\n/);
-        let html = '<div class="table-wrapper"><table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
-        rowLines.forEach(r => {
-          let cols = r.split('|').map(c => c.trim()).filter(c => c);
-          if (cols.length) {
-            html += '<tr>' + cols.map(c => '<td>' + c + '</td>').join('') + '</tr>';
-          }
-        });
-        html += '</tbody></table></div>';
-        return html;
-      });
-
-      // 5. Bold & Italic & Inline Code
-      src = src.replace(/`([^`]+)`/g, '<code>$1</code>');
-      src = src.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
-      src = src.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      src = src.replace(/\*(.*?)\*/g, '<em>$1</em>');
-
-      // 6. Multi-level Nested Lists Parser
-      let lines = src.split(/\r?\n/);
-      let out = [];
-      let listStack = []; // stores indent levels
-
-      function closeLists(targetLevel) {
-        while (listStack.length > targetLevel) {
-          listStack.pop();
-          out.push('</ul>');
-        }
-      }
-
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        let listMatch = line.match(/^(\s*)([•\-\*]|\d+\.)\s+(.*)$/);
-
-        if (listMatch) {
-          let indentSpaces = listMatch[1].length;
-          let content = listMatch[3];
-          let level = Math.floor(indentSpaces / 2) + 1;
-
-          if (level > listStack.length) {
-            out.push('<ul>');
-            listStack.push(level);
-          } else if (level < listStack.length) {
-            closeLists(level);
-          }
-
-          out.push('<li>' + content + '</li>');
-        } else {
-          closeLists(0);
-          if (line.trim().length > 0) {
-            out.push(line);
-          }
-        }
-      }
-      closeLists(0);
-
-      return out.join('<br>').replace(/(<\/ul>|<div class="table-wrapper">.*<\/div>|<div class="code-block-wrap">.*<\/div>|<div class="callout.*?<\/div>)<br>/g, '$1');
-    }
-
-    function getCurrentTimeStr() {
+JS_SCRIPTS = """
+function getCurrentTimeStr() {
       const now = new Date();
       return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
@@ -262,7 +110,21 @@
               </div>
               <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
-            <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 스트림 연결 중...</span></div>
+            <!-- Mini Terminal Live Window for real-time operations -->
+            <div class="term-box" style="display: none;">
+              <div class="term-header">
+                <div class="term-dots">
+                  <span class="term-dot red"></span>
+                  <span class="term-dot yellow"></span>
+                  <span class="term-dot green"></span>
+                </div>
+                <span class="term-title">💻 Antigravity Terminal Live</span>
+                <span class="term-badge live">● LIVE</span>
+              </div>
+              <div class="term-body"></div>
+            </div>
+            <!-- Main Final Answer Content -->
+            <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 처리 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
           <div class="msg-meta bot">
@@ -276,6 +138,9 @@
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
 
+      const termBox = row.querySelector('.term-box');
+      const termBody = row.querySelector('.term-body');
+      const termBadge = row.querySelector('.term-badge');
       const answerContent = row.querySelector('.answer-content');
       const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
@@ -283,6 +148,7 @@
 
       let answerText = "";
       let finished = false;
+      let hasAnswerStarted = false;
 
       const liveTimer = setInterval(() => {
         if (finished) return;
@@ -294,16 +160,44 @@
       }, 100);
 
       return {
+        addLiveLog: function(logStr) {
+          if (!termBox || !termBody) return;
+          termBox.style.display = 'block';
+          const lineEl = document.createElement('div');
+          lineEl.className = 'term-line';
+          
+          let lineClass = 'term-text';
+          if (logStr.includes('💭') || logStr.includes('[추론]')) lineClass += ' think';
+          else if (logStr.includes('🔧') || logStr.includes('[도구') || logStr.includes('[HA 도구]')) lineClass += ' tool';
+          else if (logStr.includes('📄') || logStr.includes('[파일')) lineClass += ' file';
+          else if (logStr.includes('⚙️') || logStr.includes('[명령어')) lineClass += ' cmd';
+          else if (logStr.includes('🚀') || logStr.includes('[세션')) lineClass += ' init';
+          else if (logStr.includes('✅') || logStr.includes('[완료')) lineClass += ' done';
+          else if (logStr.includes('⚠️') || logStr.includes('오류') || logStr.includes('인증')) lineClass += ' error';
+
+          const now = new Date();
+          const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+          
+          lineEl.innerHTML = `<span class="term-time">[${ts}]</span> <span class="${lineClass}">${logStr}</span>`;
+          termBody.appendChild(lineEl);
+          termBody.scrollTop = termBody.scrollHeight;
+          box.scrollTop = box.scrollHeight;
+        },
         addTool: function(toolStr) {
-          // Tool info is now directly delivered via inline chunks in real-time
+          this.addLiveLog(toolStr);
         },
         appendChunk: function(chunk) {
+          if (!hasAnswerStarted) {
+            hasAnswerStarted = true;
+            answerText = "";
+          }
           answerText += chunk;
           answerContent.innerHTML = formatMarkdown(answerText);
           if (rawCode) rawCode.textContent = answerText;
           box.scrollTop = box.scrollHeight;
         },
         setText: function(text) {
+          hasAnswerStarted = true;
           answerText = text;
           answerContent.innerHTML = formatMarkdown(answerText);
           if (rawCode) rawCode.textContent = answerText;
@@ -316,6 +210,11 @@
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
+          if (termBadge) {
+            termBadge.textContent = '● COMPLETED';
+            termBadge.classList.remove('live');
+            termBadge.classList.add('done');
+          }
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초 완료`;
@@ -331,9 +230,9 @@
             const sessBadge = document.getElementById('session-tokens');
             if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
           }
-          if (!answerText) {
-            answerContent.innerHTML = "답변 작성을 완료했습니다.";
-            if (rawCode) rawCode.textContent = "답변 작성을 완료했습니다.";
+          if (!hasAnswerStarted || !answerText) {
+            answerContent.innerHTML = "<span style='color: var(--text-muted);'>✅ 작업이 완료되었습니다.</span>";
+            if (rawCode) rawCode.textContent = "작업이 완료되었습니다.";
           }
           answerContent.setAttribute('data-raw', answerText);
           box.scrollTop = box.scrollHeight;
@@ -653,7 +552,7 @@
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
-          const lines = buffer.split(/\r?\n/);
+          const lines = buffer.split(/\\r?\\n/);
           buffer = lines.pop();
 
           for (const line of lines) {
@@ -662,8 +561,8 @@
             const jsonStr = trimmed.slice(5).trim();
             try {
               const ev = JSON.parse(jsonStr);
-              if (ev.type === 'tool') {
-                streamUI.addTool(ev.content);
+              if (ev.type === 'live_log' || ev.type === 'tool') {
+                streamUI.addLiveLog(ev.content);
               } else if (ev.type === 'chunk') {
                 streamUI.appendChunk(ev.content);
               } else if (ev.type === 'text') {
@@ -686,4 +585,4 @@
         input.focus();
       }
     }
-  
+""".strip()
