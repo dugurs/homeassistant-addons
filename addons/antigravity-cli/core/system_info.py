@@ -11,6 +11,28 @@ def get_supervisor_token() -> str:
     return os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN", "")
 
 
+def check_agy_hardware_support() -> dict:
+    """Detect if host CPU supports AVX/AVX2 required by Google Antigravity Go binary."""
+    has_avx = False
+    has_avx2 = False
+    has_aes = False
+    try:
+        if os.path.exists("/proc/cpuinfo"):
+            with open("/proc/cpuinfo", "r") as f:
+                content = f.read().lower()
+                has_avx = "avx" in content
+                has_avx2 = "avx2" in content
+                has_aes = "aes" in content
+    except Exception:
+        pass
+    return {
+        "supported": has_avx and has_avx2,
+        "has_avx": has_avx,
+        "has_avx2": has_avx2,
+        "has_aes": has_aes,
+    }
+
+
 import time
 
 _last_cpu_time = 0.0

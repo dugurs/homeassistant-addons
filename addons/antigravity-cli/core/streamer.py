@@ -97,13 +97,139 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False):
     yield make_sse("done", tokens=tokens_meta)
 
 
-def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 1, is_mobile: bool = False):
-    """Router for the 2 Clean Streaming Modes (1: AI Deep Brain, 2: Ultra-Fast Smart Home)."""
-    if stream_mode == 1:
+from core.system_info import check_agy_hardware_support
+
+
+def stream_headless_cli(prompt: str, is_mobile: bool = False):
+    """Mode 3: Google Antigravity Headless CLI Real-Time NDJSON Streamer (0-latency)."""
+    import subprocess
+    t_start = time.time()
+    actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
+
+    hw_info = check_agy_hardware_support()
+    agy_bin = "/usr/local/bin/agy"
+
+    if not hw_info.get("supported", False) or not os.path.exists(agy_bin):
+        yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [모드 1: AI 딥 브레인]으로 자동 전환합니다.")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev
-    else:
+        return
+
+    cmd = [
+        agy_bin,
+        "-p", actual_prompt,
+        "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+    ]
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["FORCE_COLOR"] = "0"
+    env["TERM"] = "dumb"
+
+    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시: '{actual_prompt[:30]}...'")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            env=env,
+        )
+    except Exception as e:
+        yield make_sse("tool", f"⚠️ CLI 프로세스 기동 실패 ({str(e)}) -> AI 딥 브레인으로 자동 전환")
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
+            yield ev
+        return
+
+    has_emitted_chunk = False
+    auth_failed = False
+    output_chars = 0
+
+    try:
+        for line in iter(proc.stdout.readline, ""):
+            line_str = line.strip()
+            if not line_str:
+                continue
+
+            try:
+                data = json.loads(line_str)
+            except Exception:
+                if any(w in line_str.lower() for w in ["agy login", "auth", "login required"]):
+                    auth_failed = True
+                    break
+                yield make_sse("chunk", line)
+                has_emitted_chunk = True
+                output_chars += len(line)
+                continue
+
+            evt_type = data.get("type", "")
+
+            if evt_type in ("step_start", "progress"):
+                step_msg = data.get("status") or data.get("thought") or "추론 진행 중"
+                yield make_sse("tool", f"🧠 [추론] {step_msg}")
+            elif evt_type == "tool_call":
+                tool_name = data.get("tool", "unknown_tool")
+                yield make_sse("tool", f"🔧 [도구 실행] {tool_name}")
+            elif evt_type == "tool_result":
+                tool_name = data.get("tool", "")
+                summary = data.get("summary", "완료")
+                yield make_sse("tool", f"✅ [도구 완료] {tool_name}: {summary}")
+            elif evt_type in ("chunk", "content_delta"):
+                delta = data.get("delta") or data.get("content") or ""
+                if delta:
+                    yield make_sse("chunk", delta)
+                    has_emitted_chunk = True
+                    output_chars += len(delta)
+            elif evt_type in ("done", "finish"):
+                tokens_meta = data.get("tokens", {})
+                if not tokens_meta:
+                    elapsed = time.time() - t_start
+                    tokens_meta = {
+                        "input": 120,
+                        "output": max(1, int(output_chars * 0.6)),
+                        "total": 120 + max(1, int(output_chars * 0.6)),
+                        "speed_tps": round(max(1, int(output_chars * 0.6)) / max(0.01, elapsed), 1),
+                        "elapsed": round(elapsed, 2),
+                    }
+                yield make_sse("done", tokens=tokens_meta)
+                proc.stdout.close()
+                proc.wait()
+                return
+            elif evt_type in ("error", "auth_required"):
+                if "auth" in data.get("code", "").lower() or "login" in data.get("message", "").lower():
+                    auth_failed = True
+                    break
+                else:
+                    yield make_sse("tool", f"⚠️ 에러 발생: {data.get('message', '알 수 없는 오류')}")
+
+        proc.stdout.close()
+        proc.wait()
+
+    except Exception:
+        auth_failed = True
+
+    if auth_failed or not has_emitted_chunk:
+        yield make_sse("tool", "🔑 [안내] Google Antigravity OAuth 인증 필요 (상단 'Terminal' 탭에서 'agy login' 실행 권장)")
+        yield make_sse("tool", "⚡ [Fallback] Home Assistant 내장 다차원 AI 어시스턴트로 자동 전환하여 답변합니다.")
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
+            yield ev
+
+
+def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 1, is_mobile: bool = False):
+    """Router for the 3 Clean Streaming Modes (1: AI Deep Brain, 2: Ultra-Fast Smart Home, 3: Headless CLI)."""
+    if stream_mode == 3:
+        for ev in stream_headless_cli(prompt, is_mobile=is_mobile):
+            yield ev
+    elif stream_mode == 2:
         for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile):
+            yield ev
+    else:
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
             yield ev
 
 

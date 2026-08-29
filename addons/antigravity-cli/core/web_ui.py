@@ -322,6 +322,11 @@ HTML_INDEX = """<!DOCTYPE html>
       color: var(--accent-green);
       border-color: rgba(16, 185, 129, 0.25);
     }
+    .mode-badge.cli {
+      background: rgba(168, 85, 247, 0.12);
+      color: #c084fc;
+      border-color: rgba(168, 85, 247, 0.3);
+    }
 
     /* Message Metadata Footer */
     .msg-meta {
@@ -638,6 +643,7 @@ HTML_INDEX = """<!DOCTYPE html>
           <select id="stream-mode" class="mode-select" onchange="onModeChange(this.value)">
             <option value="1" selected>🧠 모드 1: AI 딥 브레인 분석 (다차원 공기질 & AI 조언)</option>
             <option value="2">⚡ 모드 2: 초고속 스마트홈 즉답 (0.05초 즉시 제어 & 대시보드)</option>
+            <option value="3" id="opt-mode-3">🚀 모드 3: Google Antigravity Headless CLI (실시간 NDJSON)</option>
           </select>
         </div>
         <div class="input-bar">
@@ -883,9 +889,16 @@ HTML_INDEX = """<!DOCTYPE html>
       const row = document.createElement('div');
       const timeStr = getCurrentTimeStr();
       const startTime = performance.now();
-      const isMode2 = (streamMode === 2);
-      const modeText = isMode2 ? '⚡ 초고속 스마트홈' : '🧠 AI 딥 브레인';
-      const modeClass = isMode2 ? 'mode-badge fast' : 'mode-badge';
+      
+      let modeText = '🧠 AI 딥 브레인';
+      let modeClass = 'mode-badge';
+      if (streamMode === 3) {
+        modeText = '🚀 Headless CLI';
+        modeClass = 'mode-badge cli';
+      } else if (streamMode === 2) {
+        modeText = '⚡ 초고속 스마트홈';
+        modeClass = 'mode-badge fast';
+      }
 
       row.className = 'msg-row bot';
       row.innerHTML = `
@@ -982,12 +995,27 @@ HTML_INDEX = """<!DOCTYPE html>
       localStorage.setItem('antigravity_stream_mode', val);
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
       const savedMode = localStorage.getItem('antigravity_stream_mode') || '1';
       const sel = document.getElementById('stream-mode');
       if (sel) sel.value = savedMode;
       const sessBadge = document.getElementById('session-tokens');
       if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
+
+      try {
+        const res = await fetch('api/status');
+        if (res.ok) {
+          const data = await res.json();
+          const opt3 = document.getElementById('opt-mode-3');
+          if (opt3) {
+            if (data.agy_stream_supported) {
+              opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (Host 모드 활성)';
+            } else {
+              opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (Host 모드 필요)';
+            }
+          }
+        }
+      } catch (e) {}
     });
 
     function updateSendBtn() {

@@ -119,7 +119,8 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
                 return
 
-            resources = get_resource_usage()
+            from core.system_info import check_agy_hardware_support
+            hw_info = check_agy_hardware_support()
             res = {
                 "status": "online",
                 "version": "1.3.0",
@@ -132,6 +133,8 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 "used_memory_gb": resources["used_memory_gb"],
                 "memory_percent": resources["memory_percent"],
                 "mcp_enabled": True,
+                "agy_stream_supported": hw_info.get("supported", False),
+                "hw_info": hw_info,
             }
             self._set_headers(200)
             self.wfile.write(json.dumps(res).encode("utf-8"))
