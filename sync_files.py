@@ -31,6 +31,22 @@ SYNC_PAIRS = [
         r"\\HOMEASSISTANT\local_apps\antigravity-cli\antigravity_api.py",
     ),
     (
+        r"addons\antigravity-cli\core\__init__.py",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\__init__.py",
+    ),
+    (
+        r"addons\antigravity-cli\core\web_ui.py",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\web_ui.py",
+    ),
+    (
+        r"addons\antigravity-cli\core\ha_engine.py",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\ha_engine.py",
+    ),
+    (
+        r"addons\antigravity-cli\core\streamer.py",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\streamer.py",
+    ),
+    (
         r"addons\antigravity-cli\run.sh",
         r"\\HOMEASSISTANT\local_apps\antigravity-cli\run.sh",
     ),
