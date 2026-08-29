@@ -6,7 +6,7 @@
 
 **핵심 규칙 (필수 준수):**
 - **사전 승인 원칙**: 코드 수정, 버그 해결, 파일 변경 작업을 진행하기 전에 반드시 **(1) 원인 분석 (Root Cause)**과 **(2) 구체적인 조치 예정 내역 (Action Plan)**을 사용자에게 먼저 보고하고, **사용자의 명시적 승인을 받은 후** 실제 수정을 착수한다.
-- **파일 동기화 상시 승인 (File Sync Auto-Approval)**: 승인된 작업의 일환으로 로컬 작업 공간의 변경 파일을 Home Assistant Samba 공유 경로(`\\HOMEASSISTANT\config\...`, `\\HOMEASSISTANT\local_apps\...`)로 복사/동기화하거나 Rebuild/Restart를 수행하는 작업은 사용자의 사전 지시에 따라 **항상 승인된 것으로 간주하고 즉시 자동 실행**한다.
+- **Git 작업 & 파일 동기화 상시 승인 (Git & File Sync Auto-Approval)**: 승인된 작업의 일환으로 수행되는 Git 작업(`git add`, `commit`, `push`, `branch`, `remote`), 로컬 작업 공간의 변경 파일을 Home Assistant Samba 공유 경로(`\\HOMEASSISTANT\config\...`, `\\HOMEASSISTANT\local_apps\...`)로 복사/동기화하거나 Rebuild/Restart를 수행하는 작업은 사용자의 사전 지시에 따라 **항상 승인된 것으로 간주하고 즉시 자동 실행**한다.
 
 **트리거:** 애드온 수정, 커스텀 통합구성요소 통신 연동, 어시스턴트 파이프라인(Conversation) 연계, 상태 API 추가, 포트 매핑 조정, 에이전트 서비스 연계 작업 요청 시 `addon-integration-orchestrator` 스킬을 사용하라. 단순 질문은 직접 응답 가능.
 
