@@ -1,52 +1,48 @@
 #!/usr/bin/env python3
-"""Verify dynamic rooms and dynamic AI recommendations."""
+"""Discover all environment and air quality sensor device_classes and units in the user's HA."""
 
 import json
 import sys
-import time
 import urllib.request
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import os
+sys.path.insert(0, os.path.abspath("addons/antigravity-cli"))
+from core.ha_client import get_ha_states
 
-def p(msg: str):
-    print(msg, flush=True)
+states = get_ha_states()
+env_sensors = []
+env_classes = {
+    "temperature", "humidity", "carbon_dioxide", "co2", "volatile_organic_compounds", 
+    "voc", "aqi", "pm25", "pm10", "pm1", "illuminance", "pressure", "atmospheric_pressure",
+    "carbon_monoxide", "ozone", "nitrogen_dioxide", "nitrogen_monoxide", "radon", "sulphur_dioxide"
+}
 
+print(f"[*] Total states fetched: {len(states)}")
+found_metrics = {}
 
-def test_dynamic():
-    ha_ip = "192.168.0.14"
-    url = f"http://{ha_ip}:8000/api/chat"
+for s in states:
+    eid = s.get("entity_id", "")
+    if eid.startswith("sensor.") or eid.startswith("air_quality."):
+        attrs = s.get("attributes", {})
+        dclass = attrs.get("device_class", "")
+        uom = attrs.get("unit_of_measurement", "")
+        fn = attrs.get("friendly_name", "")
+        state = s.get("state", "")
+        
+        # Check matching keywords or device_class
+        for ec in env_classes:
+            if ec in dclass or ec in eid.lower() or ec in fn.lower() or any(k in fn.lower() for k in ["co2", "이산화탄소", "tvoc", "voc", "미세먼지", "초미세먼지", "공기질", "조도", "기압"]):
+                found_metrics[eid] = {
+                    "friendly_name": fn,
+                    "state": state,
+                    "unit": uom,
+                    "device_class": dclass
+                }
+                break
 
-    # Test Mode 1 (AI Deep Brain with dynamic rooms and dynamic advice)
-    p("=" * 70)
-    p("[*] Testing Mode 1 AI Deep Brain Dynamic Recommendations")
-    p("=" * 70)
-
-    payload = json.dumps({
-        "prompt": "오늘 날씨와 환경 분석해줘",
-        "is_direct_llm": False,
-        "stream_mode": 1,
-        "is_mobile": False,
-    }).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-
-    t0 = time.time()
-    chunks = []
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        for line in resp:
-            l = line.decode("utf-8", errors="replace").strip()
-            if l.startswith("data:"):
-                ev = json.loads(l[5:].strip())
-                if ev.get("type") in ("text", "chunk"):
-                    chunks.append(ev.get("content", ""))
-                elif ev.get("type") == "done":
-                    break
-
-    elapsed = round(time.time() - t0, 3)
-    content = "".join(chunks)
-    p(f"\n[Generated Output ({elapsed}s)]:\n{content}")
-
-
-if __name__ == "__main__":
-    test_dynamic()
+print("\n[*] Discovered Environment & Air Quality Sensors:")
+for eid, data in found_metrics.items():
+    print(f"  • {eid} | {data['friendly_name']}: {data['state']} {data['unit']} (class: {data['device_class']})")

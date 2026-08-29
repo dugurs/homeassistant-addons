@@ -7,14 +7,19 @@ from core.ha_client import (
     ha_call_service_api,
 )
 from core.renderers import (
+    evaluate_room_env_health,
+    generate_dynamic_ai_recommendations,
     get_ai_deep_environment_analysis,
     get_comprehensive_home_summary,
     get_terminal_cli_environment_view,
     get_weather_env_summary,
 )
 from core.sensors import (
+    ENV_METRIC_CONFIGS,
+    classify_sensor,
     get_automations_summary,
     get_dynamic_rooms,
+    get_room_env_matrix,
     get_room_env_summary,
     get_room_full_state,
     get_room_lights_summary,
@@ -49,27 +54,67 @@ def handle_agent_chat(
         if ctrl_result:
             return ctrl_result
 
-    # 2. Specific Room Query (ha_list_floors_areas)
+    # 2. Specific Room Query (ha_list_floors_areas & sensors)
     rooms = get_dynamic_rooms(states)
     matched_room = next((r for r in rooms if r in no_space), None)
-    if matched_room:
+    if matched_room and states:
+        env_data = get_room_env_matrix(states)
+        r_matrix = env_data["matrix"].get(matched_room, {})
+
         if any(w in no_space for w in ["온도", "기온"]):
-            if states:
-                summary = get_room_env_summary(states, "temperature")
-                for line in summary.split("\n"):
-                    if matched_room in line:
-                        val = line.split(":", 1)[1].strip() if ":" in line else line
-                        return f"현재 {matched_room}의 온도는 {val} 입니다."
+            if "temperature" in r_matrix:
+                return f"현재 {matched_room}의 온도는 {r_matrix['temperature']['formatted']} 입니다."
+            return f"현재 {matched_room}의 온도 센서 데이터를 찾을 수 없습니다."
+
         if "습도" in no_space:
-            if states:
-                summary = get_room_env_summary(states, "humidity")
-                for line in summary.split("\n"):
-                    if matched_room in line:
-                        val = line.split(":", 1)[1].strip() if ":" in line else line
-                        return f"현재 {matched_room}의 습도는 {val} 입니다."
+            if "humidity" in r_matrix:
+                return f"현재 {matched_room}의 습도는 {r_matrix['humidity']['formatted']} 입니다."
+            return f"현재 {matched_room}의 습도 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["co2", "이산화탄소"]):
+            if "co2" in r_matrix:
+                return f"현재 {matched_room}의 CO2 농도는 {r_matrix['co2']['formatted']} 입니다."
+            return f"현재 {matched_room}의 CO2 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["tvoc", "voc", "유기화합물"]):
+            if "tvoc" in r_matrix:
+                return f"현재 {matched_room}의 TVOC 농도는 {r_matrix['tvoc']['formatted']} 입니다."
+            return f"현재 {matched_room}의 TVOC 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["초미세", "pm25", "pm2.5"]):
+            if "pm25" in r_matrix:
+                return f"현재 {matched_room}의 초미세먼지(PM2.5) 농도는 {r_matrix['pm25']['formatted']} 입니다."
+            return f"현재 {matched_room}의 초미세먼지 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["미세먼지", "pm10"]):
+            if "pm10" in r_matrix:
+                return f"현재 {matched_room}의 미세먼지(PM10) 농도는 {r_matrix['pm10']['formatted']} 입니다."
+            elif "pm25" in r_matrix:
+                return f"현재 {matched_room}의 초미세먼지(PM2.5) 농도는 {r_matrix['pm25']['formatted']} 입니다."
+            return f"현재 {matched_room}의 미세먼지 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["조도", "밝기", "lux", "lx"]):
+            if "illuminance" in r_matrix:
+                return f"현재 {matched_room}의 조도는 {r_matrix['illuminance']['formatted']} 입니다."
+            return f"현재 {matched_room}의 조도 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["기압", "압력", "hpa"]):
+            if "pressure" in r_matrix:
+                return f"현재 {matched_room}의 기압은 {r_matrix['pressure']['formatted']} 입니다."
+            return f"현재 {matched_room}의 기압 센서 데이터를 찾을 수 없습니다."
+
+        if any(w in lower for w in ["공기질", "공기상태", "공기", "환기"]):
+            air_parts = []
+            for m in ["co2", "tvoc", "pm25", "pm10"]:
+                if m in r_matrix:
+                    air_parts.append(f"{ENV_METRIC_CONFIGS[m]['label']} {r_matrix[m]['formatted']}")
+            health = evaluate_room_env_health(r_matrix)
+            if air_parts:
+                return f"🍃 **{matched_room} 실내 공기질 현황**\n• 수치: {' | '.join(air_parts)}\n• 진단: **{health}**"
+            return f"현재 {matched_room}의 공기질 센서 데이터를 찾을 수 없습니다."
+
         if any(w in no_space for w in ["상태", "상황", "기기", "모습", "어때"]):
-            if states:
-                return get_room_full_state(states, matched_room)
+            return get_room_full_state(states, matched_room)
 
     # 3. Automations & Scripts (ha_config_get_automation)
     if any(w in lower for w in ["자동화", "오토메이션", "automation"]):
@@ -86,26 +131,60 @@ def handle_agent_chat(
         if states:
             return get_system_health_summary(states)
 
-    # 6. Weather & Environment
-    if any(w in lower for w in ["날씨", "환경", "기상", "일기예보", "온습도"]):
+    # 6. Weather & Multi-Dimensional Environment Dashboard
+    if any(w in lower for w in ["날씨", "기상", "일기예보", "온습도", "대시보드"]):
         if states:
             return get_weather_env_summary(states, is_mobile=is_mobile)
 
-    # 7. System Logs (ha_get_logs)
+    # 7. Air Quality Specific Intents
+    if any(w in lower for w in ["공기질", "실내 공기", "공기 상태", "환기 필요", "환기 어때"]):
+        if states:
+            return get_room_env_summary(states, "air_quality")
+
+    # 8. System Logs (ha_get_logs)
     if any(w in lower for w in ["에러 로그", "오류 로그", "에러 확인", "오류 확인", "시스템 로그", "최근 에러", "로그 확인"]):
         return get_ha_error_logs()
 
-    # 8. Room-by-room Summary
-    if any(w in lower for w in ["방별", "방마다", "공간별", "구역별", "각 방", "각방"]):
+    # 9. Room-by-room / Multi-Metric Summaries
+    if any(w in lower for w in ["방별", "방마다", "공간별", "구역별", "각 방", "각방", "전체 방"]):
         if states:
-            if any(w in lower for w in ["온도", "기온", "온습도"]):
+            if any(w in lower for w in ["온도", "기온"]):
                 return get_room_env_summary(states, "temperature")
             if "습도" in lower:
                 return get_room_env_summary(states, "humidity")
+            if any(w in lower for w in ["co2", "이산화탄소"]):
+                return get_room_env_summary(states, "co2")
+            if any(w in lower for w in ["tvoc", "voc", "유기화합물"]):
+                return get_room_env_summary(states, "tvoc")
+            if any(w in lower for w in ["초미세", "pm25", "pm2.5"]):
+                return get_room_env_summary(states, "pm25")
+            if any(w in lower for w in ["미세먼지", "pm10"]):
+                return get_room_env_summary(states, "pm10")
+            if any(w in lower for w in ["조도", "밝기"]):
+                return get_room_env_summary(states, "illuminance")
+            if any(w in lower for w in ["기압", "압력"]):
+                return get_room_env_summary(states, "pressure")
+            if any(w in lower for w in ["공기", "공기질"]):
+                return get_room_env_summary(states, "air_quality")
             if any(w in lower for w in ["등", "조명", "불", "전등", "램프"]):
                 return get_room_lights_summary(states)
 
-    # 9. Resource Usage
+    # 10. Direct Metric Queries without room specified
+    if states:
+        if any(w in lower for w in ["co2", "이산화탄소"]):
+            return get_room_env_summary(states, "co2")
+        if any(w in lower for w in ["tvoc", "유기화합물"]):
+            return get_room_env_summary(states, "tvoc")
+        if any(w in lower for w in ["초미세먼지", "초미세", "pm25", "pm2.5"]):
+            return get_room_env_summary(states, "pm25")
+        if any(w in lower for w in ["미세먼지", "pm10"]):
+            return get_room_env_summary(states, "pm10")
+        if any(w in lower for w in ["조도", "밝기"]):
+            return get_room_env_summary(states, "illuminance")
+        if any(w in lower for w in ["기압", "대기압"]):
+            return get_room_env_summary(states, "pressure")
+
+    # 11. Resource Usage
     if any(w in lower for w in ["메모리", "램", "ram", "리소스", "cpu", "사양"]):
         if any(w in lower for w in ["애드온", "addon", "앱"]):
             return get_all_addons_memory()
@@ -115,7 +194,7 @@ def handle_agent_chat(
             f"시스템 전체 메모리는 {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) 사용 중입니다."
         )
 
-    # 10. Capability & Feature Introduction Intent
+    # 12. Capability & Feature Introduction Intent
     if (
         any(w in no_space for w in ["뭐할수", "뭘할수", "무엇을할수", "무엇을할줄", "어떤기능", "기능소개", "기능안내", "기능알려", "사용법", "도움말", "help", "할수있는", "할수있어", "할수있니", "할줄아는", "할줄알아", "할줄알니", "뭘할줄", "뭐할줄"])
         or (any(w in clean_prompt for w in ["뭐", "뭘", "무엇", "어떤"]) and any(w in clean_prompt for w in ["할 수", "할수", "가능", "도와", "기능", "역할"]))
@@ -124,7 +203,8 @@ def handle_agent_chat(
             "🤖 **Google Antigravity CLI 스마트홈 어시스턴트 기능 안내**\n\n"
             "저는 집안의 모든 기기를 제어하고 환경을 모니터링하는 AI 에이전트입니다:\n"
             "• 💡 **스마트홈 기기 제어**: 조명, 스위치, 커튼, 환풍기, 선풍기 켜기/끄기\n"
-            "• 🌦️ **실시간 날씨 및 환경 분석**: 방별 정밀 온습도 및 실외 기상 브리핑\n"
+            "• 🍃 **다차원 실내 공기질 모니터링**: CO2, TVOC, PM2.5, PM10, 조도, 기압 정밀 분석 및 환기 AI 조언\n"
+            "• 🌦️ **실시간 날씨 및 온습도 분석**: 방별 정밀 환경 매트릭스 및 실외 기상 브리핑\n"
             "• ⚙️ **시스템 모니터링 & 진단**: CPU/RAM 리소스, 시스템 헬스체크, 에러 로그 점검\n"
             "• 🤖 **자동화 및 To-Do 관리**: 자동화 목록 확인, 투두/쇼핑 리스트 점검\n"
             "• 🚀 **3대 스트리밍 모드 지원**: 1) AI 딥브레인, 2) 가상 PTY 터미널, 3) 초고속 즉답"
@@ -133,7 +213,7 @@ def handle_agent_chat(
     if any(greet in clean_prompt for greet in ["안녕", "반가워", "hello", "hi", "누구"]):
         return "안녕하세요! Google Antigravity CLI 어시스턴트입니다. 무엇을 도와드릴까요?"
 
-    # 11. Broad Home Status Intent
+    # 13. Broad Home Status Intent
     if any(w in lower for w in ["상태", "상황", "현황", "요약", "브리핑", "분위기", "어때", "어떠", "어떻", "집안", "우리집", "모습"]):
         if home_summary:
             return home_summary
