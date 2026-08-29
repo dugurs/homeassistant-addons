@@ -5,9 +5,8 @@
 **목표:** Home Assistant 애드온(`addons/antigravity-cli`)과 커스텀 통합구성요소(`custom_components/antigravity_cli`) 간의 통신/연동 및 애드온 수정 작업을 체계적이고 안전하게 수행.
 
 **핵심 규칙 (필수 준수):**
-- **중요 결정 및 대규모 변경 사전 승인 (Approval Gate for Major Changes)**: 아키텍처 대규모 개편, 기능 삭제/파괴적 변경(Breaking Changes), 신규 대형 설계 결정 등 **중요한 사항**에 대해서는 반드시 (1) 원인 분석과 (2) 조치 계획을 보고하고 사용자의 명시적 승인을 받은 후 진행한다.
-- **단순 검증, 버그 수정, 반복 작업 상시 승인 (Routine Fix & Test Auto-Approval)**: 단순 버그 해결, 경로/파라미터 조정, 일상적인 검증/테스트, 설정 튜닝 작업은 사전 승인 절차 없이 **자율적으로 신속하게 수정 및 검증을 완료하고 결과를 보고**한다.
-- **Git 작업 & 파일 동기화 상시 승인 (Git & File Sync Auto-Approval)**: 승인되거나 자율 수행되는 작업의 일환으로 수행되는 Git 작업(`git add`, `commit`, `push`, `branch`, `remote`), 로컬 작업 공간의 변경 파일을 Home Assistant Samba 공유 경로(`\\HOMEASSISTANT\config\...`, `\\HOMEASSISTANT\local_apps\...`)로 복사/동기화하거나 Rebuild/Restart를 수행하는 작업은 사용자의 사전 지시에 따라 **항상 승인된 것으로 간주하고 즉시 자동 실행**한다.
+- **수정 작업 전 원인/개선방향 브리핑 및 사전 승인 의무 (Mandatory Pre-Modification Approval Gate)**: 기능 개선, 버그 수정, UI 변경, API 수정 등 **모든 코드 수정 작업을 진행하기 전**에는 반드시 **(1) 정확한 원인 분석**과 **(2) 구체적인 개선 방향 및 조치 계획**을 사용자에게 먼저 상세히 브리핑하고, **사용자의 명시적인 승인(Approval)을 받은 후**에만 파일 수정을 진행한다.
+- **Git 작업 & 파일 동기화 상시 자동 승인 (Git & File Sync Auto-Approval)**: 사용자의 승인을 받아 진행된 수정 작업의 완료 단계에서 실행되는 Git 작업(`git add`, `commit`, `push`), Samba 파일 동기화(`python sync_files.py`), 애드온 Rebuild 및 재시작은 승인 대기 없이 **즉시 자동으로 일괄 실행**한다.
 
 **트리거:** 애드온 수정, 커스텀 통합구성요소 통신 연동, 어시스턴트 파이프라인(Conversation) 연계, 상태 API 추가, 포트 매핑 조정, 에이전트 서비스 연계 작업 요청 시 `addon-integration-orchestrator` 스킬을 사용하라. 단순 질문은 직접 응답 가능.
 
