@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
-"""Diagnose agy PTY execution and stream output."""
+"""Inspect agy help and flags inside the add-on container."""
 
 import json
 import urllib.request
 
 
-def test_ai_chat():
+def check_agy():
     ha_ip = "192.168.0.14"
     url = f"http://{ha_ip}:8000/api/chat"
-    payload = json.dumps({"prompt": "ai 안녕", "is_direct_llm": True}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-    print("[*] Testing AI PTY execution with 'ai 안녕'...")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            for line in resp:
-                print("SSE:", line.decode("utf-8", errors="replace").strip())
-    except Exception as e:
-        print("[ERR]", e)
+    # We can inspect via runner if needed, or query status
+    req = urllib.request.Request(f"http://{ha_ip}:8000/api/status")
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        print(resp.read().decode("utf-8"))
 
 
 if __name__ == "__main__":
-    test_ai_chat()
+    check_agy()

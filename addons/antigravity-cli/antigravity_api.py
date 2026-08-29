@@ -416,52 +416,159 @@ def make_sse(ev_type: str, content: str = "") -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
-    """Generator that yields real-time SSE stream events for Antigravity AI."""
-    clean_prompt = prompt.strip()
-    actual_prompt = re.sub(r'^(ai|/llm)\s*', '', clean_prompt, flags=re.IGNORECASE).strip()
-    lower = actual_prompt.lower()
+def stream_transcript_tail(prompt: str):
+    """Mode 1: Tail transcript.jsonl in real-time to stream thoughts, tool calls, and chunks."""
+    actual_prompt = re.sub(r'^(ai|/llm)\s*', '', prompt, flags=re.IGNORECASE).strip()
+    yield make_sse("tool", f"📜 [모드 1: Transcript 추적] AI 작업 세션 초기화: '{actual_prompt}'")
 
-    # 1. If it is a smart home query (weather, lights, rooms, status, error logs), use ultra-fast analyzer first
-    if not is_direct_llm or any(w in lower for w in ["상태", "상황", "현황", "요약", "브리핑", "날씨", "환경", "기상", "온도", "습도", "조명", "에러"]):
-        yield make_sse("tool", "스마트홈 실시간 엔티티 데이터 수집 중...")
-        full_text = handle_agent_chat(actual_prompt, "", "", False)
-        yield make_sse("text", full_text)
+    agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
+    if not os.path.exists(agy_bin):
+        yield make_sse("text", "[오류] agy 바이너리를 찾을 수 없습니다.")
         yield make_sse("done")
         return
 
-    # 2. Real-Time Deep Brain AI via PTY for generic code/reasoning prompts
-    if is_direct_llm:
-        yield make_sse("tool", f"Antigravity CLI AI 모델 가동: '{actual_prompt}'")
-        if pty is None:
-            yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
-            yield make_sse("done")
-            return
+    supervisor_token = get_supervisor_token()
+    env = {
+        **os.environ,
+        "HOME": "/root",
+        "TERM": "xterm-256color",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LANGUAGE": "C.UTF-8",
+        "PYTHONIOENCODING": "utf-8",
+        "HASS_SERVER": "http://supervisor/core",
+        "HASS_TOKEN": supervisor_token,
+        "SUPERVISOR_TOKEN": supervisor_token,
+        "UV_CACHE_DIR": "/config/.uv_cache",
+        "PATH": f"/root/.local/bin:/usr/local/bin:{os.environ.get('PATH', '')}:/usr/bin:/bin",
+    }
 
-        agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
-        if not os.path.exists(agy_bin):
-            yield make_sse("text", "[오류] agy 바이너리를 찾을 수 없습니다.")
-            yield make_sse("done")
-            return
+    brain_roots = [
+        "/root/.gemini/antigravity/brain",
+        "/config/.gemini/antigravity/brain",
+        os.path.expanduser("~/.gemini/antigravity/brain"),
+    ]
 
-        supervisor_token = get_supervisor_token()
-        master_fd, slave_fd = pty.openpty()
-        env = {
-            **os.environ,
-            "HOME": "/root",
-            "TERM": "xterm-256color",
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "LANGUAGE": "C.UTF-8",
-            "PYTHONIOENCODING": "utf-8",
-            "HASS_SERVER": "http://supervisor/core",
-            "HASS_TOKEN": supervisor_token,
-            "SUPERVISOR_TOKEN": supervisor_token,
-            "UV_CACHE_DIR": "/config/.uv_cache",
-            "PATH": f"/root/.local/bin:/usr/local/bin:{os.environ.get('PATH', '')}:/usr/bin:/bin",
-        }
+    cmd = [agy_bin, "--dangerously-skip-permissions", "--print", actual_prompt]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd="/config" if os.path.exists("/config") else "/root",
+        )
+    except Exception as e:
+        yield make_sse("text", f"[오류] agy 프로세스 시작 실패: {e}")
+        yield make_sse("done")
+        return
 
-        cmd = [agy_bin, "--dangerously-skip-permissions", "--print", actual_prompt]
+    yield make_sse("tool", "AI 딥 브레인 연산 시작 및 실시간 트랜스크립트 로그 모니터링 중...")
+
+    transcript_file = None
+    file_pos = 0
+    start_time = time.time()
+    timeout = 180
+
+    while time.time() - start_time < timeout:
+        if not transcript_file:
+            for br in brain_roots:
+                if os.path.exists(br):
+                    try:
+                        all_sub = [os.path.join(br, d) for d in os.listdir(br)]
+                        all_sub.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+                        for d in all_sub:
+                            cand = os.path.join(d, ".system_generated", "logs", "transcript.jsonl")
+                            if os.path.exists(cand) and (os.path.getmtime(cand) >= start_time - 5):
+                                transcript_file = cand
+                                break
+                    except Exception:
+                        pass
+                if transcript_file:
+                    break
+
+        if transcript_file and os.path.exists(transcript_file):
+            try:
+                with open(transcript_file, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(file_pos)
+                    new_lines = f.readlines()
+                    file_pos = f.tell()
+                    for line in new_lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            item = json.loads(line)
+                            itype = item.get("type")
+                            if itype == "PLANNER_RESPONSE":
+                                if "thinking" in item and item["thinking"]:
+                                    t_snippet = item["thinking"].strip().replace("\n", " ")
+                                    yield make_sse("tool", f"💭 AI 사고 과정: {t_snippet[:100]}...")
+                                if "tool_calls" in item and item["tool_calls"]:
+                                    for tc in item["tool_calls"]:
+                                        name = tc.get("name", "tool")
+                                        args = json.dumps(tc.get("args", {}), ensure_ascii=False)
+                                        yield make_sse("tool", f"🔧 도구 호출: {name}({args[:60]})")
+                                if "content" in item and item["content"]:
+                                    yield make_sse("chunk", item["content"])
+                            elif itype == "TOOL_RESPONSE":
+                                c_len = len(item.get("content", ""))
+                                yield make_sse("tool", f"📥 도구 결과 수신 완료 ({c_len}자)")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        if proc.poll() is not None:
+            break
+
+        time.sleep(0.3)
+
+    stdout_data, stderr_data = proc.communicate()
+    out_str = stdout_data.decode("utf-8", errors="replace").strip()
+    if out_str and not transcript_file:
+        yield make_sse("text", strip_ansi(out_str))
+    elif out_str:
+        yield make_sse("chunk", "\n" + strip_ansi(out_str))
+
+    yield make_sse("done")
+
+
+def stream_pty_interactive(prompt: str):
+    """Mode 2: Virtual PTY Terminal Interactive Stream with ANSI parsing."""
+    actual_prompt = re.sub(r'^(ai|/llm)\s*', '', prompt, flags=re.IGNORECASE).strip()
+    yield make_sse("tool", f"🖥️ [모드 2: PTY 터미널 스트림] 가상 터미널 세션 생성: '{actual_prompt}'")
+
+    if pty is None:
+        yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
+        yield make_sse("done")
+        return
+
+    agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
+    if not os.path.exists(agy_bin):
+        yield make_sse("text", "[오류] agy 바이너리를 찾을 수 없습니다.")
+        yield make_sse("done")
+        return
+
+    supervisor_token = get_supervisor_token()
+    master_fd, slave_fd = pty.openpty()
+    env = {
+        **os.environ,
+        "HOME": "/root",
+        "TERM": "xterm-256color",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LANGUAGE": "C.UTF-8",
+        "PYTHONIOENCODING": "utf-8",
+        "HASS_SERVER": "http://supervisor/core",
+        "HASS_TOKEN": supervisor_token,
+        "SUPERVISOR_TOKEN": supervisor_token,
+        "UV_CACHE_DIR": "/config/.uv_cache",
+        "PATH": f"/root/.local/bin:/usr/local/bin:{os.environ.get('PATH', '')}:/usr/bin:/bin",
+    }
+
+    cmd = [agy_bin, "--dangerously-skip-permissions", "--print", actual_prompt]
+    try:
         proc = subprocess.Popen(
             cmd,
             stdin=slave_fd,
@@ -471,86 +578,117 @@ def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
             env=env,
             cwd="/config" if os.path.exists("/config") else "/root",
         )
+    except Exception as e:
         os.close(slave_fd)
-
-        buffer = ""
-        start_time = time.time()
-        timeout = 180  # 3 minutes for deep reasoning
-
-        try:
-            while True:
-                if time.time() - start_time > timeout:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    yield make_sse("chunk", f"\n[오류] AI 추론 시간이 초과되었습니다 ({timeout}초 초과).")
-                    break
-
-                r, _, _ = select.select([master_fd], [], [], 0.2)
-                if master_fd in r:
-                    try:
-                        data = os.read(master_fd, 4096)
-                        if not data:
-                            break
-                        chunk_str = data.decode("utf-8", errors="replace")
-                        buffer += chunk_str
-
-                        # Process complete lines from buffer
-                        if "\n" in buffer:
-                            lines = buffer.split("\n")
-                            buffer = lines[-1]
-                            for line in lines[:-1]:
-                                clean = strip_ansi(line).strip()
-                                if not clean:
-                                    continue
-                                if any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
-                                    continue
-                                if clean.startswith("● ") or clean.startswith("▸ ") or clean.startswith("Initiating") or clean.startswith("Discovering"):
-                                    yield make_sse("tool", clean)
-                                else:
-                                    yield make_sse("chunk", clean + "\n")
-                    except OSError:
-                        break
-
-                if proc.poll() is not None:
-                    # Drain remaining buffer
-                    while True:
-                        r, _, _ = select.select([master_fd], [], [], 0.1)
-                        if master_fd in r:
-                            try:
-                                data = os.read(master_fd, 4096)
-                                if not data:
-                                    break
-                                buffer += data.decode("utf-8", errors="replace")
-                            except OSError:
-                                break
-                        else:
-                            break
-                    break
-
-            if buffer:
-                for line in buffer.split("\n"):
-                    clean = strip_ansi(line).strip()
-                    if clean and not any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
-                        if clean.startswith("● ") or clean.startswith("▸ "):
-                            yield make_sse("tool", clean)
-                        else:
-                            yield make_sse("chunk", clean + "\n")
-
-        finally:
-            try:
-                os.close(master_fd)
-            except Exception:
-                pass
-
+        os.close(master_fd)
+        yield make_sse("text", f"[오류] PTY 프로세스 시작 실패: {e}")
         yield make_sse("done")
         return
 
-    # 2. Fast Semantic Engine Queries (Weather, System, Room sensors)
-    full_text = handle_agent_chat(clean_prompt, "", "", False)
-    yield make_sse("text", full_text)
+    os.close(slave_fd)
+    buffer = ""
+    start_time = time.time()
+    timeout = 180
+
+    try:
+        while True:
+            if time.time() - start_time > timeout:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                yield make_sse("chunk", f"\n[오류] AI 추론 시간이 초과되었습니다 ({timeout}초 초과).")
+                break
+
+            r, _, _ = select.select([master_fd], [], [], 0.2)
+            if master_fd in r:
+                try:
+                    data = os.read(master_fd, 4096)
+                    if not data:
+                        break
+                    chunk_str = data.decode("utf-8", errors="replace")
+                    buffer += chunk_str
+
+                    if "\n" in buffer:
+                        lines = buffer.split("\n")
+                        buffer = lines[-1]
+                        for line in lines[:-1]:
+                            clean = strip_ansi(line).strip()
+                            if not clean or any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
+                                continue
+                            if clean.startswith("● ") or clean.startswith("▸ ") or clean.startswith("Initiating") or clean.startswith("Discovering"):
+                                yield make_sse("tool", clean)
+                            else:
+                                yield make_sse("chunk", clean + "\n")
+                except OSError:
+                    break
+
+            if proc.poll() is not None:
+                while True:
+                    r, _, _ = select.select([master_fd], [], [], 0.1)
+                    if master_fd in r:
+                        try:
+                            data = os.read(master_fd, 4096)
+                            if not data:
+                                break
+                            buffer += data.decode("utf-8", errors="replace")
+                        except OSError:
+                            break
+                    else:
+                        break
+                break
+
+        if buffer:
+            for line in buffer.split("\n"):
+                clean = strip_ansi(line).strip()
+                if clean and not any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
+                    if clean.startswith("● ") or clean.startswith("▸ "):
+                        yield make_sse("tool", clean)
+                    else:
+                        yield make_sse("chunk", clean + "\n")
+    finally:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+
     yield make_sse("done")
+
+
+def stream_hybrid_fast(prompt: str):
+    """Mode 3: Ultra-Fast Smart Home Native Dispatcher (0.05s) + LLM Auto-Fallback."""
+    actual_prompt = re.sub(r'^(ai|/llm)\s*', '', prompt, flags=re.IGNORECASE).strip()
+    lower = actual_prompt.lower()
+
+    smart_home_keywords = [
+        "상태", "상황", "현황", "요약", "브리핑", "날씨", "환경", "기상",
+        "온도", "습도", "조명", "에러", "로그", "켜", "꺼", "틀어", "시작", "정지",
+        "열어", "닫아", "거실", "안방", "작은방", "주방", "화장실", "세탁실", "옷방", "메모리", "램"
+    ]
+
+    if any(w in lower for w in smart_home_keywords):
+        yield make_sse("tool", "⚡ [모드 3: 하이브리드 고속] 스마트홈 실시간 엔티티 고속 수집 중...")
+        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        yield make_sse("text", full_text)
+        yield make_sse("done")
+        return
+
+    # Fallback to Transcript Tail for deep reasoning
+    for ev in stream_transcript_tail(prompt):
+        yield ev
+
+
+def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 3):
+    """Router for the 3 Streaming Modes."""
+    if stream_mode == 1:
+        for ev in stream_transcript_tail(prompt):
+            yield ev
+    elif stream_mode == 2:
+        for ev in stream_pty_interactive(prompt):
+            yield ev
+    else:  # Default Mode 3: Hybrid Fast
+        for ev in stream_hybrid_fast(prompt):
+            yield ev
 
 
 def get_comprehensive_home_summary(states: list) -> str:
@@ -1032,6 +1170,42 @@ HTML_INDEX = """<!DOCTYPE html>
       cursor: not-allowed !important;
     }
 
+    /* Mode Selector Bar */
+    .mode-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      padding: 0 4px;
+      font-size: 0.78rem;
+    }
+    .mode-bar label {
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+    }
+    .mode-select {
+      background: #1e293b;
+      color: var(--accent-blue);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      outline: none;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .mode-select:hover {
+      border-color: var(--accent-blue);
+    }
+    .mode-select option {
+      background: #0f172a;
+      color: var(--text-main);
+    }
+
     /* Terminal View */
     #terminal-view { height: 100%; display: none; width: 100%; }
     #terminal-view.active { display: block; }
@@ -1068,6 +1242,16 @@ HTML_INDEX = """<!DOCTYPE html>
         </div>
       </div>
       <div class="input-bar-wrap">
+        <div class="mode-bar">
+          <label for="stream-mode">
+            <span>⚙️ 실시간 스트림 엔진:</span>
+          </label>
+          <select id="stream-mode" class="mode-select" onchange="onModeChange(this.value)">
+            <option value="1">📜 모드 1: Transcript 추적 (사고과정 & 도구호출 가시화)</option>
+            <option value="2">🖥️ 모드 2: PTY 터미널 스트림 (실시간 터미널 렌더링)</option>
+            <option value="3" selected>⚡ 모드 3: 하이브리드 고속 (스마트홈 0.05초 즉답)</option>
+          </select>
+        </div>
         <div class="input-bar">
           <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" oninput="updateSendBtn()" onkeydown="handleKey(event)"></textarea>
           <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
@@ -1234,6 +1418,16 @@ HTML_INDEX = """<!DOCTYPE html>
       };
     }
 
+    function onModeChange(val) {
+      localStorage.setItem('antigravity_stream_mode', val);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedMode = localStorage.getItem('antigravity_stream_mode') || '3';
+      const sel = document.getElementById('stream-mode');
+      if (sel) sel.value = savedMode;
+    });
+
     function updateSendBtn() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
@@ -1262,6 +1456,8 @@ HTML_INDEX = """<!DOCTYPE html>
     async function sendMessage() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
+      const modeSel = document.getElementById('stream-mode');
+      const streamMode = modeSel ? parseInt(modeSel.value) : 3;
       const prompt = input.value.trim();
       if (!prompt) return;
 
@@ -1278,7 +1474,7 @@ HTML_INDEX = """<!DOCTYPE html>
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt, is_direct_llm: isDirectLLM })
+          body: JSON.stringify({ prompt: prompt, is_direct_llm: isDirectLLM, stream_mode: streamMode })
         });
 
         if (!res.ok) {
@@ -1504,6 +1700,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     pass
 
             is_direct_llm = payload.get("is_direct_llm", False) or prompt.startswith("ai ") or prompt.startswith("/llm")
+            stream_mode = int(payload.get("stream_mode", 3))
 
             if not prompt:
                 self._set_headers(400)
@@ -1520,7 +1717,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             try:
-                for event_str in stream_agent_chat(prompt, is_direct_llm):
+                for event_str in stream_agent_chat(prompt, is_direct_llm, stream_mode):
                     self.wfile.write(event_str.encode("utf-8"))
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
