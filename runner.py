@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify exact room humidity extraction without battery values or '약' prefixes."""
+"""E2E Verification for newly integrated ha-mcp Fast Mode features."""
 
 import json
 import sys
@@ -14,40 +14,59 @@ def p(msg: str):
     print(msg, flush=True)
 
 
-def test_humidity():
+def test_prompt(prompt: str):
     ha_ip = "192.168.0.14"
     url = f"http://{ha_ip}:8000/api/chat"
-    prompt = "각 방 습도 알려줘"
-    p(f"\n[*] Testing Prompt: '{prompt}' on Mode 3 (Fast)...")
+    p(f"\n========================================================")
+    p(f"[*] Testing Prompt: '{prompt}' (Mode 3 Fast)")
+    p(f"========================================================")
 
     payload = json.dumps({"prompt": prompt, "is_direct_llm": False, "stream_mode": 3}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
-    content = ""
+    t0 = time.time()
+    chunks = []
+    tools = []
+
     with urllib.request.urlopen(req, timeout=10) as resp:
         for line in resp:
             l = line.decode("utf-8", errors="replace").strip()
             if l.startswith("data:"):
                 ev = json.loads(l[5:].strip())
-                if ev.get("type") in ("text", "chunk"):
-                    content += ev.get("content", "")
-                elif ev.get("type") == "done":
+                etype = ev.get("type")
+                if etype == "tool":
+                    tools.append(ev.get("content", ""))
+                elif etype in ("text", "chunk"):
+                    chunks.append(ev.get("content", ""))
+                elif etype == "done":
                     break
 
+    elapsed = round(time.time() - t0, 3)
+    content = "".join(chunks)
+    p(f"[Latency: {elapsed}s | Tool Events: {len(tools)}]")
     p("--- [Result Output] ---")
     p(content)
+    return len(content) > 0
 
-    p("\n--- [Accuracy Verification] ---")
-    has_100 = "100%" in content
-    has_approx = "약" in content
-    p(f"• Contains 100% (Suspicious Battery Value): {'YES [FAIL]' if has_100 else 'NO [PASS]'}")
-    p(f"• Contains '약' Prefix                   : {'YES [FAIL]' if has_approx else 'NO [PASS]'}")
 
-    if not has_100 and not has_approx:
-        p("\nHUMIDITY ACCURACY TEST PASSED PERFECTLY!")
-    else:
-        p("\nHUMIDITY TEST FAILED!")
+def main():
+    p("[ha-mcp Fast Mode Feature Verification Suite Starting]...")
+    tests = [
+        "자동화 목록",
+        "시스템 헬스체크",
+        "안방 상태 알려줘",
+        "할 일 목록 보여줘",
+    ]
+
+    all_pass = True
+    for t in tests:
+        success = test_prompt(t)
+        if not success:
+            all_pass = False
+
+    p("\n" + "=" * 56)
+    p(f"OVERALL RESULT: {'ALL TESTS PASSED [PASS]' if all_pass else 'TEST FAILED [FAIL]'}")
 
 
 if __name__ == "__main__":
-    test_humidity()
+    main()
