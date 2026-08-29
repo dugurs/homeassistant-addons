@@ -1281,6 +1281,11 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         pass
 
 
+class DualThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def run_dual_server():
     """Run HTTP Ingress Server on 7681 and REST API Server on 8000."""
     api_port_env = os.environ.get("ANTIGRAVITY_API_PORT")
@@ -1289,20 +1294,24 @@ def run_dual_server():
     import threading
 
     def serve_ingress():
-        try:
-            httpd_ingress = ThreadingHTTPServer(("0.0.0.0", INGRESS_PORT), AntigravityAPIHandler)
-            print(f"[INFO] Dual Ingress Web UI server running on port {INGRESS_PORT}")
-            httpd_ingress.serve_forever()
-        except Exception as e:
-            print(f"[ERR] Ingress server error: {e}")
+        while True:
+            try:
+                httpd_ingress = DualThreadingHTTPServer(("0.0.0.0", INGRESS_PORT), AntigravityAPIHandler)
+                print(f"[INFO] Dual Ingress Web UI server running on port {INGRESS_PORT}")
+                httpd_ingress.serve_forever()
+            except Exception as e:
+                print(f"[ERR] Ingress server error: {e}")
+                time.sleep(2)
 
     def serve_api():
-        try:
-            httpd_api = ThreadingHTTPServer(("0.0.0.0", api_port), AntigravityAPIHandler)
-            print(f"[INFO] Antigravity REST API server running on port {api_port}")
-            httpd_api.serve_forever()
-        except Exception as e:
-            print(f"[ERR] API server error: {e}")
+        while True:
+            try:
+                httpd_api = DualThreadingHTTPServer(("0.0.0.0", api_port), AntigravityAPIHandler)
+                print(f"[INFO] Antigravity REST API server running on port {api_port}")
+                httpd_api.serve_forever()
+            except Exception as e:
+                print(f"[ERR] API server error: {e}")
+                time.sleep(2)
 
     t_ingress = threading.Thread(target=serve_ingress, daemon=True)
     t_ingress.start()
