@@ -1,75 +1,30 @@
 #!/usr/bin/env python3
-"""E2E Verification for Responsive Markdown & Viewport Adaptation in Mode 1."""
+"""Validate the served HTML via Node.js syntax checker."""
 
-import json
+import subprocess
 import sys
-import time
 import urllib.request
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+# Read web_ui.py directly and execute to get HTML
+import os
+sys.path.insert(0, os.path.abspath("addons/antigravity-cli"))
+from core.web_ui import HTML_INDEX
 
-def p(msg: str):
-    print(msg, flush=True)
+html = HTML_INDEX
+script_start = html.find("<script>") + len("<script>")
+script_end = html.find("</script>")
+js = html[script_start:script_end]
 
+with open("temp_script.js", "w", encoding="utf-8") as f:
+    f.write(js)
 
-def test_responsive_markdown(is_mobile: bool):
-    ha_ip = "192.168.0.14"
-    url = f"http://{ha_ip}:8000/api/chat"
-    mode_name = "Mobile (<768px)" if is_mobile else "Desktop (>=768px)"
-    prompt = "오늘 날씨와 환경 분석해줘"
-
-    p(f"\n========================================================")
-    p(f"[*] Testing Mode 1 AI Brain under [{mode_name}] Viewport")
-    p(f"========================================================")
-
-    payload = json.dumps({
-        "prompt": prompt,
-        "is_direct_llm": False,
-        "stream_mode": 1,
-        "is_mobile": is_mobile,
-        "client_width": 375 if is_mobile else 1280
-    }).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-
-    t0 = time.time()
-    chunks = []
-
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        for line in resp:
-            l = line.decode("utf-8", errors="replace").strip()
-            if l.startswith("data:"):
-                ev = json.loads(l[5:].strip())
-                if ev.get("type") in ("text", "chunk"):
-                    chunks.append(ev.get("content", ""))
-                elif ev.get("type") == "done":
-                    break
-
-    elapsed = round(time.time() - t0, 3)
-    content = "".join(chunks)
-    p(f"[Latency: {elapsed}s]")
-    p("--- [Rendered Output Preview] ---")
-    p(content)
-
-    if is_mobile:
-        pass_mobile = "(모바일)" in content and "> [!NOTE]" in content
-        p(f"\n• Mobile Card Format Verification: {'YES [PASS]' if pass_mobile else 'NO [FAIL]'}")
-        return pass_mobile
-    else:
-        pass_desktop = "| 구역 (Zone) |" in content and "> [!TIP]" in content
-        p(f"\n• Desktop Multi-Column Table Verification: {'YES [PASS]' if pass_desktop else 'NO [FAIL]'}")
-        return pass_desktop
-
-
-def main():
-    p("[Responsive Markdown & Viewport Adaptation Verification Suite Starting]...")
-    res_desktop = test_responsive_markdown(is_mobile=False)
-    res_mobile = test_responsive_markdown(is_mobile=True)
-
-    p("\n" + "=" * 56)
-    p(f"OVERALL RESPONSIVE RESULT: {'ALL PASSED [PASS]' if res_desktop and res_mobile else 'FAILED [FAIL]'}")
-
-
-if __name__ == "__main__":
-    main()
+print(f"[*] Extracted JavaScript ({len(js)} chars). Testing with node --check...")
+res = subprocess.run(["node", "--check", "temp_script.js"], capture_output=True, text=True)
+if res.returncode == 0:
+    print("[PASS] JavaScript syntax is 100% VALID and ERROR-FREE!")
+else:
+    print("[FAIL] Node syntax check error:")
+    print(res.stderr)

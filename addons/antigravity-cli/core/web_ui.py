@@ -485,52 +485,47 @@ HTML_INDEX = """<!DOCTYPE html>
       let raw = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       
       // Multi-line Callouts / Blockquotes
-      raw = raw.replace(/((?:^&gt;.*(?:\n|$))+)/gm, function(match) {
-        let lines = match.trim().split('\n').map(l => l.replace(/^&gt;\s?/, '').trim());
+      raw = raw.replace(/((?:^&gt;.*(?:\\r?\\n|$))+)/gm, function(match) {
+        let lines = match.trim().split(/\\r?\\n/).map(function(l) { return l.replace(/^&gt;\\s?/, '').trim(); });
         let firstLine = lines[0] || '';
         let calloutType = 'tip';
         let icon = '💡';
         
-        if (/^\[!(WARNING|CAUTION|IMPORTANT)\]/i.test(firstLine)) {
+        if (/^\\[!(WARNING|CAUTION|IMPORTANT)\\]/i.test(firstLine)) {
           calloutType = 'warning';
           icon = '⚠️';
-          lines[0] = lines[0].replace(/^\[!(WARNING|CAUTION|IMPORTANT)\]\s*/i, '');
-        } else if (/^\[!(NOTE|INFO|TIP)\]/i.test(firstLine)) {
+          lines[0] = lines[0].replace(/^\\[!(WARNING|CAUTION|IMPORTANT)\\]\\s*/i, '');
+        } else if (/^\\[!(NOTE|INFO|TIP)\\]/i.test(firstLine)) {
           calloutType = 'tip';
           icon = '💡';
-          lines[0] = lines[0].replace(/^\[!(NOTE|INFO|TIP)\]\s*/i, '');
+          lines[0] = lines[0].replace(/^\\[!(NOTE|INFO|TIP)\\]\\s*/i, '');
         }
         
-        let inner = lines.filter(l => l.length > 0).join('<br>');
-        return `<div class="callout ${calloutType}"><strong>${icon}</strong> ${inner}</div>`;
+        let inner = lines.filter(function(l) { return l.length > 0; }).join('<br>');
+        return '<div class="callout ' + calloutType + '"><strong>' + icon + '</strong> ' + inner + '</div>';
       });
 
       // Code blocks with header & copy button
-      raw = raw.replace(/```([a-zA-Z0-9_-]*)\\n([\\s\\S]*?)```/g, function(match, lang, code) {
+      raw = raw.replace(/```([a-zA-Z0-9_-]*)\\r?\\n([\\s\\S]*?)```/g, function(match, lang, code) {
         const langStr = lang || 'code';
-        return `
-          <div class="code-block-wrap">
-            <div class="code-header">
-              <span>${langStr}</span>
-              <button class="code-copy-btn" onclick="copyCodeBlock(this)">📋 복사</button>
-            </div>
-            <pre><code>${code.trim()}</code></pre>
-          </div>
-        `;
+        return '<div class="code-block-wrap">' +
+               '<div class="code-header"><span>' + langStr + '</span>' +
+               '<button class="code-copy-btn" onclick="copyCodeBlock(this)">📋 복사</button></div>' +
+               '<pre><code>' + code.trim() + '</code></pre></div>';
       });
 
       // Inline code
       raw = raw.replace(/`([^`]+)`/g, '<code>$1</code>');
 
       // Responsive Tables wrapped in table-wrapper
-      raw = raw.replace(/\\|(.+)\\|\\n\\|[-|\\s:]+\\|\\n((?:\\|.*\\|\\n?)*)/g, function(match, header, rows) {
-        let headers = header.split('|').map(h => h.trim()).filter(h => h);
-        let rowLines = rows.trim().split('\\n');
-        let html = '<div class="table-wrapper"><table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
-        rowLines.forEach(r => {
-          let cols = r.split('|').map(c => c.trim()).filter(c => c);
+      raw = raw.replace(/\\|(.+)\\|\\r?\\n\\|[-|\\s:]+\\|\\r?\\n((?:\\|.*\\|\\r?\\n?)*)/g, function(match, header, rows) {
+        let headers = header.split('|').map(function(h) { return h.trim(); }).filter(function(h) { return h; });
+        let rowLines = rows.trim().split(/\\r?\\n/);
+        let html = '<div class="table-wrapper"><table><thead><tr>' + headers.map(function(h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
+        rowLines.forEach(function(r) {
+          let cols = r.split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c; });
           if (cols.length) {
-            html += '<tr>' + cols.map(c => `<td>${c}</td>`).join('') + '</tr>';
+            html += '<tr>' + cols.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
           }
         });
         html += '</tbody></table></div>';
@@ -554,7 +549,7 @@ HTML_INDEX = """<!DOCTYPE html>
       raw = raw.replace(/^(\\d+)\\.\\s+(.*)$/gm, '<li><strong>$1.</strong> $2</li>');
 
       // Line breaks
-      raw = raw.replace(/\\n/g, '<br>');
+      raw = raw.replace(/\\r?\\n/g, '<br>');
       return raw;
     }
 
@@ -758,7 +753,7 @@ HTML_INDEX = """<!DOCTYPE html>
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
-          const lines = buffer.split('\\n');
+          const lines = buffer.split(/\\r?\\n/);
           buffer = lines.pop();
 
           for (const line of lines) {
