@@ -116,7 +116,7 @@ def stream_transcript_tail(prompt: str):
     t.start()
 
     start_time = time.time()
-    timeout = 60
+    timeout = 30
     streamed_any_chunk = False
 
     while time.time() - start_time < timeout:
@@ -150,6 +150,24 @@ def stream_pty_interactive(prompt: str):
     """Mode 2: Virtual PTY Terminal Interactive Stream with ANSI parsing."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     yield make_sse("tool", f"🖥️ [모드 2: PTY 터미널 스트림] 가상 터미널 세션 생성: '{actual_prompt}'")
+    time.sleep(0.05)
+
+    smart_home_keywords = [
+        "상태", "상황", "현황", "요약", "브리핑", "날씨", "환경", "기상",
+        "온도", "습도", "조명", "에러", "로그", "켜", "꺼", "틀어", "시작", "정지",
+        "열어", "닫아", "거실", "안방", "작은방", "주방", "화장실", "세탁실", "옷방", "메모리", "램", "안녕"
+    ]
+    lower = actual_prompt.lower()
+
+    if any(w in lower for w in smart_home_keywords):
+        yield make_sse("tool", "🖥️ [가상 터미널] Home Assistant 엔티티 상태 스트림 수신...")
+        time.sleep(0.08)
+        yield make_sse("tool", "📊 [터미널 렌더링] 디바이스 상태 및 센서 데이터 출력 포맷팅")
+        time.sleep(0.08)
+        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        yield make_sse("text", full_text)
+        yield make_sse("done")
+        return
 
     if pty is None:
         yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
@@ -202,7 +220,7 @@ def stream_pty_interactive(prompt: str):
     os.close(slave_fd)
     buffer = ""
     start_time = time.time()
-    timeout = 60
+    timeout = 30
     streamed_any = False
 
     try:
