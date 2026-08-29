@@ -123,6 +123,9 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
     ]
 
     env = os.environ.copy()
+    env["HOME"] = "/root"
+    env["USER"] = "root"
+    env["PATH"] = f"/root/.local/bin:/usr/local/bin:/usr/bin:/bin:{env.get('PATH', '')}"
     env["PYTHONUNBUFFERED"] = "1"
     env["FORCE_COLOR"] = "0"
     env["TERM"] = "dumb"
@@ -249,14 +252,28 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
     ]
 
     env = os.environ.copy()
+    env["HOME"] = "/root"
+    env["USER"] = "root"
+    env["PATH"] = f"/root/.local/bin:/usr/local/bin:/usr/bin:/bin:{env.get('PATH', '')}"
     env["PYTHONUNBUFFERED"] = "1"
     env["FORCE_COLOR"] = "0"
     env["TERM"] = "dumb"
+
+    auth_files = []
+    for p in ["/root/.gemini", "/root/.config/antigravity", "/config/.gemini", "/config/.config"]:
+        if os.path.exists(p):
+            try:
+                auth_files.append(f"{p}: {os.listdir(p)}")
+            except Exception as ex:
+                auth_files.append(f"{p}: {ex}")
+        else:
+            auth_files.append(f"{p}: NOT_FOUND")
 
     t0 = time.time()
     result = {
         "agy_bin": agy_bin,
         "exists": exists,
+        "auth_dirs": auth_files,
         "cmd": cmd,
         "lines": [],
         "stderr": "",
