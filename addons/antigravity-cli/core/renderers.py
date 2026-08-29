@@ -400,7 +400,7 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
                 persons_away.append(fn)
     person_line = ""
     if persons_home:
-        person_line = f"• 👥 가족 재실: {len(persons_home)}명 전원 재실 중 ({', '.join(persons_home)})"
+        person_line = f"- 👥 **가족 재실**: {len(persons_home)}명 전원 재실 중 ({', '.join(persons_home)})"
         if persons_away:
             person_line += f" / 외출: {', '.join(persons_away)}"
 
@@ -413,7 +413,7 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
             attrs = s.get("attributes", {})
             temp = attrs.get("temperature", "")
             hum = attrs.get("humidity", "")
-            weather_line = f"• 🌤️ {fn}: 현재 {st} (기온 {temp}°C / 습도 {hum}%)"
+            weather_line = f"- 🌤️ **{fn}**: 현재 **{st}** (기온 {temp}°C / 습도 {hum}%)"
             break
 
     on_lights = []
@@ -425,14 +425,14 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
                 continue
             on_lights.append(fn)
     if on_lights:
-        lights_str = f"• 💡 조명: 총 {len(on_lights)}개 점등 중 ({', '.join(on_lights[:4])}{' 외 ' + str(len(on_lights)-4) + '개' if len(on_lights) > 4 else ''})"
+        lights_str = f"- 💡 **조명**: 총 {len(on_lights)}개 점등 중 ({', '.join(on_lights[:4])}{' 외 ' + str(len(on_lights)-4) + '개' if len(on_lights) > 4 else ''})"
     else:
-        lights_str = "• 💡 조명: 모든 조명이 꺼져 있습니다."
+        lights_str = "- 💡 **조명**: 모든 조명이 꺼져 있습니다."
 
     env_data = get_room_env_matrix(states)
     rooms = env_data["rooms"]
     matrix = env_data["matrix"]
-    env_lines = ["• 🌡️ 주요 공간 다차원 환경:"]
+    env_lines = ["- 🌡️ **주요 공간 다차원 환경**:"]
     for r in rooms:
         r_data = matrix.get(r, {})
         t_val = r_data.get("temperature", {}).get("formatted")
@@ -466,7 +466,7 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
                 active_fans.append(fn)
 
     usage = get_resource_usage()
-    sys_line = f"• ⚙️ 시스템 리소스: RAM {usage['used_memory_gb']}GB / {usage['total_memory_gb']}GB ({usage['memory_percent']}%) | 애드온 {usage['memory_usage']}MB"
+    sys_line = f"- ⚙️ **시스템 리소스**: RAM {usage['used_memory_gb']}GB / {usage['total_memory_gb']}GB ({usage['memory_percent']}%) | 애드온 {usage['memory_usage']}MB"
 
     report = ["🏠 **우리집 스마트홈 종합 상황 브리핑**\n"]
     if person_line:
@@ -474,11 +474,11 @@ def get_comprehensive_home_summary(states: list, is_mobile: bool = False) -> str
     if weather_line:
         report.append(weather_line)
     report.append(lights_str)
-    report.append("\n".join(env_lines))
+    report.extend(env_lines)
     if covers:
-        report.append(f"• 🪟 스마트 커튼: {', '.join(covers)}")
+        report.append(f"- 🪟 **스마트 커튼**: {', '.join(covers)}")
     if active_fans:
-        report.append(f"• 🌀 가동 중인 팬/환풍기: {', '.join(active_fans)}")
+        report.append(f"- 🌀 **가동 중인 팬/환풍기**: {', '.join(active_fans)}")
     report.append(sys_line)
 
     return "\n".join(report)

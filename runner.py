@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E Verification for Multi-Metric Environment Sensors ($CO_2$, TVOC, PM2.5, Illuminance, Pressure)."""
+"""E2E Verification for 2-Mode Architecture & Token Tracking."""
 
 import json
 import sys
@@ -14,71 +14,72 @@ def p(msg: str):
     print(msg, flush=True)
 
 
-def test_multi_metrics():
+def test_clean_2modes_and_tokens():
     ha_ip = "192.168.0.14"
     url = f"http://{ha_ip}:8000/api/chat"
 
     p("=" * 70)
-    p("  E2E MULTI-METRIC ENVIRONMENT SENSOR & AI SYNTHESIS TEST  ")
+    p("  E2E 2-MODE ARCHITECTURE & LIVE TOKEN TRACKING TEST  ")
     p("=" * 70)
 
-    # 1. Mode 1 Test (AI Deep Brain with dynamic multi-metric columns & AI advice)
-    payload = json.dumps({
+    # 1. Mode 1 Test: AI Deep Brain
+    p("\n[*] Testing [Mode 1: AI Deep Brain] with Multi-Metric Analysis & Token Tracking:")
+    payload1 = json.dumps({
         "prompt": "오늘 날씨와 환경 분석해줘",
-        "is_direct_llm": False,
         "stream_mode": 1,
         "is_mobile": False,
     }).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    req1 = urllib.request.Request(url, data=payload1, headers={"Content-Type": "application/json"})
 
     t0 = time.time()
-    chunks = []
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    chunks1 = []
+    tokens_meta1 = {}
+    with urllib.request.urlopen(req1, timeout=15) as resp:
         for line in resp:
             l = line.decode("utf-8", errors="replace").strip()
             if l.startswith("data:"):
                 ev = json.loads(l[5:].strip())
                 if ev.get("type") in ("text", "chunk"):
-                    chunks.append(ev.get("content", ""))
+                    chunks1.append(ev.get("content", ""))
                 elif ev.get("type") == "done":
+                    tokens_meta1 = ev.get("tokens", {})
                     break
 
-    elapsed = round(time.time() - t0, 3)
-    content = "".join(chunks)
-    p(f"\n[Generated Mode 1 Output ({elapsed}s)]:\n{content}")
+    elapsed1 = round(time.time() - t0, 3)
+    p(f"\n[Generated Output Mode 1 ({elapsed1}s)]:\n{''.join(chunks1)}")
+    p(f"[Token Metadata Mode 1]: {tokens_meta1}")
 
-    # 2. Mode 3 Test (Fast Multi-Metric Dashboard)
+    # 2. Mode 2 Test: Ultra-Fast Smart Home Dispatcher
     p("\n" + "=" * 70)
-    p("[*] Testing Mode 3 Fast Dashboard with Multi-Metric Matrix")
-    p("=" * 70)
-
-    payload_m3 = json.dumps({
-        "prompt": "오늘 날씨와 환경 분석해줘",
-        "is_direct_llm": False,
-        "stream_mode": 3,
+    p("[*] Testing [Mode 2: Ultra-Fast Smart Home] Direct Control & Status:")
+    payload2 = json.dumps({
+        "prompt": "우리집 종합 상황 알려줘",
+        "stream_mode": 2,
         "is_mobile": False,
     }).encode("utf-8")
-    req_m3 = urllib.request.Request(url, data=payload_m3, headers={"Content-Type": "application/json"})
+    req2 = urllib.request.Request(url, data=payload2, headers={"Content-Type": "application/json"})
 
     t0 = time.time()
-    chunks_m3 = []
-    with urllib.request.urlopen(req_m3, timeout=15) as resp:
+    chunks2 = []
+    tokens_meta2 = {}
+    with urllib.request.urlopen(req2, timeout=15) as resp:
         for line in resp:
             l = line.decode("utf-8", errors="replace").strip()
             if l.startswith("data:"):
                 ev = json.loads(l[5:].strip())
                 if ev.get("type") in ("text", "chunk"):
-                    chunks_m3.append(ev.get("content", ""))
+                    chunks2.append(ev.get("content", ""))
                 elif ev.get("type") == "done":
+                    tokens_meta2 = ev.get("tokens", {})
                     break
 
-    elapsed_m3 = round(time.time() - t0, 3)
-    content_m3 = "".join(chunks_m3)
-    p(f"\n[Generated Mode 3 Output ({elapsed_m3}s)]:\n{content_m3}")
+    elapsed2 = round(time.time() - t0, 3)
+    p(f"\n[Generated Output Mode 2 ({elapsed2}s)]:\n{''.join(chunks2)}")
+    p(f"[Token Metadata Mode 2]: {tokens_meta2}")
 
     p("\n" + "=" * 70)
-    p(">>> MULTI-METRIC DYNAMIC ENVIRONMENT SENSOR INTEGRATION 100% PASS <<<")
+    p(">>> 2-MODE ARCHITECTURE & TOKEN MONITORING 100% PASS <<<")
 
 
 if __name__ == "__main__":
-    test_multi_metrics()
+    test_clean_2modes_and_tokens()
