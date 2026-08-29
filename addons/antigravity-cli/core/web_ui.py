@@ -230,6 +230,77 @@ HTML_INDEX = """<!DOCTYPE html>
       border-bottom-left-radius: 2px;
     }
 
+    /* Bot Bubble Header & View Toggle */
+    .bubble-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .view-toggle-wrap {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-base);
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+    .view-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.73rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+    .view-tab.active {
+      background: var(--accent-blue);
+      color: #ffffff;
+    }
+    .top-copy-btn {
+      background: var(--bg-base);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.73rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .top-copy-btn:hover {
+      background: var(--badge-bg);
+      color: var(--accent-blue);
+      border-color: var(--accent-blue);
+    }
+    .top-copy-btn.copied {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border-color: var(--accent-green);
+    }
+    .raw-markdown-view {
+      display: none;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.83rem;
+      line-height: 1.5;
+      color: var(--text-main);
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-x: auto;
+      margin: 4px 0;
+    }
+
     /* Tool Progression Accordion */
     .tool-box {
       margin-bottom: 12px;
@@ -781,6 +852,38 @@ HTML_INDEX = """<!DOCTYPE html>
       }
     }
 
+    function switchMsgView(btn, viewType) {
+      const bubble = btn.closest('.bubble');
+      const tabs = bubble.querySelectorAll('.view-tab');
+      tabs.forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+
+      const parsedView = bubble.querySelector('.answer-content');
+      const rawView = bubble.querySelector('.raw-markdown-view');
+
+      if (viewType === 'raw') {
+        parsedView.style.display = 'none';
+        rawView.style.display = 'block';
+      } else {
+        parsedView.style.display = 'block';
+        rawView.style.display = 'none';
+      }
+    }
+
+    function copyMessageTop(btn) {
+      const bubble = btn.closest('.bubble');
+      const rawCode = bubble.querySelector('.raw-markdown-view code');
+      const text = rawCode ? rawCode.textContent : '';
+      navigator.clipboard.writeText(text).then(() => {
+        btn.innerHTML = '✓ 복사완료';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.innerHTML = '📋 복사';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+
     function createBotStreamMessage() {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
@@ -790,6 +893,13 @@ HTML_INDEX = """<!DOCTYPE html>
       row.innerHTML = `
         <div class="bubble-wrap">
           <div class="bubble">
+            <div class="bubble-header">
+              <div class="view-toggle-wrap">
+                <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
+                <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 마크다운 원문</button>
+              </div>
+              <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
+            </div>
             <div class="tool-box" style="display: none;">
               <div class="tool-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
                 <span class="tool-title">🔍 AI 도구 호출 진행 중...</span>
@@ -798,12 +908,13 @@ HTML_INDEX = """<!DOCTYPE html>
               <div class="tool-content"></div>
             </div>
             <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
+            <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
           </div>
           <div class="msg-meta bot">
             <span class="meta-time">${timeStr}</span>
             <span class="meta-latency" style="display: none;"></span>
             <span class="meta-tokens" style="display: none;"></span>
-            <button class="copy-btn" onclick="copyMessage(this)">📋 복사</button>
+            <button class="copy-btn" onclick="copyMessage(this)">📋 전체 복사</button>
           </div>
         </div>
       `;
@@ -814,6 +925,7 @@ HTML_INDEX = """<!DOCTYPE html>
       const toolTitle = row.querySelector('.tool-title');
       const toolContent = row.querySelector('.tool-content');
       const answerContent = row.querySelector('.answer-content');
+      const rawCode = row.querySelector('.raw-markdown-view code');
       const latencyEl = row.querySelector('.meta-latency');
       const tokensEl = row.querySelector('.meta-tokens');
 
@@ -841,11 +953,13 @@ HTML_INDEX = """<!DOCTYPE html>
         appendChunk: function(chunk) {
           answerText += chunk;
           answerContent.innerHTML = formatMarkdown(answerText);
+          if (rawCode) rawCode.textContent = answerText;
           box.scrollTop = box.scrollHeight;
         },
         setText: function(text) {
           answerText = text;
           answerContent.innerHTML = formatMarkdown(answerText);
+          if (rawCode) rawCode.textContent = answerText;
           box.scrollTop = box.scrollHeight;
         },
         hasContent: function() {
@@ -875,6 +989,7 @@ HTML_INDEX = """<!DOCTYPE html>
           }
           if (!answerText) {
             answerContent.innerHTML = "답변 작성을 완료했습니다.";
+            if (rawCode) rawCode.textContent = "답변 작성을 완료했습니다.";
           }
           answerContent.setAttribute('data-raw', answerText);
           box.scrollTop = box.scrollHeight;
