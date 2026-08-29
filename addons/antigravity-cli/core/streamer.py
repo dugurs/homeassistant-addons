@@ -160,31 +160,10 @@ def stream_transcript_tail(prompt: str, is_mobile: bool = False):
 
 
 def stream_pty_interactive(prompt: str, is_mobile: bool = False):
-    """Mode 2: Virtual PTY Terminal Interactive Stream with ANSI parsing and responsive viewports."""
+    """Mode 2: Virtual PTY Terminal Interactive Stream with direct CLI execution and ANSI streaming."""
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
-    yield make_sse("tool", f"🖥️ [모드 2: PTY 터미널 스트림] 가상 터미널 세션 생성: '{actual_prompt}'")
+    yield make_sse("tool", f"🖥️ [모드 2: PTY 터미널] 가상 터미널 세션 생성: '{actual_prompt}'")
     time.sleep(0.05)
-
-    smart_home_keywords = [
-        "상태", "상황", "현황", "요약", "브리핑", "날씨", "환경", "기상",
-        "온도", "습도", "조명", "에러", "로그", "켜", "꺼", "틀어", "시작", "정지",
-        "열어", "닫아", "거실", "안방", "작은방", "주방", "화장실", "세탁실", "옷방", "메모리", "램", "안녕"
-    ]
-    lower = actual_prompt.lower()
-
-    if any(w in lower for w in smart_home_keywords):
-        yield make_sse("tool", "🖥️ [가상 터미널] Home Assistant 엔티티 상태 스트림 수신...")
-        time.sleep(0.08)
-        yield make_sse("tool", "📊 [터미널 렌더링] 디바이스 상태 및 센서 데이터 CLI 테이블 포맷팅")
-        time.sleep(0.08)
-        states = get_ha_states()
-        if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온"]):
-            full_text = get_terminal_cli_environment_view(states, is_mobile=is_mobile)
-        else:
-            full_text = handle_agent_chat(actual_prompt, "", "", False)
-        yield make_sse("text", full_text)
-        yield make_sse("done")
-        return
 
     if pty is None:
         yield make_sse("text", "[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.")
@@ -193,8 +172,8 @@ def stream_pty_interactive(prompt: str, is_mobile: bool = False):
 
     agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
     if not os.path.exists(agy_bin):
-        yield make_sse("tool", "💡 [스마트홈 대체 모드] Home Assistant 지능형 엔진으로 처리합니다.")
-        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        yield make_sse("tool", "💡 [스마트홈 대체 모드] Antigravity CLI 바이너리를 탐색 중입니다...")
+        full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
         yield make_sse("text", full_text)
         yield make_sse("done")
         return
@@ -304,7 +283,7 @@ def stream_pty_interactive(prompt: str, is_mobile: bool = False):
             pass
 
     if not streamed_any:
-        full_text = handle_agent_chat(actual_prompt, "", "", False)
+        full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
         yield make_sse("text", full_text)
 
     yield make_sse("done")
