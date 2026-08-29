@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Antigravity CLI Dual Ingress Web UI (Chat Dashboard + ttyd Web Terminal) & REST API Server."""
+"""Antigravity CLI Dual Ingress Web UI (Real-time SSE Streaming + ttyd Web Terminal) & REST API Server."""
 
 import json
 import os
@@ -16,7 +16,7 @@ except ImportError:
     pty = None
 
 START_TIME = time.time()
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DEFAULT_PORT = 8000
 INGRESS_PORT = 7681
 TTYD_INTERNAL_PORT = 7682
@@ -408,18 +408,25 @@ def get_weather_env_summary(states: list) -> str:
     return "\n".join(res)
 
 
-def run_agy_with_pty(prompt: str, timeout: int = 120) -> str:
-    """Execute agy CLI inside a virtual pseudo-terminal (PTY) and capture pure output."""
-    if pty is None:
-        return ""
+def stream_agent_chat(prompt: str, is_direct_llm: bool = False):
+    """Generator that yields real-time SSE stream events for Antigravity AI."""
+    clean_prompt = prompt.strip()
+    lower = clean_prompt.lower()
 
-    agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
-    if not os.path.exists(agy_bin):
-        return ""
+    # 1. Real-Time Deep Brain AI via PTY
+    if is_direct_llm:
+        if pty is None:
+            yield f"data: {json.dumps({'type': 'text', 'content': '[오류] PTY 가상 터미널 모듈을 사용할 수 없습니다.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
 
-    supervisor_token = get_supervisor_token()
-    master_fd = None
-    try:
+        agy_bin = "/usr/local/bin/agy" if os.path.exists("/usr/local/bin/agy") else "/root/.local/bin/agy"
+        if not os.path.exists(agy_bin):
+            yield f"data: {json.dumps({'type': 'text', 'content': '[오류] agy 바이너리를 찾을 수 없습니다.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        supervisor_token = get_supervisor_token()
         master_fd, slave_fd = pty.openpty()
         env = {
             **os.environ,
@@ -436,7 +443,7 @@ def run_agy_with_pty(prompt: str, timeout: int = 120) -> str:
             "PATH": f"/root/.local/bin:/usr/local/bin:{os.environ.get('PATH', '')}:/usr/bin:/bin",
         }
 
-        cmd = [agy_bin, "--dangerously-skip-permissions", "--print", prompt]
+        cmd = [agy_bin, "--dangerously-skip-permissions", "--print", clean_prompt]
         proc = subprocess.Popen(
             cmd,
             stdin=slave_fd,
@@ -448,75 +455,84 @@ def run_agy_with_pty(prompt: str, timeout: int = 120) -> str:
         )
         os.close(slave_fd)
 
-        output_chunks = []
+        buffer = ""
         start_time = time.time()
+        timeout = 180  # 3 minutes for deep reasoning
 
-        timed_out = False
-        while True:
-            if time.time() - start_time > timeout:
-                timed_out = True
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                break
-
-            r, _, _ = select.select([master_fd], [], [], 0.4)
-            if master_fd in r:
-                try:
-                    data = os.read(master_fd, 4096)
-                    if not data:
-                        break
-                    output_chunks.append(data.decode("utf-8", errors="replace"))
-                except OSError:
+        try:
+            while True:
+                if time.time() - start_time > timeout:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': f'\\n[오류] AI 추론 시간이 초과되었습니다 ({timeout}초 초과).' })}\n\n"
                     break
 
-            if proc.poll() is not None:
-                while True:
-                    r, _, _ = select.select([master_fd], [], [], 0.2)
-                    if master_fd in r:
-                        try:
-                            data = os.read(master_fd, 4096)
-                            if not data:
-                                break
-                            output_chunks.append(data.decode("utf-8", errors="replace"))
-                        except OSError:
+                r, _, _ = select.select([master_fd], [], [], 0.2)
+                if master_fd in r:
+                    try:
+                        data = os.read(master_fd, 4096)
+                        if not data:
                             break
-                    else:
+                        chunk_str = data.decode("utf-8", errors="replace")
+                        buffer += chunk_str
+
+                        # Process complete lines from buffer
+                        if "\n" in buffer:
+                            lines = buffer.split("\n")
+                            buffer = lines[-1]
+                            for line in lines[:-1]:
+                                clean = strip_ansi(line).strip()
+                                if not clean:
+                                    continue
+                                if any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
+                                    continue
+                                if clean.startswith("● ") or clean.startswith("▸ ") or clean.startswith("Initiating") or clean.startswith("Discovering"):
+                                    yield f"data: {json.dumps({'type': 'tool', 'content': clean})}\n\n"
+                                else:
+                                    yield f"data: {json.dumps({'type': 'chunk', 'content': clean + '\\n'})}\n\n"
+                    except OSError:
                         break
-                break
 
-        os.close(master_fd)
-        master_fd = None
+                if proc.poll() is not None:
+                    # Drain remaining buffer
+                    while True:
+                        r, _, _ = select.select([master_fd], [], [], 0.1)
+                        if master_fd in r:
+                            try:
+                                data = os.read(master_fd, 4096)
+                                if not data:
+                                    break
+                                buffer += data.decode("utf-8", errors="replace")
+                            except OSError:
+                                break
+                        else:
+                            break
+                    break
 
-        if timed_out and not output_chunks:
-            return f"[오류] Antigravity CLI AI 추론 시간이 초과되었습니다 ({timeout}초 초과). QEMU VM 부하 또는 다중 도구 조회 지연을 확인해주세요."
+            if buffer:
+                for line in buffer.split("\n"):
+                    clean = strip_ansi(line).strip()
+                    if clean and not any(w in clean for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
+                        if clean.startswith("● ") or clean.startswith("▸ "):
+                            yield f"data: {json.dumps({'type': 'tool', 'content': clean})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': clean + '\\n'})}\n\n"
 
-        raw_output = "".join(output_chunks)
-        clean = strip_ansi(raw_output)
-
-        filtered_lines = []
-        for line in clean.split("\n"):
-            line_str = line.strip()
-            if not line_str:
-                continue
-            if any(w in line_str for w in ["[WARNING]", "[INFO]", "Starting Web Terminal", "tmux", "root@", "/usr/local/bin/agy:"]):
-                continue
-            filtered_lines.append(line)
-
-        res_text = "\n".join(filtered_lines).strip()
-        if res_text:
-            return res_text
-        if timed_out:
-            return f"[오류] Antigravity CLI AI 추론 시간이 초과되었습니다 ({timeout}초 초과)."
-        return "[오류] Antigravity CLI 에이전트 실행 결과가 비어 있습니다. (CLI 세션 상태를 확인해주세요.)"
-    except Exception as e:
-        if master_fd is not None:
+        finally:
             try:
                 os.close(master_fd)
             except Exception:
                 pass
-        return f"[오류] Antigravity CLI 가상 터미널(PTY) 실행 중 예외가 발생했습니다: {e}"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
+    # 2. Fast Semantic Engine Queries (Weather, System, Room sensors)
+    full_text = handle_agent_chat(clean_prompt, "", "", False)
+    yield f"data: {json.dumps({'type': 'text', 'content': full_text})}\n\n"
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str = "", is_direct_llm: bool = False) -> str:
@@ -524,18 +540,14 @@ def handle_agent_chat(prompt: str, conversation_id: str = "", home_summary: str 
     clean_prompt = prompt.strip()
     lower = clean_prompt.lower()
 
-    # 1. Pure AI Direct Pass-Through: If user explicitly invoked LLM (/llm, ai), try PTY execution with 120s timeout
-    if is_direct_llm:
-        return run_agy_with_pty(clean_prompt, timeout=120)
-
-    # 2. Weather & Environment Analysis Query
+    # 1. Weather & Environment Analysis Query
     if any(w in lower for w in ["날씨", "환경", "기상", "일기예보", "온습도"]):
         if not any(ctrl in lower for ctrl in ["켜", "꺼", "틀어", "시작", "정지"]):
             states = get_ha_states()
             if states:
                 return get_weather_env_summary(states)
 
-    # 3. System Log Query (에러 로그, 시스템 로그, 오류 확인)
+    # 2. System Log Query (에러 로그, 시스템 로그, 오류 확인)
     if any(w in lower for w in ["에러 로그", "오류 로그", "에러 확인", "오류 확인", "시스템 로그", "최근 에러", "로그 확인"]):
         return get_ha_error_logs()
 
@@ -757,7 +769,7 @@ HTML_INDEX = """<!DOCTYPE html>
     .bubble code { font-family: monospace; color: #38bdf8; }
     .bubble ul, .bubble ol { margin-left: 20px; margin-top: 6px; margin-bottom: 6px; }
 
-    /* Tool Accordion */
+    /* Live Tool Accordion */
     .tool-box {
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid #334155;
@@ -775,8 +787,7 @@ HTML_INDEX = """<!DOCTYPE html>
       font-weight: 600;
       color: var(--accent-blue);
     }
-    .tool-content { padding: 8px 12px; display: none; max-height: 200px; overflow-y: auto; color: var(--text-muted); }
-    .tool-box.open .tool-content { display: block; }
+    .tool-content { padding: 8px 12px; display: block; max-height: 250px; overflow-y: auto; color: var(--text-muted); font-family: monospace; }
 
     /* Input Area */
     .input-bar-wrap {
@@ -832,7 +843,7 @@ HTML_INDEX = """<!DOCTYPE html>
   <header>
     <div class="brand">
       <span>🤖 Antigravity AI</span>
-      <span class="brand-badge">Assistant</span>
+      <span class="brand-badge">Real-time Stream</span>
     </div>
     <div class="nav-tabs">
       <button class="tab-btn active" onclick="switchTab('chat')">💬 AI Chat</button>
@@ -845,15 +856,15 @@ HTML_INDEX = """<!DOCTYPE html>
     <section id="chat-view" class="tab-view active">
       <div class="chat-container" id="chat-box">
         <div class="hero-card">
-          <h2>Google Antigravity 스마트홈 어시스턴트</h2>
-          <p>자연어 발화 및 Antigravity CLI AI 딥 브레인이 연동된 스마트홈 제어기입니다.</p>
+          <h2>Google Antigravity 스마트홈 실시간 어시스턴트</h2>
+          <p>자연어 발화 및 Antigravity CLI AI 딥 브레인이 연동된 실시간 스트리밍 대시보드입니다.</p>
           <div class="quick-chips">
             <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
             <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
             <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
             <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
             <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
-            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌦️ 날씨/환경 분석</div>
+            <div class="chip" onclick="sendQuick('ai 오늘 날씨와 환경 분석해줘')">🤖 AI 실시간 추론</div>
           </div>
         </div>
       </div>
@@ -915,43 +926,70 @@ HTML_INDEX = """<!DOCTYPE html>
       return raw;
     }
 
-    function appendMessage(role, text) {
+    function appendUserMessage(text) {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
-      row.className = `msg-row ${role}`;
-
-      let toolsHtml = "";
-      let cleanText = text;
-
-      // Extract Tool Calls / Thoughts if present
-      if (role === 'bot' && (text.includes('● ') || text.includes('▸ Thought'))) {
-        const lines = text.split('\\n');
-        const toolLines = [];
-        const answerLines = [];
-        lines.forEach(l => {
-          if (l.startsWith('● ') || l.startsWith('▸ Thought') || l.startsWith('Initiating') || l.startsWith('Discovering')) {
-            toolLines.push(l);
-          } else {
-            answerLines.push(l);
-          }
-        });
-        if (toolLines.length > 0) {
-          toolsHtml = `
-            <div class="tool-box" onclick="this.classList.toggle('open')">
-              <div class="tool-header">
-                <span>🔍 AI 도구 호출 및 사고 과정 (${toolLines.length}단계)</span>
-                <span>▼</span>
-              </div>
-              <div class="tool-content">${toolLines.map(t => '• ' + t).join('<br>')}</div>
-            </div>
-          `;
-          cleanText = answerLines.join('\\n').trim();
-        }
-      }
-
-      row.innerHTML = `<div class="bubble">${toolsHtml}${formatMarkdown(cleanText)}</div>`;
+      row.className = 'msg-row user';
+      row.innerHTML = `<div class="bubble">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
+    }
+
+    function createBotStreamMessage() {
+      const box = document.getElementById('chat-box');
+      const row = document.createElement('div');
+      row.className = 'msg-row bot';
+      row.innerHTML = `
+        <div class="bubble">
+          <div class="tool-box" style="display: none;">
+            <div class="tool-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+              <span class="tool-title">🔍 AI 도구 호출 진행 중...</span>
+              <span>▼</span>
+            </div>
+            <div class="tool-content"></div>
+          </div>
+          <div class="answer-content"><span style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</span></div>
+        </div>
+      `;
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+
+      const toolBox = row.querySelector('.tool-box');
+      const toolTitle = row.querySelector('.tool-title');
+      const toolContent = row.querySelector('.tool-content');
+      const answerContent = row.querySelector('.answer-content');
+
+      let toolList = [];
+      let answerText = "";
+
+      return {
+        addTool: function(toolStr) {
+          toolList.push(toolStr);
+          toolBox.style.display = 'block';
+          toolTitle.textContent = `🔍 AI 도구 호출 진행 중 (${toolList.length}단계)`;
+          toolContent.innerHTML = toolList.map(t => '• ' + t.replace(/</g, "&lt;")).join('<br>');
+          box.scrollTop = box.scrollHeight;
+        },
+        appendChunk: function(chunk) {
+          answerText += chunk;
+          answerContent.innerHTML = formatMarkdown(answerText);
+          box.scrollTop = box.scrollHeight;
+        },
+        setText: function(text) {
+          answerText = text;
+          answerContent.innerHTML = formatMarkdown(answerText);
+          box.scrollTop = box.scrollHeight;
+        },
+        finish: function() {
+          if (toolList.length > 0) {
+            toolTitle.textContent = `🔍 AI 도구 호출 완료 (${toolList.length}단계)`;
+          }
+          if (!answerText) {
+            answerContent.innerHTML = "답변 작성을 완료했습니다.";
+          }
+          box.scrollTop = box.scrollHeight;
+        }
+      };
     }
 
     function sendQuick(prompt) {
@@ -972,38 +1010,60 @@ HTML_INDEX = """<!DOCTYPE html>
       const prompt = input.value.trim();
       if (!prompt) return;
 
-      appendMessage('user', prompt);
+      appendUserMessage(prompt);
       input.value = '';
       btn.disabled = true;
 
-      // Loading bubble
-      const box = document.getElementById('chat-box');
-      const loadRow = document.createElement('div');
-      loadRow.className = 'msg-row bot';
-      loadRow.id = 'loading-bubble';
-      loadRow.innerHTML = '<div class="bubble" style="color: var(--text-muted);">🤖 스마트홈 데이터 분석 중...</div>';
-      box.appendChild(loadRow);
-      box.scrollTop = box.scrollHeight;
+      const streamUI = createBotStreamMessage();
+      const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
 
       try {
         const apiUrl = new URL('api/chat', window.location.href).href;
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt, is_direct_llm: prompt.startsWith('ai ') || prompt.startsWith('/llm') })
+          body: JSON.stringify({ prompt: prompt, is_direct_llm: isDirectLLM })
         });
-        const lb = document.getElementById('loading-bubble');
-        if (lb) lb.remove();
-        if (res.ok) {
-          const data = await res.json();
-          appendMessage('bot', data.response || "응답이 비어 있습니다.");
-        } else {
-          appendMessage('bot', `[오류] 서버 응답 오류 HTTP ${res.status} (${apiUrl})`);
+
+        if (!res.ok) {
+          streamUI.setText(`[오류] 서버 응답 코드 HTTP ${res.status}`);
+          btn.disabled = false;
+          return;
         }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\\n');
+          buffer = lines.pop(); // keep last incomplete line
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data:')) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            try {
+              const ev = JSON.parse(jsonStr);
+              if (ev.type === 'tool') {
+                streamUI.addTool(ev.content);
+              } else if (ev.type === 'chunk') {
+                streamUI.appendChunk(ev.content);
+              } else if (ev.type === 'text') {
+                streamUI.setText(ev.content);
+              } else if (ev.type === 'done') {
+                streamUI.finish();
+              }
+            } catch (e) {}
+          }
+        }
+        streamUI.finish();
       } catch (err) {
-        const lb = document.getElementById('loading-bubble');
-        if (lb) lb.remove();
-        appendMessage('bot', `[오류] 통신에 실패했습니다: ${err.message}`);
+        streamUI.setText(`[오류] 실시간 스트림 연결 실패: ${err.message}`);
       } finally {
         btn.disabled = false;
         input.focus();
@@ -1016,7 +1076,7 @@ HTML_INDEX = """<!DOCTYPE html>
 
 
 class AntigravityAPIHandler(BaseHTTPRequestHandler):
-    """HTTP Request Handler for Ingress Dual Web UI, Proxy, and REST API."""
+    """HTTP Request Handler for Ingress Dual Web UI, Real-Time Streaming, and REST API."""
 
     def _set_headers(self, status_code=200, content_type="application/json"):
         self.send_response(status_code)
@@ -1039,7 +1099,6 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
     def _proxy_to_ttyd(self):
         """Proxy HTTP and WebSocket requests to internal ttyd on port 7682."""
-        # Handle WebSocket Upgrade
         if self.headers.get("Upgrade", "").lower() == "websocket":
             try:
                 target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1072,7 +1131,6 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # Handle Standard HTTP Assets
         import urllib.request
         target_url = f"http://127.0.0.1:{TTYD_INTERNAL_PORT}{self.path}"
         try:
@@ -1128,7 +1186,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         self.wfile.write(HTML_INDEX.encode("utf-8"))
 
     def do_POST(self):
-        """Handle POST requests."""
+        """Handle POST requests with Server-Sent Events (SSE) streaming support."""
         clean_path = self.path.split("?")[0].rstrip("/")
 
         # 1. Forward /terminal traffic to ttyd
@@ -1141,6 +1199,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
             return
 
+        # 2. Real-Time Chat Streaming API
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
             body = b""
             content_length = self.headers.get("Content-Length")
@@ -1186,23 +1245,30 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-            conv_id = payload.get("conversation_id") or ""
-            home_summary = payload.get("home_summary") or ""
-            is_direct_llm = payload.get("is_direct_llm", False)
+            is_direct_llm = payload.get("is_direct_llm", False) or prompt.startswith("ai ") or prompt.startswith("/llm")
 
             if not prompt:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Empty prompt", "received_body_len": len(body)}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Empty prompt"}).encode("utf-8"))
                 return
 
-            response_text = handle_agent_chat(prompt, conv_id, home_summary, is_direct_llm)
-            self._set_headers(200)
-            self.wfile.write(
-                json.dumps({
-                    "response": response_text,
-                    "conversation_id": conv_id,
-                }).encode("utf-8")
-            )
+            # Send Server-Sent Events (SSE) Stream Headers
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+            try:
+                for event_str in stream_agent_chat(prompt, is_direct_llm):
+                    self.wfile.write(event_str.encode("utf-8"))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
         elif clean_path.endswith("/api/restart"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"result": "restarted", "status": "online"}).encode("utf-8"))
