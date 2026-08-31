@@ -3,8 +3,10 @@
 HTML_BODY = """
 <header>
     <div class="brand">
+      <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSessionSidebar()" title="대화 목록 사이드바 열기/닫기">☰</button>
       <span>🤖 Antigravity AI</span>
       <span class="brand-badge">Real-time</span>
+      <button class="new-chat-btn-header" onclick="startNewSession()" title="새 대화 시작">＋ 새 대화</button>
     </div>
     <div class="header-right">
       <div class="resource-badge" id="resource-badge" onclick="toggleResourcePanel()" title="클릭하여 상단 실시간 그래프 패널 고정/해제">
@@ -66,44 +68,67 @@ HTML_BODY = """
     </div>
   </div>
 
-  <main>
-    <!-- Chat View -->
-    <section id="chat-view" class="tab-view active">
-      <div class="chat-container" id="chat-box">
-        <div class="hero-card">
-          <h2>Google Antigravity 스마트홈 실시간 어시스턴트</h2>
-          <p>자연어 발화 및 Antigravity AI 딥 브레인이 연동된 실시간 스트리밍 대시보드입니다.</p>
-          <div class="quick-chips">
-            <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
-            <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
-            <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
-            <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
-            <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
-            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</div>
+  <div class="app-layout">
+    <!-- Collapsible Session Sidebar -->
+    <aside id="session-sidebar" class="session-sidebar">
+      <div class="sidebar-top">
+        <button class="new-chat-btn-sidebar" onclick="startNewSession()">＋ 새 대화 시작</button>
+        <button class="sidebar-close-btn" onclick="toggleSessionSidebar()" title="사이드바 닫기">✕</button>
+      </div>
+      <div class="sidebar-section-title">
+        <span>📜 이전 대화 목록</span>
+        <button class="refresh-sessions-btn" onclick="loadSessionsList()" title="목록 새로고침">🔄</button>
+      </div>
+      <div id="session-list" class="session-list">
+        <!-- Dynamically populated session cards -->
+        <div class="session-loading">세션 목록 불러오는 중...</div>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSessionSidebar()"></div>
+
+    <main>
+      <!-- Chat View -->
+      <section id="chat-view" class="tab-view active">
+        <div class="chat-container" id="chat-box">
+          <div id="history-load-more" class="history-load-more" style="display: none;">
+            <button onclick="loadMoreHistory()">⬆️ 이전 대화 더보기</button>
+          </div>
+          <div class="hero-card" id="chat-hero-card">
+            <h2>Google Antigravity 스마트홈 실시간 어시스턴트</h2>
+            <p>자연어 발화 및 Antigravity AI 딥 브레인이 연동된 실시간 스트리밍 대시보드입니다.</p>
+            <div class="quick-chips">
+              <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
+              <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
+              <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
+              <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
+              <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
+              <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</div>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="input-bar-wrap">
-        <div class="mode-bar">
-          <label for="stream-mode">
-            <span>⚙️ 실시간 스트림 엔진:</span>
-          </label>
-          <select id="stream-mode" class="mode-select" onchange="onModeChange(this.value)">
-            <option value="1" selected>🧠 모드 1: AI 딥 브레인 분석 (다차원 공기질 & AI 조언)</option>
-            <option value="2">⚡ 모드 2: 초고속 스마트홈 즉답 (0.05초 즉시 제어 & 대시보드)</option>
-            <option value="3" id="opt-mode-3">🚀 모드 3: Google Antigravity Headless CLI (실시간 NDJSON)</option>
-          </select>
+        <div class="input-bar-wrap">
+          <div class="mode-bar">
+            <label for="stream-mode">
+              <span>⚙️ 실시간 스트림 엔진:</span>
+            </label>
+            <select id="stream-mode" class="mode-select" onchange="onModeChange(this.value)">
+              <option value="1" selected>🧠 모드 1: AI 딥 브레인 분석 (다차원 공기질 & AI 조언)</option>
+              <option value="2">⚡ 모드 2: 초고속 스마트홈 즉답 (0.05초 즉시 제어 & 대시보드)</option>
+              <option value="3" id="opt-mode-3">🚀 모드 3: Google Antigravity Headless CLI (실시간 NDJSON)</option>
+            </select>
+          </div>
+          <div class="input-bar">
+            <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" oninput="updateSendBtn()" onkeydown="handleKey(event)"></textarea>
+            <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
+          </div>
         </div>
-        <div class="input-bar">
-          <textarea id="user-input" placeholder="무엇이든 물어보거나 지시하세요... (Shift+Enter 줄바꿈)" rows="1" oninput="updateSendBtn()" onkeydown="handleKey(event)"></textarea>
-          <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Terminal View -->
-    <section id="terminal-view" class="tab-view">
-      <iframe id="terminal-iframe" src="./terminal/"></iframe>
-    </section>
-  </main>
+      <!-- Terminal View -->
+      <section id="terminal-view" class="tab-view">
+        <iframe id="terminal-iframe" src="./terminal/"></iframe>
+      </section>
+    </main>
+  </div>
 """.strip()

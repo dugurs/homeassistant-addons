@@ -466,6 +466,244 @@ function getCurrentTimeStr() {
       localStorage.setItem('antigravity_stream_mode', val);
     }
 
+    // Session Management & History Restore
+    let currentConversationId = localStorage.getItem('antigravity_active_conv_id') || '';
+    let loadedHistorySteps = [];
+    let currentHistoryRenderIndex = 0;
+    const HISTORY_CHUNK_SIZE = 15;
+
+    function toggleSessionSidebar() {
+      const sidebar = document.getElementById('session-sidebar');
+      const overlay = document.getElementById('sidebar-overlay');
+      if (window.innerWidth <= 768) {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('open');
+      } else {
+        sidebar.classList.toggle('collapsed');
+      }
+    }
+
+    async function loadSessionsList() {
+      const listEl = document.getElementById('session-list');
+      if (!listEl) return;
+      try {
+        const apiUrl = new URL('api/sessions', window.location.href).href;
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const sessions = data.sessions || [];
+
+        if (sessions.length === 0) {
+          listEl.innerHTML = "<div class='session-loading'>저장된 대화가 없습니다.</div>";
+          return;
+        }
+
+        listEl.innerHTML = '';
+        sessions.forEach(sess => {
+          const card = document.createElement('div');
+          card.className = `session-card ${sess.conversation_id === currentConversationId ? 'active' : ''}`;
+          card.setAttribute('data-cid', sess.conversation_id);
+          card.onclick = () => openSession(sess.conversation_id);
+
+          const timeStr = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          card.innerHTML = `
+            <div class="session-card-title">${sess.title || '새 대화'}</div>
+            <div class="session-card-meta">
+              <span>💬 ${sess.turns}턴</span>
+              <span>${timeStr}</span>
+            </div>
+          `;
+          listEl.appendChild(card);
+        });
+      } catch (err) {
+        listEl.innerHTML = `<div class='session-loading' style='color: var(--accent-red);'>목록 로드 실패: ${err.message}</div>`;
+      }
+    }
+
+    function startNewSession() {
+      currentConversationId = '';
+      localStorage.removeItem('antigravity_active_conv_id');
+      const box = document.getElementById('chat-box');
+      box.innerHTML = `
+        <div class="hero-card" id="chat-hero-card">
+          <h2>Google Antigravity 스마트홈 실시간 어시스턴트</h2>
+          <p>자연어 발화 및 Antigravity AI 딥 브레인이 연동된 실시간 스트리밍 대시보드입니다.</p>
+          <div class="quick-chips">
+            <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
+            <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
+            <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
+            <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
+            <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
+            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</div>
+          </div>
+        </div>
+      `;
+      document.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
+      if (window.innerWidth <= 768) {
+        toggleSessionSidebar();
+      }
+      document.getElementById('user-input').focus();
+    }
+
+    async function openSession(cid) {
+      if (!cid) return;
+      currentConversationId = cid;
+      localStorage.setItem('antigravity_active_conv_id', cid);
+      
+      document.querySelectorAll('.session-card').forEach(c => {
+        c.classList.toggle('active', c.getAttribute('data-cid') === cid);
+      });
+
+      if (window.innerWidth <= 768) {
+        toggleSessionSidebar();
+      }
+
+      const box = document.getElementById('chat-box');
+      box.innerHTML = "<div class='session-loading'>대화 히스토리 불러오는 중...</div>";
+
+      try {
+        const apiUrl = new URL(`api/sessions/${cid}`, window.location.href).href;
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        loadedHistorySteps = data.history || [];
+
+        box.innerHTML = '';
+        if (loadedHistorySteps.length === 0) {
+          box.innerHTML = "<div class='session-loading'>대화 내용이 비어 있습니다.</div>";
+          return;
+        }
+
+        // Render latest chunk with pagination if long
+        currentHistoryRenderIndex = Math.max(0, loadedHistorySteps.length - HISTORY_CHUNK_SIZE);
+        
+        if (currentHistoryRenderIndex > 0) {
+          const loadMoreDiv = document.createElement('div');
+          loadMoreDiv.id = 'history-load-more';
+          loadMoreDiv.className = 'history-load-more';
+          loadMoreDiv.innerHTML = `<button onclick="loadMoreHistory()">⬆️ 이전 대화 ${currentHistoryRenderIndex}개 더보기</button>`;
+          box.appendChild(loadMoreDiv);
+        }
+
+        renderHistorySteps(currentHistoryRenderIndex, loadedHistorySteps.length);
+        box.scrollTop = box.scrollHeight;
+      } catch (err) {
+        box.innerHTML = `<div class='session-loading' style='color: var(--accent-red);'>히스토리 로드 실패: ${err.message}</div>`;
+      }
+    }
+
+    function renderHistorySteps(fromIdx, toIdx, prepend = false) {
+      const box = document.getElementById('chat-box');
+      const loadMoreEl = document.getElementById('history-load-more');
+      const fragment = document.createDocumentFragment();
+
+      const slice = loadedHistorySteps.slice(fromIdx, toIdx);
+      
+      // Group interactions (USER_INPUT -> PLANNER_RESPONSE)
+      let i = 0;
+      while (i < slice.length) {
+        const step = slice[i];
+        if (step.type === 'USER_INPUT') {
+          const row = document.createElement('div');
+          row.className = 'msg-row user';
+          const timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
+          row.innerHTML = `
+            <div class="bubble-wrap">
+              <div class="bubble">${(step.content || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+              <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
+            </div>
+          `;
+          fragment.appendChild(row);
+          i++;
+        } else if (step.type === 'PLANNER_RESPONSE') {
+          // Check if there are tool logs or thinking
+          let thinking = step.thinking || '';
+          let toolCalls = step.tool_calls || [];
+          let content = step.content || '';
+          let timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
+
+          // Lookahead for next steps if they are response parts
+          while (i + 1 < slice.length && slice[i+1].type === 'PLANNER_RESPONSE') {
+            i++;
+            if (slice[i].thinking) thinking += '\\n' + slice[i].thinking;
+            if (slice[i].tool_calls) toolCalls = toolCalls.concat(slice[i].tool_calls);
+            if (slice[i].content) content += slice[i].content;
+          }
+
+          const botRow = document.createElement('div');
+          botRow.className = 'msg-row bot';
+          
+          let toolSectionHtml = '';
+          if (thinking || toolCalls.length > 0) {
+            let logLines = '';
+            if (thinking) {
+              logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${thinking.replace(/</g, "&lt;")}</span></div>`;
+            }
+            toolCalls.forEach(tc => {
+              const tname = tc.name || 'tool';
+              const act = tc.toolAction || tc.toolSummary || JSON.stringify(tc.args || {});
+              logLines += `<div class="term-line"><span class="term-text tool">🔧 [도구] ${tname}: ${act.replace(/</g, "&lt;")}</span></div>`;
+            });
+
+            toolSectionHtml = `
+              <details class="term-box" style="display: block; margin-bottom: 8px;">
+                <summary class="term-header" style="cursor: pointer; list-style: none;">
+                  <div class="term-dots"><span></span><span></span><span></span></div>
+                  <span class="term-title">⚙️ 도구 실행 및 추론 로그 (${toolCalls.length}건)</span>
+                  <span class="term-badge done">클릭하여 펼치기/접기</span>
+                </summary>
+                <div class="term-body" style="max-height: 180px; overflow-y: auto;">
+                  ${logLines}
+                </div>
+              </details>
+            `;
+          }
+
+          botRow.innerHTML = `
+            <div class="bubble-wrap">
+              <div class="bubble">
+                ${toolSectionHtml}
+                <div class="answer-content" data-raw="${(content || '').replace(/"/g, '&quot;')}">${formatMarkdown(content || '작업이 완료되었습니다.')}</div>
+              </div>
+              <div class="msg-meta bot">
+                <span class="meta-time">${timeStr}</span>
+                <span class="meta-latency">⚡ 복원됨</span>
+              </div>
+            </div>
+          `;
+          fragment.appendChild(botRow);
+          i++;
+        } else {
+          i++;
+        }
+      }
+
+      if (prepend && loadMoreEl) {
+        box.insertBefore(fragment, loadMoreEl.nextSibling);
+      } else {
+        box.appendChild(fragment);
+      }
+    }
+
+    function loadMoreHistory() {
+      const loadMoreEl = document.getElementById('history-load-more');
+      if (currentHistoryRenderIndex <= 0) {
+        if (loadMoreEl) loadMoreEl.style.display = 'none';
+        return;
+      }
+      const newFrom = Math.max(0, currentHistoryRenderIndex - HISTORY_CHUNK_SIZE);
+      const newTo = currentHistoryRenderIndex;
+      currentHistoryRenderIndex = newFrom;
+
+      renderHistorySteps(newFrom, newTo, true);
+
+      if (currentHistoryRenderIndex <= 0 && loadMoreEl) {
+        loadMoreEl.style.display = 'none';
+      } else if (loadMoreEl) {
+        loadMoreEl.querySelector('button').textContent = `⬆️ 이전 대화 ${currentHistoryRenderIndex}개 더보기`;
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', async () => {
       const savedMode = localStorage.getItem('antigravity_stream_mode') || '1';
       const sel = document.getElementById('stream-mode');
@@ -473,8 +711,9 @@ function getCurrentTimeStr() {
       const sessBadge = document.getElementById('session-tokens');
       if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
 
-      // Initial Status Poll
+      // Initial Status Poll & Load Session History List
       await pollStatus();
+      await loadSessionsList();
 
       // Start 3-second Periodic Status Polling
       setInterval(pollStatus, 3000);
@@ -505,8 +744,6 @@ function getCurrentTimeStr() {
       }
     }
 
-    let currentConversationId = localStorage.getItem('antigravity_active_conv_id') || '';
-
     async function sendMessage() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
@@ -514,6 +751,9 @@ function getCurrentTimeStr() {
       const streamMode = modeSel ? parseInt(modeSel.value) : 1;
       const prompt = input.value.trim();
       if (!prompt) return;
+
+      const hero = document.getElementById('chat-hero-card');
+      if (hero) hero.remove();
 
       appendUserMessage(prompt);
       input.value = '';
@@ -567,6 +807,7 @@ function getCurrentTimeStr() {
               if (ev.type === 'session_init') {
                 currentConversationId = ev.content;
                 localStorage.setItem('antigravity_active_conv_id', currentConversationId);
+                loadSessionsList();
               } else if (ev.type === 'live_log' || ev.type === 'tool') {
                 streamUI.addLiveLog(ev.content);
               } else if (ev.type === 'chunk') {
@@ -575,6 +816,7 @@ function getCurrentTimeStr() {
                 streamUI.setText(ev.content);
               } else if (ev.type === 'done') {
                 streamUI.finish(ev.tokens);
+                loadSessionsList();
               }
             } catch (e) {}
           }

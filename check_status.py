@@ -165,56 +165,42 @@ def add_issue_comment(issue_num, comment_body):
     return None
 
 
-def register_session_issue():
-    title = "[기능] conversation_id 기반 대화 지속(Resume) 및 세션 관리 체계 구축"
+def register_issue3_content():
+    title = "[기능] 웹 UI 세션 관리 사이드바(대화 목록 히스토리 복원 및 신규 대화) 구현"
     body = """### 🎯 기능 요청 개요
-- **목적**: 매 질문마다 새 대화가 생성되는 문제를 해결하고, 모드 전환(모드 1, 2, 3) 시에도 이전 대화 맥락과 도구 실행 내역을 완벽히 기억하여 이어가는 통합 세션 관리 체계 구축
-- **통신 규격 원칙**: 검증된 `1fd3b01` 통신 규격(`core/streamer.py`)을 안전하게 준수하며, `docs/COMMUNICATION_SPEC.md`에 정의된 공식 인터페이스 활용
-- **핵심 아키텍처 원칙**:
-  1. 모드 1, 2의 대화 기록 로직은 `core/session_manager.py` 모듈로 분리하여 독립 관리
-  2. 모드 1, 2에서도 모드 3과 동일한 규격(Thinking + Tool Calls + Final Response)으로 `brain/<conversation_id>/transcript.jsonl`에 기록하여 모드 3 전환 시 맥락 100% 동기화
-
----
-
-### 📚 공식 문서 근거 (Official Reference)
-- **Google Antigravity CLI Reference**:
-  - URL: `https://antigravity.google/docs/cli/reference#sessions`
-  - 세션 지속 명령: `agy -p "<prompt>" --resume <conversation-id>`
-  - 세션 데이터 저장소: `<appDataDir>/brain/<conversation-id>/` 디렉토리에 대화 기록(transcript.jsonl) 영구 보존
+- **목적**: 이전 이슈(#2)에서 구축된 세션 관리 API(GET /api/sessions, GET /api/sessions/<id>)를 활용하여 웹 UI에 세션 사이드바를 추가하고, 과거 대화 복원 및 새 대화 시작 기능 제공
+- **핵심 최적화 정책**:
+  1. 긴 대화 히스토리 로딩 최적화: 최근 15개 턴 우선 렌더링 + `[⬆️ 이전 대화 더보기]` 상단 페이지네이션 적용
+  2. 도구 실행(`tool_calls`) 및 추론(`thinking`) 로그는 과거 대화 복원 시 기본적으로 접힘(`details/summary`) 처리하여 렌더링 부하 최소화
+  3. `[+ 새 대화]` 및 `[☰ 토글]` 버튼으로 모바일/데스크톱 반응형 지원
 
 ---
 
 ### 📋 단계별 우선순위 작업 리스트 (Prioritized Tasks)
 
-#### 🔹 [우선순위 1단계] 세션 관리 전용 모듈(`core/session_manager.py`) 신설
-- [x] `brain/<conversation_id>/` 디렉토리 자동 생성 및 경로 관리
-- [x] 모드 1, 2 대화 시 모드 3 표준 규격(`USER_INPUT`, `PLANNER_RESPONSE`, `thinking`, `tool_calls`) 생성 및 `transcript.jsonl` 비동기 기록 함수 구현
-- [x] 세션 목록 및 히스토리 파싱/조회 함수 구현
-- [x] **1단계 독립 단위 테스트 통과 (PASS)**
+#### 🔹 [우선순위 1단계] 좌측 세션 사이드바 UI 레이아웃 및 스타일 추가
+- [x] `core/ui/templates.py`에 접이식(Collapsible) 사이드바 HTML 마크업 추가
+- [x] `core/ui/styles.py`에 모바일/데스크톱 반응형 사이드바 스타일 정의
+- [x] **1단계 레이아웃 및 마크업 검증 완료 (PASS)**
 
-#### 🔹 [우선순위 2단계] 모드 1 & 모드 2 세션 로거 연동
-- [x] 모드 2(초고속 스마트홈): 기기 제어(`ha_call_service`) 및 조회 도구 호출 내역을 표준 `tool_calls`로 세션에 기록
-- [x] 모드 1(AI 딥 브레인): 센서 수집(`ha_get_state`) 및 환경 분석 추론 과정을 세션에 기록
-- [x] 다중 스레드 안전성 확보를 위한 `_TRANSCRIPT_LOCK` 적용
-- [x] **2단계 독립 단위 테스트 통과 (PASS)**
+#### 🔹 [우선순위 2단계] 세션 목록 로드 및 렌더링 JS 연동
+- [x] 페이지 로드 시 `GET /api/sessions` 호출하여 세션 리스트 생성 (`loadSessionsList`)
+- [x] 대화 발생 시 사이드바 최신 세션 실시간 갱신
+- [x] **2단계 목록 로딩 및 실시간 갱신 검증 완료 (PASS)**
 
-#### 🔹 [우선순위 3단계] 모드 3(Antigravity CLI) 세션 지속(`--resume`) 연동
-- [x] 신규 대화 시 `session_init` SSE 이벤트를 통해 클라이언트에 `conversation_id` 전달
-- [x] 클라이언트가 전달한 `conversation_id`를 기반으로 `agy -p "<prompt>" --resume <conversation-id>` 실행 연동
-- [x] `antigravity_api.py`와 `streamer.py` 간 `conversation_id` 안전 전달 체계 구축
-- [x] **3단계 독립 단위 테스트 통과 (PASS)**
+#### 🔹 [우선순위 3단계] 과거 대화 히스토리 화면 복원 및 대화 이어가기
+- [x] 세션 클릭 시 `GET /api/sessions/<id>` 호출하여 이전 질문, 도구 로그, 답변을 채팅창에 복원 (`openSession`)
+- [x] 대화가 길 때 상단 페이징 처리 (`loadMoreHistory`) 및 도구 로그 접힘 처리
+- [x] 해당 세션 ID를 활성화하여 대화 이어가기 연동
+- [x] **3단계 히스토리 복원 및 페이징 검증 완료 (PASS)**
 
-#### 🔹 [우선순위 4단계] 세션 관리 REST API & 통신 규격 문서화
-- [x] `GET /api/sessions`: 이전 대화 세션 목록 조회 엔드포인트 구현
-- [x] `GET /api/sessions/<id>`: 특정 세션의 대화 내역 조회 엔드포인트 구현
-- [x] `docs/COMMUNICATION_SPEC.md`에 세션 인터페이스(SSE 이벤트 및 REST API) 규격 명문화
-- [x] **4단계 독립 단위 테스트 통과 (PASS)**
-
-#### 🔹 [우선순위 5단계] 실운영 배포 및 파일 동기화
-- [ ] Samba 파일 동기화 (`python sync_files.py`)
-- [ ] Gitea Git Push (`python sync_files.py --push`)
+#### 🔹 [우선순위 4단계] [새 대화] 버튼 및 최종 E2E 점검
+- [x] `[+ 새 대화]` 클릭 시 대화창 초기화 및 신규 세션 ID 발급 준비 (`startNewSession`)
+- [x] Node.js JS Syntax 검증 (100% VALID PASS)
+- [x] Samba 파일 동기화 (`python sync_files.py`)
+- [ ] Gitea Git 푸시 (`python sync_files.py --push`)
 """
-    return update_issue(2, title=title, body=body)
+    return update_issue(3, title=title, body=body)
 
 
 if __name__ == "__main__":
@@ -223,8 +209,10 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "--issues":
         state = sys.argv[2] if len(sys.argv) > 2 else "open"
         list_issues(state)
+    elif len(sys.argv) > 1 and sys.argv[1] == "--register-issue-3":
+        register_issue3_content()
     elif len(sys.argv) > 1 and sys.argv[1] == "--register-session-issue":
-        register_session_issue()
+        register_issue3_content()
     elif len(sys.argv) > 1 and sys.argv[1] == "--create-issue":
         title = sys.argv[2] if len(sys.argv) > 2 else "테스트 이슈"
         body = sys.argv[3] if len(sys.argv) > 3 else ""
