@@ -56,6 +56,24 @@ CSS_STYLES = """
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    /* Modern Slim Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.25);
+      border-radius: 4px;
+      transition: background 0.2s ease;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.45);
+    }
+    
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg-base);
@@ -781,11 +799,15 @@ CSS_STYLES = """
       padding: 8px 12px;
       max-height: 180px;
       overflow-y: auto;
+      overflow-x: hidden;
       font-family: 'Fira Code', Consolas, Monaco, monospace;
       font-size: 0.72rem;
       line-height: 1.4;
       color: #c9d1d9;
       background: #0d1117;
+      word-break: break-all;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
     }
     .term-body::-webkit-scrollbar {
       width: 5px;
@@ -799,13 +821,20 @@ CSS_STYLES = """
       gap: 6px;
       margin-bottom: 2px;
       word-break: break-all;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
     }
     .term-time {
       color: #6e7681;
       flex-shrink: 0;
       font-size: 0.68rem;
     }
-    .term-text { flex: 1; }
+    .term-text {
+      flex: 1;
+      word-break: break-all;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
     .term-text.init { color: #58a6ff; font-weight: 600; }
     .term-text.think { color: #d2a8ff; font-style: italic; }
     .term-text.tool { color: #79c0ff; }

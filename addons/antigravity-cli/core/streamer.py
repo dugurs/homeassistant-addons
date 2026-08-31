@@ -360,6 +360,13 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
                     has_emitted_chunk = True
                     yield make_sse("chunk", ev_data)
             elif ev_type == "result":
+                if ev_data.get("status") == "ERROR" and not has_emitted_chunk:
+                    err_msg = ev_data.get("error", "알 수 없는 오류가 발생했습니다.")
+                    yield make_sse("live_log", f"⚠️ [Antigravity CLI 오류] {err_msg}")
+                    yield make_sse("chunk", f"> ⚠️ **[Antigravity CLI 오류]**\n\n{err_msg}\n")
+                    full_text_parts.append(err_msg)
+                    has_emitted_chunk = True
+
                 resp_text = ev_data.get("response", "")
                 already_streamed = any(resp_text[:40] in p for p in full_text_parts) if full_text_parts else False
                 if resp_text and not already_streamed:
@@ -550,5 +557,58 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
             flag_tests.append({"label": label, "err": str(e)})
 
     result["flag_tests"] = flag_tests
+
+    # Production-faithful full run: same 'script -q -e -c' pseudo-tty wrapper as
+    # stream_headless_cli, but with a generous timeout so we capture the real
+    # terminal 'result' event's raw JSON schema (diagnostic only).
+    prod_prompt = "In one sentence, what is a git rebase?"
+    script_cmd = (
+        f"{agy_bin} -p {json.dumps(prod_prompt)}"
+        f" --output-format stream-json"
+        f" --dangerously-skip-permissions"
+    )
+    prod_cmd = ["script", "-q", "-e", "-c", script_cmd, "/dev/null"]
+    prod_result = {"cmd": prod_cmd, "lines": [], "elapsed_sec": None}
+    t_p = time.time()
+    try:
+        pp = subprocess.Popen(
+            prod_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            env=env,
+        )
+        collected = []
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            line = pp.stdout.readline()
+            if not line:
+                if pp.poll() is not None:
+                    break
+                continue
+            l = line.rstrip("\r\n").strip()
+            if not l:
+                continue
+            collected.append(l)
+            try:
+                d = json.loads(l)
+                if d.get("event", d.get("type", "")) == "result":
+                    break
+            except Exception:
+                pass
+        try:
+            pp.kill()
+        except Exception:
+            pass
+        prod_result["lines"] = collected[-30:]
+        prod_result["line_count"] = len(collected)
+    except Exception as e:
+        prod_result["err"] = str(e)
+    prod_result["elapsed_sec"] = round(time.time() - t_p, 2)
+    result["production_faithful_run"] = prod_result
+
     return result
 

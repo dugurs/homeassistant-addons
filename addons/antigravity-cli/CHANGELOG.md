@@ -1,3 +1,13 @@
+## 1.2.0-beta.1
+
+### 수정 (Fix)
+- 모드 3(Antigravity CLI) 실행 중 `agy`가 API 할당량 초과 등으로 `result.status: "ERROR"`를 반환할 때, 답변 없이 조용히 "완료" 처리되던 문제 수정 — 이제 오류 메시지가 채팅창에 그대로 표시됨
+
+### 추가 (Feature)
+- 웹 UI 헤더와 `GET /api/status`(`ui_build_version`)에 빌드 번호 표시 — 배포/리빌드가 실제로 반영됐는지 눈으로 바로 확인 가능
+
+---
+
 ## 1.1.0
 
 ### 추가 (Feature)

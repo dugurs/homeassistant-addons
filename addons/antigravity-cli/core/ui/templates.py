@@ -1,10 +1,13 @@
 """Web UI HTML Templates."""
 
-HTML_BODY = """
+from core.ui import UI_BUILD_VERSION
+
+HTML_BODY = f"""
 <header>
     <div class="brand">
       <span>🤖 Antigravity AI</span>
       <span class="brand-badge">Real-time</span>
+      <span class="brand-badge" id="build-badge" title="배포 빌드 번호 (업데이트 반영 확인용)" style="opacity:0.55; font-size:0.68em;">build {UI_BUILD_VERSION}</span>
     </div>
     <div class="header-right">
       <div class="resource-badge" id="resource-badge" onclick="toggleResourcePanel()" title="클릭하여 상단 실시간 그래프 패널 고정/해제">
