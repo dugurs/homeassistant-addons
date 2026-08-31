@@ -505,6 +505,8 @@ function getCurrentTimeStr() {
       }
     }
 
+    let currentConversationId = localStorage.getItem('antigravity_active_conv_id') || '';
+
     async function sendMessage() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
@@ -529,6 +531,7 @@ function getCurrentTimeStr() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: prompt,
+            conversation_id: currentConversationId,
             is_direct_llm: isDirectLLM,
             stream_mode: streamMode,
             client_width: window.innerWidth,
@@ -561,7 +564,10 @@ function getCurrentTimeStr() {
             const jsonStr = trimmed.slice(5).trim();
             try {
               const ev = JSON.parse(jsonStr);
-              if (ev.type === 'live_log' || ev.type === 'tool') {
+              if (ev.type === 'session_init') {
+                currentConversationId = ev.content;
+                localStorage.setItem('antigravity_active_conv_id', currentConversationId);
+              } else if (ev.type === 'live_log' || ev.type === 'tool') {
                 streamUI.addLiveLog(ev.content);
               } else if (ev.type === 'chunk') {
                 streamUI.appendChunk(ev.content);
