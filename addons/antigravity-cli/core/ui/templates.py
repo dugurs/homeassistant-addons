@@ -6,6 +6,7 @@ HTML_BODY = """
       <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSessionSidebar()" title="대화 목록 사이드바 열기/닫기">☰</button>
       <span>🤖 Antigravity AI</span>
       <span class="brand-badge">Real-time</span>
+      <span class="build-badge" title="Web UI 빌드 번호">{UI_BUILD_VERSION}</span>
       <button class="new-chat-btn-header" onclick="startNewSession()" title="새 대화 시작">＋ 새 대화</button>
     </div>
     <div class="header-right">

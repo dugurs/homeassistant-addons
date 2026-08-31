@@ -1,7 +1,34 @@
 """Web UI Frontend Client JavaScript Application."""
 
 JS_SCRIPTS = """
-function getCurrentTimeStr() {
+    function switchTab(tabId) {
+      const tabBtns = document.querySelectorAll('.tab-btn');
+      tabBtns.forEach(btn => {
+        const isActive = (tabId === 'chat' && btn.textContent.includes('Chat')) ||
+                         (tabId === 'terminal' && btn.textContent.includes('Terminal'));
+        btn.classList.toggle('active', isActive);
+      });
+      const chatView = document.getElementById('chat-view');
+      const termView = document.getElementById('terminal-view');
+      if (tabId === 'chat') {
+        if (chatView) chatView.classList.add('active');
+        if (termView) termView.classList.remove('active');
+      } else if (tabId === 'terminal') {
+        if (chatView) chatView.classList.remove('active');
+        if (termView) termView.classList.add('active');
+      }
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('antigravity_theme', next);
+      const btn = document.getElementById('theme-toggle-btn');
+      if (btn) btn.textContent = next === 'dark' ? '🌙 다크' : '☀️ 라이트';
+    }
+
+    function getCurrentTimeStr() {
       const now = new Date();
       return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
@@ -483,6 +510,19 @@ function getCurrentTimeStr() {
       }
     }
 
+    function decodeUnicodeString(str) {
+      if (!str) return '';
+      try {
+        if (/\\\\u[0-9a-fA-F]{4}|\\u[0-9a-fA-F]{4}/.test(str)) {
+          return str.replace(/\\\\u([0-9a-fA-F]{4})|\\u([0-9a-fA-F]{4})/g, function(match, p1, p2) {
+            const hex = p1 || p2;
+            return String.fromCharCode(parseInt(hex, 16));
+          });
+        }
+      } catch (e) {}
+      return str;
+    }
+
     async function loadSessionsList() {
       const listEl = document.getElementById('session-list');
       if (!listEl) return;
@@ -506,8 +546,9 @@ function getCurrentTimeStr() {
           card.onclick = () => openSession(sess.conversation_id);
 
           const timeStr = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          const displayTitle = decodeUnicodeString(sess.title || '새 대화');
           card.innerHTML = `
-            <div class="session-card-title">${sess.title || '새 대화'}</div>
+            <div class="session-card-title">${displayTitle}</div>
             <div class="session-card-meta">
               <span>💬 ${sess.turns}턴</span>
               <span>${timeStr}</span>
@@ -592,6 +633,18 @@ function getCurrentTimeStr() {
       }
     }
 
+    function cleanUserPromptString(str) {
+      if (!str) return '';
+      let text = str;
+      const m = text.match(/<USER_REQUEST>([\\s\\S]*?)<\\/USER_REQUEST>/i);
+      if (m && m[1]) {
+        text = m[1].trim();
+      } else {
+        text = text.replace(/<[A-Z_]+>[\\s\\S]*?<\\/[A-Z_]+>/gi, '').trim();
+      }
+      return decodeUnicodeString(text);
+    }
+
     function renderHistorySteps(fromIdx, toIdx, prepend = false) {
       const box = document.getElementById('chat-box');
       const loadMoreEl = document.getElementById('history-load-more');
@@ -599,7 +652,7 @@ function getCurrentTimeStr() {
 
       const slice = loadedHistorySteps.slice(fromIdx, toIdx);
       
-      // Group interactions (USER_INPUT -> PLANNER_RESPONSE)
+      // Group interactions (USER_INPUT -> aggregated PLANNER_RESPONSES)
       let i = 0;
       while (i < slice.length) {
         const step = slice[i];
@@ -607,49 +660,63 @@ function getCurrentTimeStr() {
           const row = document.createElement('div');
           row.className = 'msg-row user';
           const timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
+          const cleanText = cleanUserPromptString(step.content || '');
           row.innerHTML = `
             <div class="bubble-wrap">
-              <div class="bubble">${(step.content || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+              <div class="bubble">${cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
               <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
             </div>
           `;
           fragment.appendChild(row);
           i++;
-        } else if (step.type === 'PLANNER_RESPONSE') {
-          // Check if there are tool logs or thinking
-          let thinking = step.thinking || '';
-          let toolCalls = step.tool_calls || [];
-          let content = step.content || '';
-          let timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
+        } else {
+          // Gather ALL contiguous response/tool/planner steps until the next USER_INPUT
+          let thinkingList = [];
+          let toolCalls = [];
+          let finalContent = '';
+          let lastTimeStr = '';
 
-          // Lookahead for next steps if they are response parts
-          while (i + 1 < slice.length && slice[i+1].type === 'PLANNER_RESPONSE') {
+          while (i < slice.length && slice[i].type !== 'USER_INPUT') {
+            const cur = slice[i];
+            if (cur.created_at) {
+              lastTimeStr = new Date(cur.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+            }
+            if (cur.thinking && typeof cur.thinking === 'string' && cur.thinking.trim()) {
+              thinkingList.push(cur.thinking.trim());
+            }
+            if (cur.tool_calls && Array.isArray(cur.tool_calls)) {
+              toolCalls = toolCalls.concat(cur.tool_calls);
+            }
+            if (cur.content && typeof cur.content === 'string' && cur.content.trim()) {
+              finalContent = cur.content.trim();
+            }
             i++;
-            if (slice[i].thinking) thinking += '\\n' + slice[i].thinking;
-            if (slice[i].tool_calls) toolCalls = toolCalls.concat(slice[i].tool_calls);
-            if (slice[i].content) content += slice[i].content;
           }
 
           const botRow = document.createElement('div');
           botRow.className = 'msg-row bot';
           
           let toolSectionHtml = '';
-          if (thinking || toolCalls.length > 0) {
+          if (thinkingList.length > 0 || toolCalls.length > 0) {
             let logLines = '';
-            if (thinking) {
-              logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${thinking.replace(/</g, "&lt;")}</span></div>`;
-            }
+            thinkingList.forEach(th => {
+              logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${th.replace(/</g, "&lt;")}</span></div>`;
+            });
             toolCalls.forEach(tc => {
               const tname = tc.name || 'tool';
-              const act = tc.toolAction || tc.toolSummary || JSON.stringify(tc.args || {});
+              let act = '';
+              if (tc.toolAction) act = tc.toolAction;
+              else if (tc.toolSummary) act = tc.toolSummary;
+              else if (tc.args) act = JSON.stringify(tc.args);
               logLines += `<div class="term-line"><span class="term-text tool">🔧 [도구] ${tname}: ${act.replace(/</g, "&lt;")}</span></div>`;
             });
 
+            const totalCount = toolCalls.length + thinkingList.length;
             toolSectionHtml = `
               <details class="term-box" style="display: block; margin-bottom: 8px;">
                 <summary class="term-header" style="cursor: pointer; list-style: none;">
                   <div class="term-dots"><span></span><span></span><span></span></div>
-                  <span class="term-title">⚙️ 도구 실행 및 추론 로그 (${toolCalls.length}건)</span>
+                  <span class="term-title">⚙️ 도구 실행 및 추론 로그 (${totalCount}건)</span>
                   <span class="term-badge done">클릭하여 펼치기/접기</span>
                 </summary>
                 <div class="term-body" style="max-height: 180px; overflow-y: auto;">
@@ -659,22 +726,21 @@ function getCurrentTimeStr() {
             `;
           }
 
+          const displayAnswer = finalContent || (toolCalls.length > 0 ? '작업이 완료되었습니다.' : '답변이 없습니다.');
+
           botRow.innerHTML = `
             <div class="bubble-wrap">
               <div class="bubble">
                 ${toolSectionHtml}
-                <div class="answer-content" data-raw="${(content || '').replace(/"/g, '&quot;')}">${formatMarkdown(content || '작업이 완료되었습니다.')}</div>
+                <div class="answer-content" data-raw="${displayAnswer.replace(/"/g, '&quot;')}">${formatMarkdown(displayAnswer)}</div>
               </div>
               <div class="msg-meta bot">
-                <span class="meta-time">${timeStr}</span>
+                <span class="meta-time">${lastTimeStr}</span>
                 <span class="meta-latency">⚡ 복원됨</span>
               </div>
             </div>
           `;
           fragment.appendChild(botRow);
-          i++;
-        } else {
-          i++;
         }
       }
 
@@ -686,16 +752,25 @@ function getCurrentTimeStr() {
     }
 
     function loadMoreHistory() {
+      const box = document.getElementById('chat-box');
       const loadMoreEl = document.getElementById('history-load-more');
       if (currentHistoryRenderIndex <= 0) {
         if (loadMoreEl) loadMoreEl.style.display = 'none';
         return;
       }
+      
+      const oldScrollHeight = box.scrollHeight;
+      const oldScrollTop = box.scrollTop;
+
       const newFrom = Math.max(0, currentHistoryRenderIndex - HISTORY_CHUNK_SIZE);
       const newTo = currentHistoryRenderIndex;
       currentHistoryRenderIndex = newFrom;
 
       renderHistorySteps(newFrom, newTo, true);
+
+      // Restore relative scroll position
+      const newScrollHeight = box.scrollHeight;
+      box.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
 
       if (currentHistoryRenderIndex <= 0 && loadMoreEl) {
         loadMoreEl.style.display = 'none';

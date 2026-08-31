@@ -60,8 +60,34 @@ def get_next_step_index(file_path: str) -> int:
     return count + 1
 
 
+def format_cli_user_input(prompt: str) -> str:
+    """Format user prompt in Google Antigravity CLI's standard metadata envelope."""
+    now_iso = get_current_iso_time()
+    return (
+        f"<USER_REQUEST>\n{prompt.strip()}\n</USER_REQUEST>\n"
+        f"<ADDITIONAL_METADATA>\nThe current local time is: {now_iso}.\n</ADDITIONAL_METADATA>"
+    )
+
+
+def clean_user_prompt(text: str) -> str:
+    """Extract pure user question and strip system XML envelopes/metadata."""
+    if not text:
+        return ""
+    # 1. Extract content inside <USER_REQUEST>...</USER_REQUEST> if present
+    import re
+    m = re.search(r"<USER_REQUEST>(.*?)</USER_REQUEST>", text, flags=re.DOTALL | re.IGNORECASE)
+    if m and m.group(1).strip():
+        text = m.group(1).strip()
+    else:
+        # Strip all XML style tags like <ADDITIONAL_METADATA>...</ADDITIONAL_METADATA>
+        text = re.sub(r"<[A-Z_]+>.*?</[A-Z_]+>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    
+    # 2. Decode raw unicode escapes
+    return decode_unicode_text(text)
+
+
 def record_user_input(conversation_id: str, prompt: str) -> int:
-    """Record user's input step (USER_INPUT)."""
+    """Record user's input step (USER_INPUT) formatted in standard CLI envelope."""
     if not conversation_id or not prompt:
         return 0
     fpath = get_session_transcript_path(conversation_id)
@@ -70,7 +96,7 @@ def record_user_input(conversation_id: str, prompt: str) -> int:
         "step_index": step_idx,
         "type": "USER_INPUT",
         "source": "USER_EXPLICIT",
-        "content": prompt,
+        "content": format_cli_user_input(prompt),
         "created_at": get_current_iso_time(),
     }
     _write_line_to_transcript(fpath, entry)
@@ -169,6 +195,19 @@ def append_session_interaction_async(
     t.start()
 
 
+def decode_unicode_text(text: str) -> str:
+    """Safely decode raw unicode escapes (e.g. '\\uc624\\ub298' -> '오늘')."""
+    if not text:
+        return ""
+    try:
+        if "\\u" in text:
+            # Decode escaped unicode sequences into proper utf-8 characters
+            text = text.encode("utf-8").decode("unicode_escape")
+    except Exception:
+        pass
+    return text.strip()
+
+
 def get_session_history(conversation_id: str) -> list:
     """Parse and return full chronological history of a session."""
     fpath = get_session_transcript_path(conversation_id)
@@ -181,7 +220,14 @@ def get_session_history(conversation_id: str) -> list:
                 l = line.strip()
                 if l:
                     try:
-                        history.append(json.loads(l))
+                        item = json.loads(l)
+                        if item.get("type") == "USER_INPUT" and "content" in item:
+                            item["content"] = clean_user_prompt(item["content"])
+                        elif "content" in item and isinstance(item["content"], str):
+                            item["content"] = decode_unicode_text(item["content"])
+                        if "thinking" in item and isinstance(item["thinking"], str):
+                            item["thinking"] = decode_unicode_text(item["thinking"])
+                        history.append(item)
                     except Exception:
                         pass
     except Exception as e:
@@ -215,15 +261,16 @@ def list_all_sessions(limit: int = 50) -> list:
                         for l in lines:
                             item = json.loads(l)
                             if not first_prompt and item.get("type") == "USER_INPUT":
-                                first_prompt = item.get("content", "")
+                                first_prompt = clean_user_prompt(item.get("content", ""))
                             if item.get("content"):
-                                last_message = item.get("content", "")
+                                last_message = clean_user_prompt(item.get("content", ""))
                 except Exception:
                     pass
 
+            clean_title = first_prompt[:50] if first_prompt else f"Session {cid[:8]}"
             sessions.append({
                 "conversation_id": cid,
-                "title": first_prompt[:50] if first_prompt else f"Session {cid[:8]}",
+                "title": clean_title,
                 "turns": turn_count,
                 "last_message": last_message[:80],
                 "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),

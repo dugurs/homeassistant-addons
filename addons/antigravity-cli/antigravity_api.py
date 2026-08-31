@@ -121,10 +121,12 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
             resources = get_resource_usage()
             from core.system_info import check_agy_hardware_support
+            from core.ui import UI_BUILD_VERSION
             hw_info = check_agy_hardware_support()
             res = {
                 "status": "online",
                 "version": "1.3.0",
+                "ui_build_version": UI_BUILD_VERSION,
                 "uptime": int(time.time() - SERVER_START_TIME),
                 "active_sessions": 1,
                 "memory_usage": resources["memory_usage"],

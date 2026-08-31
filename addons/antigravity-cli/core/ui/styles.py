@@ -56,6 +56,24 @@ CSS_STYLES = """
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    /* Modern Slim Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.25);
+      border-radius: 4px;
+      transition: background 0.2s ease;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.45);
+    }
+
     body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg-base);
@@ -96,6 +114,16 @@ CSS_STYLES = """
     .sidebar-toggle-btn:hover {
       border-color: var(--accent-blue);
       color: var(--accent-blue);
+    }
+    .build-badge {
+      background: rgba(148, 163, 184, 0.1);
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      font-family: 'Fira Code', monospace;
+      padding: 2px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      font-weight: 500;
     }
     .new-chat-btn-header {
       background: var(--badge-bg);
@@ -750,6 +778,82 @@ CSS_STYLES = """
       0%, 100% { opacity: 0.95; transform: scale(1); }
       50% { opacity: 0.65; transform: scale(0.99); }
     }
+
+    /* Terminal Log & Tool Steps Box */
+    .term-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .term-header {
+      background: var(--table-header);
+      padding: 6px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 0.74rem;
+      user-select: none;
+    }
+    .term-dots {
+      display: flex;
+      gap: 4px;
+    }
+    .term-dots span, .term-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(148, 163, 184, 0.4);
+    }
+    .term-title {
+      font-weight: 600;
+      color: var(--text-bold);
+      flex: 1;
+      margin-left: 8px;
+    }
+    .term-badge {
+      font-size: 0.68rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--badge-bg);
+      color: var(--accent-blue);
+    }
+    .term-body {
+      padding: 8px 12px;
+      max-height: 220px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.74rem;
+      line-height: 1.45;
+    }
+    .term-line {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 4px;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .term-time {
+      color: var(--text-muted);
+      opacity: 0.7;
+      flex-shrink: 0;
+    }
+    .term-text {
+      color: var(--text-main);
+      flex: 1;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .term-text.think { color: #c084fc; }
+    .term-text.tool { color: var(--accent-cyan); }
+    .term-text.file { color: var(--accent-yellow); }
+    .term-text.cmd { color: var(--accent-blue); }
+    .term-text.init { color: var(--accent-green); }
+    .term-text.done { color: var(--accent-green); }
+    .term-text.error { color: var(--accent-red); }
 
     /* Message Metadata Footer */
     .msg-meta {

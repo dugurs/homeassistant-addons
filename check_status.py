@@ -90,7 +90,8 @@ def check():
 
 
 GITEA_URL = "http://192.168.0.26:3000"
-GITEA_TOKEN = "3661f3216d24db475ad10c43fb2f8a02fdd9d8cd"
+# antigravity-agent application token
+GITEA_TOKEN = "dacde9ceac8ed1b872314805f4fc7f4b8a0b2d5e"
 GITEA_REPO_OWNER = "lee"
 GITEA_REPO_NAME = "homeassistant-addons"
 
@@ -165,6 +166,54 @@ def add_issue_comment(issue_num, comment_body):
     return None
 
 
+def generate_user_token(username, password, token_name="antigravity-agent-token"):
+    import base64
+    url = f"{GITEA_URL}/api/v1/users/{username}/tokens"
+    auth_str = f"{username}:{password}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+    headers = {
+        "Authorization": f"Basic {b64_auth}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "name": token_name,
+        "scopes": ["all"],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print(f"[OK] Token generated successfully for '{username}'!")
+            print(f"     Token Name: {data.get('name')}")
+            print(f"     Token SHA1: {data.get('sha1')}")
+            return data.get("sha1")
+    except urllib.error.HTTPError as e:
+        print(f"[ERR] Failed to generate token (HTTP {e.code}): {e.read().decode('utf-8')}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"[ERR] Error generating token: {e}", file=sys.stderr)
+        return None
+
+
+def add_collaborator(username="antigravity-agent", permission="write"):
+    ADMIN_TOKEN = "3661f3216d24db475ad10c43fb2f8a02fdd9d8cd"
+    headers = {
+        "Authorization": f"token {ADMIN_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {"permission": permission}
+    body = json.dumps(payload).encode("utf-8")
+    for repo in ["homeassistant-addons", "ha-antigravity-cli"]:
+        url = f"{GITEA_URL}/api/v1/repos/{GITEA_REPO_OWNER}/{repo}/collaborators/{username}"
+        req = urllib.request.Request(url, data=body, headers=headers, method="PUT")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                print(f"[OK] User '{username}' added as collaborator to {repo} (HTTP {resp.status})!")
+        except Exception as e:
+            print(f"[ERR] Failed to add collaborator to {repo}: {e}")
+
+
 def register_issue3_content():
     title = "[기능] 웹 UI 세션 관리 사이드바(대화 목록 히스토리 복원 및 신규 대화) 구현"
     body = """### 🎯 기능 요청 개요
@@ -204,7 +253,18 @@ def register_issue3_content():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--create-spec":
+    if len(sys.argv) > 1 and sys.argv[1] == "--add-collab":
+        add_collaborator()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--generate-token":
+        username = sys.argv[2] if len(sys.argv) > 2 else "antigravity-agent"
+        password = sys.argv[3] if len(sys.argv) > 3 else "AntigravityAgent2026!"
+        generate_user_token(username, password)
+    elif len(sys.argv) > 1 and sys.argv[1] == "--create-user":
+        username = sys.argv[2] if len(sys.argv) > 2 else "antigravity-agent"
+        email = sys.argv[3] if len(sys.argv) > 3 else "antigravity-agent@homeassistant.local"
+        password = sys.argv[4] if len(sys.argv) > 4 else "AntigravityAgent2026!"
+        create_gitea_user(username, email, password)
+    elif len(sys.argv) > 1 and sys.argv[1] == "--create-spec":
         generate_spec_doc()
     elif len(sys.argv) > 1 and sys.argv[1] == "--issues":
         state = sys.argv[2] if len(sys.argv) > 2 else "open"

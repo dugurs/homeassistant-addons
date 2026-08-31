@@ -3,9 +3,12 @@ Combines modular styles, HTML templates, JavaScript client app, and markdown par
 """
 
 from core.markdown_parser import MARKDOWN_JS_MODULE
+from core.ui import UI_BUILD_VERSION
 from core.ui.styles import CSS_STYLES
 from core.ui.templates import HTML_BODY
 from core.ui.scripts import JS_SCRIPTS
+
+RENDERED_HTML_BODY = HTML_BODY.replace("{UI_BUILD_VERSION}", UI_BUILD_VERSION)
 
 HTML_INDEX = f"""<!DOCTYPE html>
 <html lang="ko" data-theme="dark">
@@ -21,7 +24,7 @@ HTML_INDEX = f"""<!DOCTYPE html>
   </style>
 </head>
 <body>
-{HTML_BODY}
+{RENDERED_HTML_BODY}
   <script>
 {MARKDOWN_JS_MODULE}
 
