@@ -22,3 +22,10 @@ node_modules/
 
 # Antigravity/Gemini specific (if needed)
 .gemini/
+
+# Claude Code MCP config (contains HA long-lived token)
+.mcp.json
+
+# Git credential files (should never live inside the repo)
+.git-credentials
+*.token
