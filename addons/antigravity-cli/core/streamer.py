@@ -45,6 +45,10 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: 
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     input_tokens = estimate_tokens(actual_prompt) + 120  # prompt + system context
 
+    if not conversation_id:
+        conversation_id = generate_conversation_id()
+    yield make_sse("session_init", conversation_id)
+
     yield make_sse("tool", f"🧠 [모드 1: AI 딥 브레인] 환경 분석 세션 초기화: '{actual_prompt}'")
     time.sleep(0.04)
     yield make_sse("tool", "🔍 [1단계] Home Assistant 다차원 환경 센서(CO2, TVOC, PM2.5, 조도) 수집")
@@ -85,6 +89,10 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id:
     t_start = time.time()
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     input_tokens = estimate_tokens(actual_prompt) + 40
+
+    if not conversation_id:
+        conversation_id = generate_conversation_id()
+    yield make_sse("session_init", conversation_id)
 
     yield make_sse("tool", "⚡ [모드 2: 초고속 스마트홈] 실시간 기기 및 엔티티 상태 고속 탐색")
     time.sleep(0.03)
@@ -129,6 +137,12 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
         return
 
     resume_this_session = bool(conversation_id) and session_exists(conversation_id)
+    if resume_this_session:
+        # We already know the id (echoed back from a previous session_init for
+        # this same conversation) — announce it again immediately. For a new
+        # conversation we don't know agy's id yet; that's announced once agy's
+        # own "init" event reports it (see read_stdout() below).
+        yield make_sse("session_init", conversation_id)
 
     env = os.environ.copy()
     env["HOME"] = "/root"
@@ -158,7 +172,9 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
     # Use 'script -q -c' to run agy in a pseudo-TTY.
     # This forces the Go runtime to flush output line-by-line instead of buffering.
     # Without this, agy buffers 4KB before writing anything to a pipe.
-    resume_arg = f" --resume {conversation_id}" if resume_this_session else ""
+    # `--conversation <id>` is the documented flag for resuming a specific
+    # prior conversation by id (per `agy --help`); there is no `--resume` flag.
+    resume_arg = f" --conversation {conversation_id}" if resume_this_session else ""
     script_cmd = (
         f"{agy_bin} -p {json.dumps(actual_prompt)}"
         f"{resume_arg}"
@@ -197,11 +213,15 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
 
     def tail_transcript(conv_id):
         """Monitor conversation transcript on disk in real time and emit thoughts/tool actions."""
+        # transcript.jsonl is the canonical, cumulative log (grows across every
+        # --conversation-resumed turn); the chunks/transcript_full snapshot only ever holds
+        # the conversation's first turn, so it's tried last as a fallback for
+        # the brief window before transcript.jsonl exists on a new session.
         candidate_paths = [
-            f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
             f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/transcript.jsonl",
-            f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
             f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/transcript.jsonl",
+            f"/root/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
+            f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
         ]
         
         file_obj = None
@@ -321,6 +341,12 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
                 if evt == "init":
                     tools = data.get("init", {}).get("tools", [])
                     cid = data.get("conversation_id", "")
+                    if cid and not resume_this_session:
+                        # New conversation: agy just assigned its own id (we
+                        # never sent --conversation, so it can't be echoing
+                        # one back to us). This is the id future turns must
+                        # pass as conversation_id to actually resume with agy.
+                        event_queue.put(("session_init", cid))
                     event_queue.put(("live_log", f"🚀 [세션 시작] Antigravity CLI v2.0 ({len(tools)}개 도구 로드됨)"))
                     if cid:
                         t_tail = threading.Thread(target=tail_transcript, args=(cid,), daemon=True)
@@ -362,7 +388,9 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
     while True:
         try:
             ev_type, ev_data = event_queue.get(timeout=0.08)
-            if ev_type == "live_log":
+            if ev_type == "session_init":
+                yield make_sse("session_init", ev_data)
+            elif ev_type == "live_log":
                 yield make_sse("live_log", ev_data)
             elif ev_type == "chunk":
                 full_text_parts.append(ev_data)
@@ -378,8 +406,14 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
                     has_emitted_chunk = True
                     yield make_sse("chunk", ev_data)
             elif ev_type == "result":
-                if ev_data.get("status") == "ERROR" and not has_emitted_chunk:
-                    err_msg = ev_data.get("error", "알 수 없는 오류가 발생했습니다.")
+                # Documented terminal statuses: SUCCESS, ERROR, CANCELED,
+                # INTERRUPTED, INVALID, WAITING, RUNNING. Anything but SUCCESS
+                # (or a missing status, for older/other agy builds) means no
+                # real answer is coming — surface it instead of completing
+                # silently with a blank bubble.
+                status = ev_data.get("status")
+                if status and status != "SUCCESS" and not has_emitted_chunk:
+                    err_msg = ev_data.get("error") or f"작업이 정상적으로 완료되지 않았습니다 (status: {status})."
                     yield make_sse("live_log", f"⚠️ [Antigravity CLI 오류] {err_msg}")
                     yield make_sse("chunk", f"> ⚠️ **[Antigravity CLI 오류]**\n\n{err_msg}\n")
                     full_text_parts.append(err_msg)
@@ -445,12 +479,16 @@ def stream_agent_chat(
     is_mobile: bool = False,
     conversation_id: str = "",
 ):
-    """Router for the 3 Clean Streaming Modes with unified session management."""
-    if not conversation_id:
-        conversation_id = generate_conversation_id()
+    """Router for the 3 Clean Streaming Modes with unified session management.
 
-    yield make_sse("session_init", conversation_id)
-
+    conversation_id assignment differs by mode: Modes 1/2 have no external
+    process with its own identity, so an id is generated up front (see
+    stream_ai_deep_brain / stream_fast_dashboard). Mode 3 delegates to `agy`,
+    which assigns its own conversation id — pre-generating one here and
+    telling agy to --conversation it would target an id agy has never seen,
+    so resume silently no-ops and a *second*, disconnected id gets created.
+    stream_headless_cli() handles id assignment itself for that reason.
+    """
     if stream_mode == 3:
         for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
@@ -534,7 +572,7 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
 
     try:
         help_proc = subprocess.run([agy_bin, "--help"], capture_output=True, text=True, timeout=3)
-        result["agy_help"] = (help_proc.stdout.strip() or help_proc.stderr.strip())[:1000]
+        result["agy_help"] = (help_proc.stdout.strip() or help_proc.stderr.strip())[:6000]
     except Exception as ex:
         result["agy_help"] = f"Error: {ex}"
 

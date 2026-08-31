@@ -155,6 +155,28 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(test_res, ensure_ascii=False).encode("utf-8"))
             return
 
+        # 3b. Debug: list a conversation's brain directory tree (diagnostic only)
+        if clean_path.endswith("/api/debug_brain_dir"):
+            import os as _os
+            from core.session_manager import get_brain_base_dir
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            import urllib.parse as _up
+            cid = _up.parse_qs(qs).get("cid", [""])[0]
+            base = get_brain_base_dir()
+            target = _os.path.join(base, cid) if cid else base
+            tree = []
+            if _os.path.exists(target):
+                for root, dirs, files in _os.walk(target):
+                    for f in files:
+                        fp = _os.path.join(root, f)
+                        try:
+                            tree.append({"path": fp, "size": _os.path.getsize(fp), "mtime": _os.path.getmtime(fp)})
+                        except Exception:
+                            pass
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"base": base, "target": target, "exists": _os.path.exists(target), "tree": tree}, ensure_ascii=False).encode("utf-8"))
+            return
+
         # 4. PTY-based agy test (uses script -q -c to force TTY mode)
         if clean_path.endswith("/api/test_pty"):
             import subprocess as _sp

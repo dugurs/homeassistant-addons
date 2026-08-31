@@ -2,13 +2,18 @@
 Provides unified, decoupled session storage matching Antigravity Mode 3 transcript.jsonl specification.
 Allows Modes 1, 2, and 3 to share a single conversation context seamlessly.
 
-Mode 3 (Antigravity CLI / agy) writes its own transcript under
-``.system_generated/logs/chunks/transcript_full/00000000.jsonl`` — this module
-never writes there, only reads it. Modes 1/2 have no such external writer, so
-this module owns a separate file, ``.system_generated/logs/transcript.jsonl``,
-for their synthetic session log. Both files share the same step schema
-(step_index/type/thinking/tool_calls/content), so listing/history code reads
-whichever one exists for a given conversation_id.
+``.system_generated/logs/transcript.jsonl`` is the one canonical, cumulative
+log for a conversation, appended to across every turn regardless of mode —
+Modes 1/2 write here directly (see record_mode1_interaction /
+record_mode2_interaction), and Mode 3 (`agy`) writes here natively on its own
+whenever it runs for this conversation_id (including across --resume calls).
+
+``.system_generated/logs/chunks/transcript_full/00000000.jsonl`` is a
+*separate*, agy-internal snapshot that only reflects the conversation's first
+turn — verified empirically it does not grow across --resume calls, so it
+must never be treated as the source of truth for history/listing. It is kept
+here only as a last-resort fallback for old conversation directories that
+happen to have it but not the canonical file.
 """
 
 import datetime
@@ -34,16 +39,21 @@ def generate_conversation_id() -> str:
 
 
 def get_session_transcript_path(conversation_id: str) -> str:
-    """Path to the Modes-1/2 synthetic transcript.jsonl for a conversation.
+    """Path to the canonical, cumulative transcript.jsonl for a conversation.
 
-    Mode 3 does not write here — see get_mode3_transcript_path().
+    Written to directly by Modes 1/2 (this module) and natively by Mode 3
+    (`agy`) — see the module docstring.
     """
     base = get_brain_base_dir()
     return os.path.join(base, conversation_id, ".system_generated", "logs", "transcript.jsonl")
 
 
-def get_mode3_transcript_path(conversation_id: str) -> str:
-    """Path to agy's own live transcript for a Mode 3 conversation (read-only)."""
+def get_mode3_first_turn_snapshot_path(conversation_id: str) -> str:
+    """Path to agy's first-turn-only chunk snapshot (fallback read source only).
+
+    Does not grow across --resume calls — never use this as the primary
+    source for a conversation's history/listing.
+    """
     base = get_brain_base_dir()
     return os.path.join(
         base, conversation_id, ".system_generated", "logs", "chunks", "transcript_full", "00000000.jsonl"
@@ -51,18 +61,19 @@ def get_mode3_transcript_path(conversation_id: str) -> str:
 
 
 def get_readable_transcript_path(conversation_id: str) -> str | None:
-    """Return whichever transcript file actually exists for this conversation.
+    """Return the transcript file to read for this conversation.
 
-    Prefers agy's native Mode 3 transcript (more complete: raw thinking/tool
-    steps as agy recorded them) and falls back to the Modes-1/2 synthetic log.
-    Returns None if the conversation has no transcript yet.
+    Prefers the canonical, cumulative transcript.jsonl. Falls back to agy's
+    first-turn snapshot only for old conversation directories that predate
+    it (or the rare case where agy hasn't flushed the canonical file yet but
+    has produced the first-turn snapshot). Returns None if neither exists.
     """
-    mode3_path = get_mode3_transcript_path(conversation_id)
-    if os.path.exists(mode3_path):
-        return mode3_path
-    modes12_path = get_session_transcript_path(conversation_id)
-    if os.path.exists(modes12_path):
-        return modes12_path
+    canonical_path = get_session_transcript_path(conversation_id)
+    if os.path.exists(canonical_path):
+        return canonical_path
+    fallback_path = get_mode3_first_turn_snapshot_path(conversation_id)
+    if os.path.exists(fallback_path):
+        return fallback_path
     return None
 
 

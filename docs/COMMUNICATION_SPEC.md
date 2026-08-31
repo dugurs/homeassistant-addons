@@ -1,8 +1,9 @@
-# Antigravity CLI 통신 규격 정의서 (Session-Aware Baseline v2.2)
+# Antigravity CLI 통신 규격 정의서 (Session-Aware Baseline v2.3)
 
 > **상태: 영구 관리 (LOCKED)**
 > **기준 커밋: `1fd3b01` 기반 세션 지속(Resume) 규격 재구현 (`feature/session-resume-v2`)**
 > **절대 규칙:** 본 규격 및 통신 인터페이스는 공식 문서 및 사용자 사전 승인 없이 임의 수정할 수 없습니다.
+> **공식 문서**: https://antigravity.google/docs/cli/conversations , https://antigravity.google/docs/cli/headless (2026-08-31 확인). `agy --help`(설치된 바이너리, v1.1.22)가 flag 이름의 최종 근거.
 
 ---
 
@@ -56,7 +57,7 @@ Home Assistant 애드온(`addons/antigravity-cli`)의 백엔드와 프론트엔�
    {"type": "done", "tokens": {"input": 48, "output": 120, "total": 168, "speed_tps": 450.0, "elapsed": 0.05}}
    ```
 
-`result.status == "ERROR"`(예: `agy` API 할당량 초과)인 경우에도 스트림은 정상 종료되지만, `chunk` 이벤트로 에러 메시지가 먼저 전달된 뒤 `done`이 옵니다. 절대 빈 답변으로 `done`만 오지 않습니다.
+`result.status`가 `"SUCCESS"`가 아닌 경우(공식 문서 기준 가능한 값: `SUCCESS`, `ERROR`, `CANCELED`, `INTERRUPTED`, `INVALID`, `WAITING`, `RUNNING` — 예: `agy` API 할당량 초과 시 `ERROR`)에도 스트림은 정상 종료되지만, `chunk` 이벤트로 에러 메시지가 먼저 전달된 뒤 `done`이 옵니다. 절대 빈 답변으로 `done`만 오지 않습니다.
 
 ---
 
@@ -100,20 +101,26 @@ Home Assistant 애드온(`addons/antigravity-cli`)의 백엔드와 프론트엔�
 
 `core/session_manager.py` / `core/streamer.py`를 다시 손댈 때는 아래 두 가지가 **Mode 3 실시간 통신을 깨뜨린 실제 원인**이었으므로 반드시 지킬 것:
 
-1. **세션 재개(`--resume`) 시 기존 transcript 파일을 처음부터 tailing하지 말 것.**
+1. **재개 시 넘길 flag는 `--conversation <id>`다. `--resume`이라는 flag는 존재하지 않는다.**
+   `agy --help`(v1.1.22)에 나열된 관련 flag는 `--conversation`("Resume a previous conversation by ID")과 `--continue`/`-c`("Continue the most recent conversation") 뿐이다. 과거 코드와 Gitea 이슈 #2 원문이 전부 `--resume <conversation-id>`라고 적어놨던 건 잘못된 전제였다(공식 문서 어디에도 없음). 실측상 `--resume`을 보내도 예외 없이 같은 id로 이어지는 것처럼 보였지만, 이는 문서화되지 않은 우연한 동작에 의존하는 것이라 위험하다 — 반드시 `--conversation`을 써야 한다.
+2. **세션 재개 시 기존 transcript 파일을 처음부터 tailing하지 말 것.**
    `stream_headless_cli()`의 `tail_transcript()`는 재개 세션일 경우 파일을 연 직후 `file_obj.seek(0, os.SEEK_END)`로 끝으로 이동한 뒤 tailing을 시작해야 한다. 그렇지 않으면 이전 대화의 모든 단계가 "방금 발생한 것"처럼 실시간 스트림에 재방송되어 화면이 과거 로그로 도배된다.
-2. **한글 디코딩은 실제 `\uXXXX` 리터럴만 정규식으로 치환할 것.**
+3. **한글 디코딩은 실제 `\uXXXX` 리터럴만 정규식으로 치환할 것.**
    `session_manager.decode_unicode_text()`가 문자열 전체를 `.encode("utf-8").decode("unicode_escape")` 하면, 이미 정상인 UTF-8 한글까지 깨진다. 반드시 `\uXXXX` 패턴만 매칭하는 정규식(`re.sub(r"\\u[0-9a-fA-F]{4}", ...)`)으로 국소 치환해야 한다.
-3. **Mode 3(`agy`)의 실제 라이브 transcript 경로와 Modes 1/2 세션 로그 경로는 다르다.**
-   `agy`는 자체적으로 `.system_generated/logs/chunks/transcript_full/00000000.jsonl`에 기록하고, Modes 1/2는 `session_manager`가 `.system_generated/logs/transcript.jsonl`에 별도로 기록한다. `get_readable_transcript_path()`가 두 경로를 순서대로 확인해 세션 목록/히스토리 조회가 두 모드 모두에서 동작하도록 한다.
-4. **`agy`의 `result.status == "ERROR"`를 무시하지 말 것.**
-   `result.response`가 비어 있어도 실패로 간주하지 않고 "완료"로 처리하면 안 된다. `result.error` 메시지를 반드시 `chunk`/`live_log`로 스트리밍해 사용자에게 보여준다 (예: API 할당량 초과).
+4. **`transcript.jsonl`(`.system_generated/logs/transcript.jsonl`)이 유일한 정본(cumulative) 로그다.**
+   Modes 1/2는 `session_manager`가 직접 이 파일에 기록하고, Mode 3(`agy`)도 재개되는 모든 턴에 걸쳐 이 파일에 누적 기록한다(실측 확인). 반면 `.system_generated/logs/chunks/transcript_full/00000000.jsonl`은 **agy의 자체 스냅샷으로, 대화의 첫 번째 턴 내용만 담고 이후 재개 턴에서는 갱신되지 않는다** — 세션 목록/히스토리 조회의 주 소스로 쓰면 안 되고, `transcript.jsonl`이 아직 없는 극초반 순간의 폴백으로만 사용한다. `get_readable_transcript_path()`가 이 우선순위를 지킨다.
+   (미확인 사항: `transcript.jsonl`이 한 턴 "안에서" 생각/도구 단계별로 점진적으로 append되는지, 아니면 턴 종료 시 한 번에 flush되는지는 할당량 문제로 아직 실측 못함. 후자라면 `tail_transcript()`의 재개 턴 실시간 내레이션이 약간 늦게 몰아서 나올 수 있음 — 최종 답변 스트리밍 자체는 `agy` stdout을 직접 파싱하므로 영향 없음.)
+5. **`agy`의 `result.status`가 `"SUCCESS"`가 아니면 무시하지 말 것.**
+   `result.response`가 비어 있어도 실패로 간주하지 않고 "완료"로 처리하면 안 된다. 공식 문서 기준 `status`는 `SUCCESS/ERROR/CANCELED/INTERRUPTED/INVALID/WAITING/RUNNING` 중 하나이며, `SUCCESS`가 아닌 모든 경우(그리고 `error` 필드가 없는 경우까지 포함해) `chunk`/`live_log`로 스트리밍해 사용자에게 보여준다.
+6. **클라이언트가 conversation_id를 자체 생성해서 agy에게 넘기지 말 것.**
+   Mode 3의 conversation_id는 **agy 자신이 발급**한다 (`init` 이벤트의 `conversation_id` 필드). 새 대화의 경우 `session_init` SSE는 agy의 `init` 이벤트를 받은 뒤에 그 id로 발급해야 한다 — 미리 자체 생성한 id를 `session_init`으로 먼저 알리고 그걸 `--conversation`에 넘기면, agy는 모르는 id이므로 조용히 새 대화를 또 시작하고 서로 다른 두 개의 분리된 id가 생긴다. Modes 1/2는 agy 프로세스가 없으므로 자체 생성한 id를 그대로 써도 무방하다(`stream_ai_deep_brain`/`stream_fast_dashboard` 참고).
 
 ---
 
 ## 4. 변경 이력
 | 날짜 | 버전 | 변경 내용 | 사유 및 근거 |
 |:---|:---|:---|:---|
+| 2026-08-31 | v2.3 | 공식 문서(`/docs/cli/conversations`, `/docs/cli/headless`) 및 `agy --help` 대조 확인. `--resume`→`--conversation`으로 flag 수정(존재하지 않는 flag였음), conversation_id를 agy의 `init` 이벤트에서 받아오도록 수정(클라이언트 자체 생성 id를 쓰면 agy가 인식 못 해 재개가 조용히 실패), `result.status` 체크를 `"ERROR"` 단일값에서 `!= "SUCCESS"` 전체로 확장 | Gitea 이슈 #2 원문이 애초에 `--resume`을 문서화된 flag로 잘못 전제하고 있었고, "클라이언트가 전달한 conversation_id"를 쓰라고 되어 있어 원인이 됨 — 라이브 2턴 테스트로 재발견 |
 | 2026-08-31 | v2.2 | `feature/session-resume-v2`에서 재구현. 재개 세션 seek-to-end, 정규식 기반 유니코드 디코딩, Mode 3/Modes 1·2 이원 transcript 경로 지원, `result.status=="ERROR"` 처리 추가 | `feature/integrate-react-webui`(v2.1)가 위 항목들의 부재로 Mode 3 실시간 통신을 깨뜨려 롤백 후 재작업 |
 | 2026-08-31 | v2.1 (폐기) | 세션 관리 REST API(`GET /api/sessions`, `GET /api/sessions/<id>`) 및 `session_init` SSE 이벤트 추가 — Mode 3 실시간 통신 손상으로 병합되지 않고 폐기됨 | 대화 지속(Resume) 및 다중 모드 통합 맥락 지원 (Gitea Issue #2) |
 | 2026-08-30 | v2.0 | Mode 1, 2, 3 스트리밍 규격 정립 및 동결 | 검증 커밋 `1fd3b01` 기준 규격 동결 |
