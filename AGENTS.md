@@ -9,7 +9,10 @@
   1. **공식 문서 사전 검증 (Official Docs Verification)**: 모든 아키텍처 설계, CLI/API 연동, 버그 수정 시 단편적 추측을 엄격히 금지하고, 반드시 최신 공식 문서(Antigravity CLI 공식 문서 `https://antigravity.google/docs/cli/reference`, Home Assistant 개발자 문서, MCP 공식 규격 등)를 웹 검색 및 레퍼런스로 대조·검증하여 기술적 사실 관계를 입증한다.
   2. **사전 승인 의무 (Approval Gate)**: 검증된 공식 문서 근거와 함께 **(1) 정확한 원인 분석**과 **(2) 구체적인 개선 방향 및 조치 계획**을 사용자에게 먼저 상세히 브리핑하고, **사용자의 명시적인 승인(Approval)을 받은 후**에만 파일 수정을 진행한다.
   3. **중간 진행 상황 및 단계별 보고 의무 (Iterative Step-by-Step Progress Reporting)**: 작업 도중 중간중간 (1) 어떤 작업을 진행했고, (2) 그 결과가 어떠하며, (3) 다음 작업은 어떤 것을 진행할지 명확히 브리핑하며 단계별로 작업을 수행한다.
-  4. **E2E 실측 데이터 완전 검증 (E2E Stream Verification)**: 수정 후에는 단순 실행 여부가 아닌, 실제 터미널/스트림 패킷 원문 및 로그를 끝까지 추적·검증한 후 결과를 보고한다.
+- **AGY 스트리밍 통신 규격 절대 수정 금지 규칙 (Strict AGY Communication Lock)**:
+  1. **현재 규격 동결 (Frozen Spec)**: `addons/antigravity-cli/core/streamer.py` 및 관련 AGY 통신/스트리밍 규격은 현재 검증된 `1fd3b01` 버전을 기준으로 **영구 동결**하며, 사용자의 명시적인 명령이 있기 전까지는 절대 수정하지 않는다.
+  2. **통신 옵션 추가 시 사전 검증 및 전/후 비교 의무**: 새로운 통신 옵션이나 파라미터가 필요한 경우, 임의로 코드를 수정하지 않고 **(1) 변경 전 규격**, **(2) 변경 후 규격**, **(3) 변경 필요 사유 및 공식 문서 근거**를 명확히 대조하여 사용자에게 사전 보고하고 승인을 득한다.
+  3. **규격 문서 별도 관리**: 모든 통신 인터페이스 규격은 `docs/COMMUNICATION_SPEC.md`에 별도로 명문화하여 버전별로 관리한다.
 - **파일 동기화 및 Gitea 푸시 분리 규칙 (Samba Sync & Gitea Push Gate)**: 
   1. **Samba 파일 동기화 & 애드온 Rebuild**: 수정된 코드의 신속한 HA 환경 적용을 위해 `python sync_files.py` (삼바 파일 복사) 및 애드온 재빌드는 자동으로 실행한다.
   2. **작업 완료 보고 선행 및 Gitea Git Push 선택 승인 의무 (Completion Report Prior to Gitea Push Gate)**: 작업이 완료되면 반드시 **(1) 어떤 수정이 이루어졌고 어떤 E2E 검증을 마쳤는지 작업 완료 보고를 사용자에게 먼저 상세히 완결된 형태로 출력**한 후, **(2) 그 다음에 사용자가 원할 때 Gitea 원격 저장소 동기화 여부를 선택할 수 있도록 버튼(`ask_question`)으로 질의하여 승인된 경우에만 실행**(`python sync_files.py --push`)한다. 절대 작업 완료 보고를 생략하거나 질문부터 먼저 던지지 않는다.

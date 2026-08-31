@@ -14,6 +14,14 @@ from core.ha_engine import (
 )
 
 
+from core.session_manager import (
+    generate_conversation_id,
+    record_mode1_interaction,
+    record_mode2_interaction,
+    get_session_transcript_path,
+)
+
+
 def estimate_tokens(text: str) -> int:
     """Calculate realistic token count for multilingual / Korean + English markdown."""
     if not text:
@@ -33,7 +41,7 @@ def make_sse(event_type: str, content: str = "", tokens: dict = None) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def stream_ai_deep_brain(prompt: str, is_mobile: bool = False):
+def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
     """Mode 1: AI Deep Brain Multi-Dimensional Environmental Analysis & Living Advice Streamer."""
     t_start = time.time()
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
@@ -55,6 +63,11 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False):
 
     yield make_sse("text", full_text)
 
+    # Record to session manager asynchronously
+    if conversation_id:
+        sensor_cnt = len(states) if states else 0
+        record_mode1_interaction(conversation_id, actual_prompt, full_text, sensor_cnt)
+
     elapsed = time.time() - t_start
     output_tokens = estimate_tokens(full_text)
     total_tokens = input_tokens + output_tokens
@@ -70,7 +83,7 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False):
     yield make_sse("done", tokens=tokens_meta)
 
 
-def stream_fast_dashboard(prompt: str, is_mobile: bool = False):
+def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
     """Mode 2: Ultra-Fast Smart Home Native Dispatcher (0.05s) + Step-by-Step Tool Visibility."""
     t_start = time.time()
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
@@ -81,6 +94,10 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False):
 
     full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
     yield make_sse("text", full_text)
+
+    # Record to session manager asynchronously
+    if conversation_id:
+        record_mode2_interaction(conversation_id, actual_prompt, full_text)
 
     elapsed = time.time() - t_start
     output_tokens = estimate_tokens(full_text)
@@ -100,7 +117,7 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False):
 from core.system_info import check_agy_hardware_support
 
 
-def stream_headless_cli(prompt: str, is_mobile: bool = False):
+def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
     """Mode 3: Google Antigravity Headless CLI Real-Time NDJSON Streamer (0-latency)."""
     import subprocess
     t_start = time.time()
@@ -111,16 +128,16 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
 
     if not hw_info.get("supported", False) or not os.path.exists(agy_bin):
         yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [모드 1: AI 딥 브레인]으로 자동 전환합니다.")
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
         return
 
-    cmd = [
-        agy_bin,
-        "-p", actual_prompt,
-        "--output-format", "stream-json",
-        "--dangerously-skip-permissions",
-    ]
+    # Check if session exists to use --resume
+    resume_flag = []
+    if conversation_id:
+        tpath = get_session_transcript_path(conversation_id)
+        if os.path.exists(tpath):
+            resume_flag = ["--resume", conversation_id]
 
     env = os.environ.copy()
     env["HOME"] = "/root"
@@ -144,13 +161,14 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
         env["GOOGLE_API_KEY"] = api_key
         env["ANTIGRAVITY_API_KEY"] = api_key
 
-    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시: '{actual_prompt[:30]}...'")
+    resume_desc = f" (이어가기: {conversation_id[:8]}...)" if resume_flag else ""
+    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시{resume_desc}: '{actual_prompt[:30]}...'")
 
     # Use 'script -q -c' to run agy in a pseudo-TTY.
-    # This forces the Go runtime to flush output line-by-line instead of buffering.
-    # Without this, agy buffers 4KB before writing anything to a pipe.
+    resume_arg = f" --resume {conversation_id}" if resume_flag else ""
     script_cmd = (
         f"{agy_bin} -p {json.dumps(actual_prompt)}"
+        f"{resume_arg}"
         f" --output-format stream-json"
         f" --dangerously-skip-permissions"
     )
@@ -413,16 +431,28 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False):
             yield ev
 
 
-def stream_agent_chat(prompt: str, is_direct_llm: bool = False, stream_mode: int = 1, is_mobile: bool = False):
-    """Router for the 3 Clean Streaming Modes (1: AI Deep Brain, 2: Ultra-Fast Smart Home, 3: Headless CLI)."""
+def stream_agent_chat(
+    prompt: str,
+    is_direct_llm: bool = False,
+    stream_mode: int = 1,
+    is_mobile: bool = False,
+    conversation_id: str = "",
+):
+    """Router for the 3 Clean Streaming Modes with unified session management."""
+    if not conversation_id:
+        conversation_id = generate_conversation_id()
+
+    # Emit initial session_init event for client synchronization
+    yield make_sse("session_init", conversation_id)
+
     if stream_mode == 3:
-        for ev in stream_headless_cli(prompt, is_mobile=is_mobile):
+        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
     elif stream_mode == 2:
-        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile):
+        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
     else:
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile):
+        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
 
 

@@ -271,6 +271,22 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return
 
+        # 6. Session Management REST APIs
+        if clean_path == "/api/sessions" or clean_path.endswith("/api/sessions"):
+            from core.session_manager import list_all_sessions
+            sessions = list_all_sessions(limit=50)
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"sessions": sessions}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        if "/api/sessions/" in clean_path:
+            from core.session_manager import get_session_history
+            target_cid = clean_path.split("/api/sessions/")[-1].strip()
+            history = get_session_history(target_cid)
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"conversation_id": target_cid, "history": history}, ensure_ascii=False).encode("utf-8"))
+            return
+
         # Serve Web UI
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(HTML_INDEX.encode("utf-8"))
@@ -338,6 +354,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             is_direct_llm = payload.get("is_direct_llm", False) or prompt.startswith("ai ") or prompt.startswith("/llm")
             stream_mode = int(payload.get("stream_mode", 1))
             is_mobile = bool(payload.get("is_mobile", False))
+            conversation_id = payload.get("conversation_id", "").strip()
 
             if not prompt:
                 self._set_headers(400)
@@ -354,7 +371,13 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             try:
-                for event_str in stream_agent_chat(prompt, is_direct_llm, stream_mode, is_mobile=is_mobile):
+                for event_str in stream_agent_chat(
+                    prompt,
+                    is_direct_llm=is_direct_llm,
+                    stream_mode=stream_mode,
+                    is_mobile=is_mobile,
+                    conversation_id=conversation_id,
+                ):
                     self.wfile.write(event_str.encode("utf-8"))
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
