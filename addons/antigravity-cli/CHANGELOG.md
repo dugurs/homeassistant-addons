@@ -1,3 +1,20 @@
+## 1.3.0
+
+### 추가 (Feature)
+- 대화 세션 지속(Resume) 및 통합 관리 체계 구축 (Gitea #2)
+  - Mode 1/2/3 전 모드가 `conversation_id` 기준으로 동일한 대화를 이어갈 수 있음
+  - `GET /api/sessions`, `GET /api/sessions/<id>` 세션 목록/히스토리 REST API 추가
+- 웹 UI 세션 사이드바 — 과거 대화 목록, 히스토리 복원, 새 대화 시작, 페이지네이션 (Gitea #3)
+
+### 수정 (Fix)
+- 이전 대화 목록 한글 유니코드 이스케이프(`\uXXXX`) 노출 결함 수정 (Gitea #4)
+- 과거 대화 복원 시 다중 도구 실행이 여러 말풍선으로 쪼개지던 결함 수정 — 하나의 통합 답변으로 그룹화 (Gitea #5)
+- 헤더 AI Chat / Terminal 탭 전환 및 다크·라이트 테마 버튼 미동작 수정 (Gitea #6)
+- "이전 대화 더보기" 클릭 시 스크롤 위치가 튀던 결함 수정 (Gitea #6)
+- Mode 3 대화 재개 시 `--resume`이 아닌 존재하지 않는 flag를 사용하고 있던 문제 수정 → 공식 문서 기준 `--conversation <id>`로 교체
+- Mode 3 실시간 통신이 재개 세션에서 과거 로그 전체를 다시 재생하며 깨지던 근본 원인(파일 seek 누락) 수정
+- `result.status`가 `ERROR`가 아닌 다른 실패 상태(`CANCELED`/`INTERRUPTED`/`INVALID` 등)일 때도 무응답으로 완료 처리되던 문제 수정
+
 ## 1.2.0-beta.1
 
 ### 수정 (Fix)
