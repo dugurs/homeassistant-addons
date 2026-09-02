@@ -82,6 +82,26 @@ def session_exists(conversation_id: str) -> bool:
     return get_readable_transcript_path(conversation_id) is not None
 
 
+def delete_session(conversation_id: str) -> bool:
+    """Permanently remove a conversation's brain folder (all transcripts/logs).
+
+    Path-safety-checked: rejects anything that isn't a bare id (no path
+    separators or traversal), since conversation_id ultimately comes from
+    client-supplied JSON and is joined directly into a filesystem path.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return False
+    cdir = os.path.join(get_brain_base_dir(), conversation_id)
+    if not os.path.isdir(cdir):
+        return False
+    import shutil
+    try:
+        shutil.rmtree(cdir)
+        return True
+    except Exception:
+        return False
+
+
 def get_current_iso_time() -> str:
     """Return ISO 8601 formatted timestamp with timezone."""
     now = datetime.datetime.now(datetime.timezone.utc).astimezone()
@@ -323,12 +343,16 @@ def list_all_sessions(limit: int = 50) -> list:
                     pass
 
             clean_title = first_prompt[:50] if first_prompt else f"Session {cid[:8]}"
+            updated_dt = datetime.datetime.fromtimestamp(mtime)
             sessions.append({
                 "conversation_id": cid,
                 "title": clean_title,
                 "turns": turn_count,
                 "last_message": last_message[:80],
-                "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),
+                "updated_at": updated_dt.isoformat(),
+                # Pre-formatted server-side (MM/DD HH:MM, 24h) so the UI
+                # doesn't depend on the browser's locale/AM-PM formatting.
+                "date_str": updated_dt.strftime("%m/%d %H:%M"),
                 "timestamp": mtime,
             })
     except Exception as e:

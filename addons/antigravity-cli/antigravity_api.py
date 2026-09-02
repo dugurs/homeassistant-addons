@@ -125,7 +125,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             hw_info = check_agy_hardware_support()
             res = {
                 "status": "online",
-                "version": "1.3.0",
+                "version": "1.1.0-beta.17",
                 "ui_build_version": UI_BUILD_VERSION,
                 "uptime": int(time.time() - SERVER_START_TIME),
                 "active_sessions": 1,
@@ -295,6 +295,24 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return
 
+        # Model catalog for the Mode 3 model/effort picker -- queried live from
+        # `agy models` (falls back to the bundled static catalog if unavailable)
+        # since model lineup and per-model effort support vary by account.
+        if clean_path.endswith("/api/models"):
+            from core.model_discovery import get_live_model_catalog
+            force = "force=1" in self.path
+            self._set_headers(200)
+            self.wfile.write(json.dumps(get_live_model_catalog(force=force), ensure_ascii=False).encode("utf-8"))
+            return
+
+        # Quota (/usage) snapshot for the Mode 3 model picker's usage panel
+        if clean_path.endswith("/api/usage"):
+            from core.usage_client import get_usage_snapshot
+            force = "force=1" in self.path
+            self._set_headers(200)
+            self.wfile.write(json.dumps(get_usage_snapshot(force=force), ensure_ascii=False).encode("utf-8"))
+            return
+
         # Session Management REST APIs
         if clean_path.endswith("/api/sessions"):
             from core.session_manager import list_all_sessions
@@ -379,6 +397,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             stream_mode = int(payload.get("stream_mode", 1))
             is_mobile = bool(payload.get("is_mobile", False))
             conversation_id = str(payload.get("conversation_id", "")).strip()
+            model = str(payload.get("model", "")).strip()
 
             if not prompt:
                 self._set_headers(400)
@@ -401,6 +420,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     stream_mode=stream_mode,
                     is_mobile=is_mobile,
                     conversation_id=conversation_id,
+                    model=model,
                 ):
                     self.wfile.write(event_str.encode("utf-8"))
                     self.wfile.flush()
@@ -414,6 +434,39 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
+
+    def do_DELETE(self):
+        """Handle DELETE requests -- session removal.
+
+        Two shapes: DELETE /api/sessions/<cid> (single, id from the path) and
+        DELETE /api/sessions with a JSON body {"conversation_ids": [...]}
+        (bulk, for the sidebar's multi-select "선택 삭제").
+        """
+        clean_path = self.path.split("?")[0].rstrip("/")
+        from core.session_manager import delete_session
+
+        if "/api/sessions/" in clean_path:
+            target_cid = clean_path.split("/api/sessions/")[-1].strip()
+            ok = delete_session(target_cid)
+            self._set_headers(200 if ok else 404)
+            self.wfile.write(json.dumps({"conversation_id": target_cid, "deleted": ok}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        if clean_path.endswith("/api/sessions"):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body or b"{}")
+            except Exception:
+                payload = {}
+            ids = payload.get("conversation_ids") or []
+            results = {cid: delete_session(str(cid)) for cid in ids if isinstance(cid, str)}
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"results": results}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        self._set_headers(404)
+        self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
 
     def log_message(self, format, *args):
         """Suppress noisy request logs."""

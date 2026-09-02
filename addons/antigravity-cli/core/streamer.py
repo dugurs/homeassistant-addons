@@ -49,7 +49,7 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: 
         conversation_id = generate_conversation_id()
     yield make_sse("session_init", conversation_id)
 
-    yield make_sse("tool", f"🧠 [모드 1: AI 딥 브레인] 환경 분석 세션 초기화: '{actual_prompt}'")
+    yield make_sse("tool", f"🧠 [모드 2: 복합 모드] 환경 분석 세션 초기화: '{actual_prompt}'")
     time.sleep(0.04)
     yield make_sse("tool", "🔍 [1단계] Home Assistant 다차원 환경 센서(CO2, TVOC, PM2.5, 조도) 수집")
     time.sleep(0.05)
@@ -94,7 +94,7 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id:
         conversation_id = generate_conversation_id()
     yield make_sse("session_init", conversation_id)
 
-    yield make_sse("tool", "⚡ [모드 2: 초고속 스마트홈] 실시간 기기 및 엔티티 상태 고속 탐색")
+    yield make_sse("tool", "⚡ [모드 1: 고속 모드] 실시간 기기 및 엔티티 상태 고속 탐색")
     time.sleep(0.03)
 
     full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
@@ -121,17 +121,37 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id:
 from core.system_info import check_agy_hardware_support
 
 
-def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
-    """Mode 3: Google Antigravity Headless CLI Real-Time NDJSON Streamer (0-latency)."""
+def stream_headless_cli(
+    prompt: str,
+    is_mobile: bool = False,
+    conversation_id: str = "",
+    model: str = "",
+):
+    """Mode 3: Google Antigravity Headless CLI Real-Time NDJSON Streamer (0-latency).
+
+    `model` must be one of agy's actual, directly-invocable slugs (e.g.
+    "gemini-3.7-flash-high") -- there is no separate --effort flag. Effort is
+    baked into the slug itself; the picker resolves (base model, effort) to
+    the right variant slug client-side before this is ever called. See
+    core/model_discovery.py for how that mapping is discovered live.
+    """
     import subprocess
     t_start = time.time()
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
+
+    # Validate against agy's own live model discovery (queried and cached in
+    # core.model_discovery) rather than a hardcoded list -- new models ship
+    # and the lineup varies by account, so a static catalog can't be trusted
+    # as the source of truth for what's actually valid.
+    from core.model_discovery import get_valid_variant_slugs
+
+    model = model if model in get_valid_variant_slugs() else ""
 
     hw_info = check_agy_hardware_support()
     agy_bin = "/usr/local/bin/agy"
 
     if not hw_info.get("supported", False) or not os.path.exists(agy_bin):
-        yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [모드 1: AI 딥 브레인]으로 자동 전환합니다.")
+        yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [모드 2: 복합 모드]로 자동 전환합니다.")
         for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
         return
@@ -175,9 +195,11 @@ def stream_headless_cli(prompt: str, is_mobile: bool = False, conversation_id: s
     # `--conversation <id>` is the documented flag for resuming a specific
     # prior conversation by id (per `agy --help`); there is no `--resume` flag.
     resume_arg = f" --conversation {conversation_id}" if resume_this_session else ""
+    model_arg = f" --model {model}" if model else ""
     script_cmd = (
         f"{agy_bin} -p {json.dumps(actual_prompt)}"
         f"{resume_arg}"
+        f"{model_arg}"
         f" --output-format stream-json"
         f" --dangerously-skip-permissions"
     )
@@ -478,6 +500,7 @@ def stream_agent_chat(
     stream_mode: int = 1,
     is_mobile: bool = False,
     conversation_id: str = "",
+    model: str = "",
 ):
     """Router for the 3 Clean Streaming Modes with unified session management.
 
@@ -488,11 +511,17 @@ def stream_agent_chat(
     telling agy to --conversation it would target an id agy has never seen,
     so resume silently no-ops and a *second*, disconnected id gets created.
     stream_headless_cli() handles id assignment itself for that reason.
+
+    model only applies to Mode 3 (agy) -- Modes 1/2 never invoke agy.
+
+    Numbering matches the recovered reference UI's own AVAILABLE_MODES ids
+    (1 = fast dashboard, 2 = deep brain, 3 = CLI) -- not the historical
+    internal order of the two functions below.
     """
     if stream_mode == 3:
-        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model):
             yield ev
-    elif stream_mode == 2:
+    elif stream_mode == 1:
         for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
     else:

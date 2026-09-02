@@ -1,26 +1,36 @@
 """Web UI CSS Stylesheet."""
 
 CSS_STYLES = """
+/* Exact color tokens recovered from the rolled-back React/assistant-ui build
+   (git history, orphaned commit) that the reference screenshots came from --
+   not approximated from the screenshot, read directly out of its
+   tailwind.config.js / index.css. --bg-card-high == that build's literal
+   `bg-card` (#18181b, used for the composer/dropdowns); --bg-card here is
+   its `bg-subtle` (#121215, used for header/sidebar). */
 :root, [data-theme="dark"] {
-      --bg-base: #0a0e17;
-      --bg-card: #111827;
-      --bg-bubble-user: #0284c7;
-      --bg-bubble-bot: #162032;
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
+      --bg-base: #09090b;
+      --bg-card: #121215;
+      --bg-card-high: #18181b;
+      --bg-card-hover: #222227;
+      --bg-bubble-user: #2563eb;
+      --bg-bubble-bot: #18181b;
+      --text-main: #f4f4f5;
+      --text-muted: #a1a1aa;
+      --text-dim: #71717a;
       --text-bold: #ffffff;
       --accent-blue: #38bdf8;
-      --accent-cyan: #06b6d4;
+      --accent-cyan: #38bdf8;
       --accent-green: #10b981;
       --accent-yellow: #f59e0b;
       --accent-red: #ef4444;
-      --border-color: rgba(255, 255, 255, 0.1);
-      --border-subtle: rgba(255, 255, 255, 0.05);
-      --code-bg: #090d16;
-      --table-header: #1e293b;
-      --table-stripe: rgba(255, 255, 255, 0.02);
-      --badge-bg: rgba(56, 189, 248, 0.12);
-      --badge-border: rgba(56, 189, 248, 0.25);
+      --accent-purple: #a855f7;
+      --border-color: #27272a;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --code-bg: #09090b;
+      --table-header: #18181b;
+      --table-stripe: rgba(255, 255, 255, 0.03);
+      --badge-bg: rgba(56, 189, 248, 0.1);
+      --badge-border: rgba(56, 189, 248, 0.3);
       --callout-tip-bg: rgba(56, 189, 248, 0.08);
       --callout-tip-border: #38bdf8;
       --callout-warn-bg: rgba(245, 158, 11, 0.1);
@@ -29,20 +39,24 @@ CSS_STYLES = """
     }
 
     [data-theme="light"] {
-      --bg-base: #f8fafc;
-      --bg-card: #ffffff;
-      --bg-bubble-user: #0284c7;
-      --bg-bubble-bot: #ffffff;
+      --bg-base: #ffffff;
+      --bg-card: #f8fafc;
+      --bg-card-high: #f1f5f9;
+      --bg-card-hover: #e2e8f0;
+      --bg-bubble-user: #2563eb;
+      --bg-bubble-bot: #f1f5f9;
       --text-main: #0f172a;
       --text-muted: #64748b;
+      --text-dim: #94a3b8;
       --text-bold: #020617;
       --accent-blue: #0284c7;
-      --accent-cyan: #0891b2;
+      --accent-cyan: #0284c7;
       --accent-green: #059669;
       --accent-yellow: #d97706;
       --accent-red: #dc2626;
-      --border-color: rgba(0, 0, 0, 0.1);
-      --border-subtle: rgba(0, 0, 0, 0.04);
+      --accent-purple: #9333ea;
+      --border-color: #e2e8f0;
+      --border-subtle: rgba(0, 0, 0, 0.06);
       --code-bg: #f1f5f9;
       --table-header: #f1f5f9;
       --table-stripe: rgba(0, 0, 0, 0.02);
@@ -75,7 +89,7 @@ CSS_STYLES = """
     }
     
     body {
-      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background: var(--bg-base);
       color: var(--text-main);
       height: 100vh;
@@ -84,69 +98,100 @@ CSS_STYLES = """
       overflow: hidden;
       transition: background-color 0.2s ease, color 0.2s ease;
     }
-    
+
+    .icon { display: inline-flex; width: 1em; height: 1em; }
+    .icon svg { width: 100%; height: 100%; display: block; }
+    .icon-btn-lg {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      background: transparent;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .icon-btn-lg:hover { color: var(--text-main); border-color: var(--accent-blue); background: var(--bg-card-high); }
+    .icon-amber { color: var(--accent-yellow); }
+    .amber-text { color: var(--accent-yellow); }
+
     /* Header */
     header {
+      height: 48px;
       background: var(--bg-card);
       border-bottom: 1px solid var(--border-color);
-      padding: 10px 18px;
+      padding: 0 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       flex-shrink: 0;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      overflow: hidden;
     }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; }
-    .brand-badge {
-      background: var(--badge-bg);
-      color: var(--accent-blue);
-      font-size: 0.72rem;
-      padding: 2px 8px;
-      border-radius: 12px;
-      border: 1px solid var(--badge-border);
-      font-weight: 600;
-    }
-    
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .session-token-badge {
-      font-size: 11px;
-      background: var(--badge-bg);
-      border: 1px solid var(--badge-border);
-      color: var(--accent-blue);
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .resource-badge {
-      font-size: 11px;
-      background: var(--badge-bg);
-      border: 1px solid var(--badge-border);
-      color: var(--accent-green);
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-weight: 600;
-      white-space: nowrap;
+    .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .brand-name {
       display: flex;
       align-items: center;
       gap: 6px;
-      cursor: pointer;
-      transition: all 0.2s ease;
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--text-bold);
+      white-space: nowrap;
     }
-    .resource-badge:hover {
+    .brand-emoji { font-size: 1rem; flex-shrink: 0; }
+    .brand-badge {
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--accent-blue);
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      font-weight: 600;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    .header-stat-pill {
+      font-size: 11px;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 500;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: border-color 0.2s ease;
+    }
+    .header-stat-pill:hover { border-color: var(--accent-blue); }
+    .header-stat-pill:hover {
       border-color: var(--accent-green);
       transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
     }
-    .badge-pipe {
-      color: var(--border-color);
-      opacity: 0.8;
+    .stat-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .stat-dot-green { background: var(--accent-green); }
+    .stat-dot-blue { background: var(--accent-blue); }
+    .stat-sep {
+      color: var(--text-dim);
+      opacity: 0.7;
     }
 
     /* Sticky Top Resource Panel */
@@ -277,79 +322,9 @@ CSS_STYLES = """
     .pstat span { color: var(--text-muted); }
     .pstat strong { color: var(--text-bold); }
 
-    .theme-toggle-btn {
-      background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-      padding: 5px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.8rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      transition: all 0.2s ease;
-    }
-    .theme-toggle-btn:hover {
-      border-color: var(--accent-blue);
-      color: var(--accent-blue);
-    }
-
-    .nav-tabs { display: flex; gap: 6px; }
-    .tab-btn {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 5px 12px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.82rem;
-      font-weight: 600;
-      transition: all 0.2s ease;
-    }
-    .tab-btn.active {
-      background: var(--accent-blue);
-      color: #ffffff;
-      border-color: var(--accent-blue);
-    }
-
-    /* Header: sidebar toggle + new-chat shortcut */
-    .sidebar-toggle-btn {
-      background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-size: 1.1rem;
-      transition: all 0.15s ease;
-    }
-    .sidebar-toggle-btn:hover {
-      border-color: var(--accent-blue);
-      color: var(--accent-blue);
-    }
-    .new-chat-btn-header {
-      background: var(--badge-bg);
-      border: 1px solid var(--badge-border);
-      color: var(--accent-blue);
-      font-size: 0.76rem;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      margin-left: 4px;
-    }
-    .new-chat-btn-header:hover {
-      background: var(--accent-blue);
-      color: #ffffff;
-    }
-
+    /* .icon-btn-lg (defined near the top) now covers both the theme toggle
+       and sidebar toggle buttons -- same 32x32 rounded-lg icon-button shape
+       in the recovered source. */
     /* App Layout (Sidebar + Main) */
     .app-layout {
       flex: 1;
@@ -373,29 +348,43 @@ CSS_STYLES = """
       margin-left: -280px;
     }
     .sidebar-top {
-      padding: 12px 14px;
+      padding: 10px 10px 4px;
       display: flex;
       gap: 8px;
       align-items: center;
-      border-bottom: 1px solid var(--border-subtle);
+      justify-content: space-between;
     }
+    .sidebar-top .sidebar-nav-title { padding: 0; }
+    .sidebar-new-chat-wrap { padding: 8px; display: flex; }
     .new-chat-btn-sidebar {
       flex: 1;
-      background: var(--accent-blue);
-      color: #ffffff;
-      border: none;
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg-card-high);
+      color: var(--text-bold);
+      border: 1px solid var(--border-color);
       padding: 8px 12px;
       border-radius: 8px;
-      font-size: 0.84rem;
+      font-size: 0.78rem;
       font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: opacity 0.15s ease;
+      gap: 8px;
+      transition: all 0.15s ease;
     }
-    .new-chat-btn-sidebar:hover { opacity: 0.9; }
+    .new-chat-btn-sidebar:hover { background: var(--bg-card-hover); border-color: rgba(56, 189, 248, 0.5); }
+    .new-chat-btn-sidebar .icon-blue { color: var(--accent-blue); }
+    .new-chat-btn-sidebar .kbd-hint { margin-left: auto; }
+    .kbd-hint {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-dim);
+      background: var(--bg-base);
+      border: 1px solid var(--border-color);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
     .sidebar-close-btn {
       background: transparent;
       border: 1px solid var(--border-color);
@@ -404,25 +393,131 @@ CSS_STYLES = """
       height: 32px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
     }
-    .sidebar-section-title {
-      padding: 10px 14px 6px;
-      font-size: 0.74rem;
-      font-weight: 700;
+    /* Desktop: sidebar stays open via the header hamburger, no separate close needed */
+    @media (min-width: 769px) {
+      .sidebar-close-btn { display: none; }
+    }
+
+    /* Sidebar Navigation (Chat / Terminal) */
+    .sidebar-nav-title {
+      padding: 8px 10px 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+    }
+    .sidebar-divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 6px 12px;
+    }
+    .sidebar-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      border: 1px solid transparent;
       color: var(--text-muted);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .sidebar-nav-item:hover { background: var(--bg-card-high); color: var(--text-main); }
+    .sidebar-nav-item.active {
+      background: var(--bg-card-high);
+      border-color: var(--border-color);
+      color: var(--accent-blue);
+      font-weight: 700;
+    }
+
+    .sidebar-section-title {
+      padding: 8px 10px 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 8px;
     }
-    .refresh-sessions-btn {
+    .sidebar-section-title > span { flex: 1; }
+    .session-select-btn {
       background: transparent;
       border: none;
+      color: var(--accent-blue);
+      font-size: 10px;
+      font-weight: 600;
       cursor: pointer;
-      font-size: 0.85rem;
+      text-transform: none;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .session-select-btn:hover { background: var(--border-subtle); }
+
+    .sidebar-bottom-slot { flex-shrink: 0; }
+    .session-select-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px;
+      border-top: 1px solid var(--border-color);
+    }
+    .session-select-toolbar button {
+      flex: 1;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .session-select-toolbar button:hover { color: var(--text-main); border-color: var(--text-muted); }
+    .session-delete-btn {
+      background: rgba(239, 68, 68, 0.1) !important;
+      color: var(--accent-red) !important;
+      border-color: rgba(239, 68, 68, 0.3) !important;
+      font-weight: 600 !important;
+    }
+    .session-delete-btn:hover { background: rgba(239, 68, 68, 0.18) !important; }
+    .session-delete-btn:disabled {
+      background: var(--border-subtle) !important;
+      color: var(--text-dim) !important;
+      border-color: var(--border-color) !important;
+      cursor: not-allowed;
       opacity: 0.6;
     }
-    .refresh-sessions-btn:hover { opacity: 1; }
+    .sidebar-footer {
+      padding: 8px;
+      text-align: center;
+      font-size: 10px;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border-color);
+    }
 
     .session-list {
       flex: 1;
@@ -439,39 +534,73 @@ CSS_STYLES = """
       color: var(--text-muted);
     }
     .session-card {
-      padding: 10px 12px;
+      position: relative;
+      padding: 6px 10px;
       border-radius: 8px;
       border: 1px solid transparent;
       background: transparent;
       cursor: pointer;
       display: flex;
-      flex-direction: column;
-      gap: 4px;
+      align-items: flex-start;
+      gap: 8px;
       transition: all 0.15s ease;
       text-align: left;
     }
     .session-card:hover {
-      background: var(--table-stripe);
-      border-color: var(--border-color);
+      background: var(--bg-card-high);
+      color: var(--text-main);
     }
+    .session-card:hover .session-card-delete-btn { opacity: 1; }
     .session-card.active {
-      background: var(--badge-bg);
-      border-color: var(--badge-border);
+      background: var(--bg-card-high);
+      border-color: var(--border-color);
+      color: var(--accent-blue);
+    }
+    .session-card.active .session-card-title { color: var(--accent-blue); font-weight: 700; }
+    .session-card.selected {
+      background: rgba(56, 189, 248, 0.1);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+    .session-card-checkbox {
+      flex-shrink: 0;
+      color: var(--accent-blue);
+      width: 14px;
+      height: 14px;
+      margin-top: 1px;
+    }
+    .session-card-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .session-card-title {
-      font-size: 0.84rem;
-      font-weight: 600;
-      color: var(--text-bold);
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-main);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .session-card-meta {
+      font-size: 10px;
+      color: var(--text-dim);
       display: flex;
-      justify-content: space-between;
-      font-size: 0.72rem;
-      color: var(--text-muted);
+      gap: 6px;
     }
+    .session-card-delete-btn {
+      flex-shrink: 0;
+      opacity: 0;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 4px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .session-card-delete-btn:hover { color: var(--accent-red); background: rgba(239, 68, 68, 0.1); }
 
     /* Mobile Overlay */
     .sidebar-overlay {
@@ -535,32 +664,53 @@ CSS_STYLES = """
       gap: 16px;
     }
     .hero-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 4px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
     }
-    .hero-card h2 { font-size: 1.12rem; margin-bottom: 6px; color: var(--text-bold); font-weight: 700; }
-    .hero-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; }
-    .quick-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chip {
-      background: var(--bg-base);
+    .hero-badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent-blue);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 10px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+    .hero-card h2 { font-size: 1.375rem; margin-bottom: 4px; color: var(--text-bold); font-weight: 700; letter-spacing: -0.01em; }
+    .hero-card p { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px; }
+    .quick-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+      max-width: 32rem;
+    }
+    @media (max-width: 640px) {
+      .quick-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .quick-card {
+      background: var(--bg-card-high);
       border: 1px solid var(--border-color);
-      color: var(--text-main);
-      padding: 5px 11px;
-      border-radius: 14px;
-      font-size: 0.78rem;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.75rem;
       font-weight: 500;
+      color: var(--text-main);
       cursor: pointer;
+      text-align: left;
       transition: all 0.15s ease;
+      font-family: inherit;
     }
-    .chip:hover {
-      background: var(--accent-blue);
-      color: #ffffff;
-      border-color: var(--accent-blue);
-      transform: translateY(-1px);
+    .quick-card:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(56, 189, 248, 0.5);
     }
 
     /* Messages */
@@ -580,14 +730,14 @@ CSS_STYLES = """
     .bubble {
       width: 100%;
       padding: 14px 18px;
-      border-radius: 12px;
+      border-radius: 20px;
       word-break: break-word;
       box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
     .msg-row.user .bubble {
       background: var(--bg-bubble-user);
       color: #ffffff;
-      border-bottom-right-radius: 2px;
+      border-bottom-right-radius: 6px;
       font-size: 0.93rem;
       line-height: 1.5;
     }
@@ -595,7 +745,7 @@ CSS_STYLES = """
       background: var(--bg-bubble-bot);
       color: var(--text-main);
       border: 1px solid var(--border-color);
-      border-bottom-left-radius: 2px;
+      border-bottom-left-radius: 6px;
     }
 
     /* Bot Bubble Header & View Toggle */
@@ -627,7 +777,7 @@ CSS_STYLES = """
       transition: all 0.15s ease;
     }
     .view-tab.active {
-      background: var(--accent-blue);
+      background: var(--bg-bubble-user);
       color: #ffffff;
     }
     .top-copy-btn {
@@ -1133,76 +1283,468 @@ CSS_STYLES = """
 
     /* Bottom Input Bar */
     .input-bar-wrap {
-      background: var(--bg-card);
-      border-top: 1px solid var(--border-color);
+      background: var(--bg-base);
       padding: 10px 20px;
       display: flex;
       flex-direction: column;
       gap: 8px;
       flex-shrink: 0;
     }
-    .mode-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 0.82rem;
-      color: var(--text-muted);
-    }
-    .mode-select {
-      background: var(--bg-base);
+    /* Unified composer: textarea on top, toolbar (attach/mode/model/mic/send) below, one bordered box */
+    .composer {
+      background: var(--bg-card-high);
       border: 1px solid var(--border-color);
-      color: var(--text-main);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 0.82rem;
-      font-weight: 500;
-      outline: none;
-      cursor: pointer;
-    }
-    .mode-select:focus { border-color: var(--accent-blue); }
-
-    .input-bar {
-      display: flex;
-      gap: 10px;
-      align-items: flex-end;
-      background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 8px 12px;
+      border-radius: 22px;
+      padding: 12px;
       transition: border-color 0.2s;
     }
-    .input-bar:focus-within { border-color: var(--accent-blue); }
-    textarea {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: var(--text-main);
-      font-size: 0.92rem;
-      font-family: inherit;
-      resize: none;
-      outline: none;
-      max-height: 120px;
-      line-height: 1.45;
+    .composer:focus-within { border-color: #3f3f46; }
+    .composer-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 2px;
     }
-    .send-btn {
-      background: var(--bg-bubble-user);
+    .composer-toolbar-left, .composer-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .icon-sm { font-size: 12px; }
+    .icon-dim { color: var(--text-dim); }
+    .mode-color-amber { color: var(--accent-yellow); }
+    .mode-color-purple { color: var(--accent-purple); }
+    .mode-color-sky { color: var(--accent-blue); }
+
+    .attach-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--bg-card-hover);
       border: none;
-      color: #fff;
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
+      color: var(--text-dim);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 1.1rem;
-      transition: all 0.15s ease-in-out;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+    .attach-btn:hover { color: var(--text-main); }
+    .attach-btn .icon { width: 14px; height: 14px; }
+
+    .mic-btn, .send-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      border: none;
+      transition: all 0.15s ease;
+    }
+    .mic-btn { background: transparent; color: var(--text-dim); }
+    .mic-btn:hover { color: var(--text-main); background: var(--bg-card-hover); }
+    .mic-btn.recording { background: var(--accent-red); color: #fff; animation: mic-pulse 1.2s infinite; }
+    @keyframes mic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+    .mic-btn .icon { width: 15px; height: 15px; }
+
+    .send-btn {
+      background: var(--bg-card-hover);
+      color: var(--text-dim);
+      opacity: 0.7;
+    }
+    .send-btn:disabled { cursor: not-allowed; }
+    .send-btn.has-text {
+      background: #e4e4e7;
+      color: #18181b;
+      opacity: 1;
+      cursor: pointer;
+    }
+    .send-btn.has-text:hover { background: #ffffff; }
+    .send-btn .icon { width: 14px; height: 14px; }
+
+    /* Model / Effort Picker (Mode 3), also reused by the Engine Mode picker */
+    .model-picker {
+      position: relative;
+    }
+    .mode-picker-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 4px 8px;
+      border-radius: 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .mode-picker-btn:hover { background: var(--bg-card-high); }
+    .mode-picker-btn .icon { width: 12px; height: 12px; }
+    .model-picker-name { font-weight: 600; }
+    .model-effort-tag {
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+    }
+
+    .model-dropdown {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      width: 256px;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+      padding: 6px;
+      z-index: 40;
+      flex-direction: column;
+      gap: 2px;
+    }
+    #stream-mode-dropdown.model-dropdown { width: 240px; }
+    .model-dropdown.open { display: flex; }
+    .model-dropdown-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      padding: 4px 10px;
+    }
+    .model-dropdown-list {
+      /* Fixed 7-model catalog -- never needs to scroll. overflow-y:auto here
+         would implicitly force overflow-x:auto too (CSS spec: visible
+         computes to auto when the other axis is a scroll value), which
+         clips the .effort-flyout popping out to the right of each row. */
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .model-dropdown-loading, .model-dropdown-error, .usage-panel-loading, .usage-panel-error {
+      padding: 10px 8px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* Engine Mode rows (amber-selected, per the recovered source) */
+    .mode-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      transition: all 0.15s ease;
+    }
+    .mode-row:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-main); }
+    .mode-row.active { background: rgba(245, 158, 11, 0.2); color: #fcd34d; font-weight: 600; }
+    .mode-row.disabled { opacity: 0.3; cursor: not-allowed; }
+    .mode-row-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .mode-row-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Model rows */
+    .model-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      transition: background 0.15s ease;
+    }
+    .model-row:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+    .model-row.active { background: var(--bg-card-hover); color: var(--text-main); }
+    .model-row.disabled { opacity: 0.4; }
+    .model-row.disabled .model-row-main { cursor: not-allowed; }
+    .model-row-main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .model-row-name {
+      flex: 1;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .model-row-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .model-row-effort {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+    }
+    .model-row-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .model-row-badge .icon { width: 8px; height: 8px; opacity: 0.6; }
+    .model-row-caret {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      display: flex;
+      cursor: pointer;
+      padding: 2px;
+    }
+    .model-row:hover .model-row-caret { color: var(--text-muted); }
+    .model-row-caret .icon { width: 13px; height: 13px; }
+    .model-row-check .icon { width: 13px; height: 13px; color: var(--text-main); }
+
+    .effort-flyout {
+      display: none;
+      position: absolute;
+      left: calc(100% + 6px);
+      top: 0;
+      min-width: 100px;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+      padding: 6px;
+      z-index: 50;
+    }
+    .effort-flyout.open,
+    .model-row:hover .effort-flyout { display: block; }
+    /* Narrow screens: there's no room to the right of a 256px-wide dropdown
+       -- drop the flyout below the row instead, right-aligned so it stays
+       inside the dropdown's own bounds. */
+    @media (max-width: 640px) {
+      .effort-flyout {
+        left: auto;
+        right: 0;
+        top: 100%;
+        margin-top: 4px;
+      }
+    }
+    .effort-option {
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-muted);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .effort-option:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-main); }
+    .effort-option.selected { background: var(--bg-card-hover); color: var(--accent-blue); font-weight: 700; }
+    .effort-option .icon { width: 13px; height: 13px; }
+
+    .usage-view-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 4px;
+      padding: 6px 10px;
+      border-top: 1px solid var(--border-color);
+      color: var(--text-dim);
+      font-size: 0.78rem;
+      cursor: default;
+      border-radius: 0 0 8px 8px;
+    }
+    .usage-view-row:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+    .usage-view-row > span:first-child { display: flex; align-items: center; gap: 6px; }
+    .usage-view-row .icon { width: 13px; height: 13px; }
+
+    .usage-panel {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: calc(100% + 8px);
+      width: 260px;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+      padding: 10px;
+      z-index: 40;
+    }
+    .usage-panel.open { display: block; }
+    /* Narrow screens: popping out to the right of the picker runs off-screen
+       -- pin it near the bottom of the viewport instead, independent of the
+       picker's own position, so it's always fully visible. */
+    @media (max-width: 640px) {
+      .usage-panel {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: 90px;
+        top: auto;
+        width: auto;
+      }
+    }
+    .usage-family-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      padding: 6px 4px 4px;
+    }
+    .usage-family-title:not(:first-child) { border-top: 1px solid var(--border-color); margin-top: 4px; }
+    .usage-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 5px 4px;
+    }
+    .usage-row-label {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .usage-row-label > span:first-child {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .usage-row-hint {
+      font-size: 0.66rem;
+      color: var(--text-muted);
+    }
+    .usage-row-gauge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       flex-shrink: 0;
     }
-    .send-btn:disabled {
-      opacity: 0.25 !important;
-      cursor: not-allowed !important;
+    .usage-row-pct {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-main);
+      min-width: 2.4em;
+      text-align: right;
     }
+    .usage-mini-ring {
+      --pct: 0;
+      --ring-color: var(--accent-green);
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: conic-gradient(var(--ring-color) calc(var(--pct) * 1%), var(--border-color) 0);
+      position: relative;
+      flex-shrink: 0;
+    }
+    .usage-mini-ring::before {
+      content: '';
+      position: absolute;
+      inset: 2px;
+      border-radius: 50%;
+      background: var(--bg-card);
+    }
+
+    /* Model row: quota-exhausted warning + selected checkmark */
+    .model-row-warning { font-size: 0.72rem; flex-shrink: 0; }
+    .model-row-check {
+      color: var(--accent-blue);
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+      margin-left: 2px;
+    }
+
+    /* Baseline quota-reached banner (above the mode/model bar) */
+    .quota-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid var(--callout-warn-border, var(--accent-yellow));
+      border-radius: 16px;
+      padding: 10px 12px;
+    }
+    .quota-banner-icon { font-size: 1rem; line-height: 1.3; }
+    .quota-banner-body { flex: 1; min-width: 0; }
+    .quota-banner-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 2px;
+    }
+    .quota-banner-desc {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    .quota-banner-dismiss {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .quota-banner-dismiss:hover { background: var(--border-subtle); }
+
+    textarea {
+      display: block;
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-size: 0.875rem;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+      min-height: 26px;
+      max-height: 120px;
+      line-height: 1.5;
+      padding: 2px 4px;
+    }
+    textarea::placeholder { color: var(--text-dim); }
+
+    .toast-msg {
+      position: fixed;
+      left: 50%;
+      bottom: 90px;
+      transform: translateX(-50%) translateY(8px);
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 200;
+      pointer-events: none;
+    }
+    .toast-msg.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     /* Terminal View */
     #terminal-view { height: 100%; display: none; width: 100%; }

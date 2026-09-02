@@ -1,13 +1,25 @@
 """Web UI Frontend Client JavaScript Application."""
 
 JS_SCRIPTS = """
-function switchTab(tabId) {
-      const tabBtns = document.querySelectorAll('.tab-btn');
-      tabBtns.forEach(btn => {
-        const isActive = (tabId === 'chat' && btn.textContent.includes('Chat')) ||
-                         (tabId === 'terminal' && btn.textContent.includes('Terminal'));
-        btn.classList.toggle('active', isActive);
-      });
+function notSupportedYet(feature) {
+      let toast = document.getElementById('global-toast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'global-toast';
+        toast.className = 'toast-msg';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = `${feature} 기능은 아직 지원되지 않습니다.`;
+      toast.classList.add('show');
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    function switchTab(tabId) {
+      const navChat = document.getElementById('nav-tab-chat');
+      const navTerminal = document.getElementById('nav-tab-terminal');
+      if (navChat) navChat.classList.toggle('active', tabId === 'chat');
+      if (navTerminal) navTerminal.classList.toggle('active', tabId === 'terminal');
       const chatView = document.getElementById('chat-view');
       const termView = document.getElementById('terminal-view');
       if (tabId === 'chat') {
@@ -19,13 +31,16 @@ function switchTab(tabId) {
       }
     }
 
+    const ICON_MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    const ICON_SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+
     function toggleTheme() {
       const current = document.documentElement.getAttribute('data-theme') || 'dark';
       const next = current === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
       localStorage.setItem('antigravity_theme', next);
-      const btn = document.getElementById('theme-toggle-btn');
-      if (btn) btn.textContent = next === 'dark' ? '🌙 다크' : '☀️ 라이트';
+      const icon = document.getElementById('theme-toggle-icon');
+      if (icon) icon.innerHTML = next === 'dark' ? ICON_MOON_SVG : ICON_SUN_SVG;
     }
 
     function getCurrentTimeStr() {
@@ -435,11 +450,11 @@ function switchTab(tabId) {
         sysRamHistory.push(sysRamPct);
         if (sysRamHistory.length > MAX_HISTORY) sysRamHistory.shift();
 
-        // Update Header Badge
+        // Update Header Badge (compact: addon CPU% · addon RAM MB)
         const headerCpu = document.getElementById('header-cpu');
         const headerRam = document.getElementById('header-ram');
-        if (headerCpu) headerCpu.textContent = `⚙️ CPU: 애드온 ${addonCpu.toFixed(1)}% (전체 ${sysCpu.toFixed(1)}%)`;
-        if (headerRam) headerRam.textContent = `💾 RAM: ${addonRamMb}MB (${addonRamPct.toFixed(1)}%) | 전체 ${sysRamPct.toFixed(0)}%`;
+        if (headerCpu) headerCpu.textContent = `${addonCpu.toFixed(1)}%`;
+        if (headerRam) headerRam.textContent = `${Math.round(addonRamMb)}MB`;
 
         // Update Panel Legend Numbers
         const valAddonCpu = document.getElementById('val-addon-cpu');
@@ -466,22 +481,14 @@ function switchTab(tabId) {
           pstatStream.style.color = data.agy_stream_supported ? 'var(--accent-green)' : 'var(--text-muted)';
         }
 
-        // Mode 3 Conditional Enable/Disable
-        const opt3 = document.getElementById('opt-mode-3');
-        const modeSel = document.getElementById('stream-mode');
-        if (opt3) {
-          if (data.agy_stream_supported) {
-            opt3.disabled = false;
-            opt3.textContent = '🚀 모드 3: Google Antigravity Headless CLI (실시간 NDJSON)';
-          } else {
-            opt3.disabled = true;
-            opt3.textContent = '🚀 모드 3: Google Antigravity (AVX 미지원으로 비활성화)';
-            if (modeSel && modeSel.value === '3') {
-              modeSel.value = '1';
-              localStorage.setItem('antigravity_stream_mode', '1');
-            }
-          }
+        // Mode 3 (CLI 모드) Conditional Enable/Disable
+        cliModeSupported = !!data.agy_stream_supported;
+        if (!cliModeSupported && currentStreamMode === '3') {
+          currentStreamMode = '1';
+          localStorage.setItem('antigravity_stream_mode', '1');
+          updateStreamModeButton();
         }
+        renderStreamModeList();
 
         if (isResourcePanelOpen) {
           renderCharts();
@@ -489,8 +496,403 @@ function switchTab(tabId) {
       } catch (e) {}
     }
 
-    function onModeChange(val) {
-      localStorage.setItem('antigravity_stream_mode', val);
+    // Engine Mode picker (stream_mode). Short label on the closed button,
+    // full description per row when the dropdown is open -- same pattern as
+    // the model picker.
+    const ICON_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+    const ICON_BRAIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.5A2.5 2.5 0 0 0 4.5 7.5 2.5 2.5 0 0 0 3 9.9 2.5 2.5 0 0 0 4.5 14a2.5 2.5 0 0 0 2.5 2.5V19a2.5 2.5 0 0 0 5 0V4.5A2.5 2.5 0 0 0 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v.5a2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 21 9.9 2.5 2.5 0 0 1 19.5 14a2.5 2.5 0 0 1-2.5 2.5V19a2.5 2.5 0 0 1-5 0V4.5A2.5 2.5 0 0 1 14.5 2z"/></svg>';
+    const ICON_TERMINAL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+    const ICON_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+    const STREAM_MODES = [
+      { value: '1', icon: ICON_ZAP_SVG, colorClass: 'mode-color-amber', shortName: '고속', name: '스마트홈 고속 제어', desc: '0.05초 네이티브 기기 즉시 제어 & 빠른 질의' },
+      { value: '2', icon: ICON_BRAIN_SVG, colorClass: 'mode-color-purple', shortName: '복합', name: 'AI 딥 브레인', desc: '다차원 환경 분석 & 스마트 어드바이스' },
+      { value: '3', icon: ICON_TERMINAL_SVG, colorClass: 'mode-color-sky', shortName: 'CLI', name: 'Antigravity CLI', desc: '공식 agy 0초 실시간 스트리밍 엔진' },
+    ];
+    let currentStreamMode = localStorage.getItem('antigravity_stream_mode') || '3';
+    let cliModeSupported = true;
+
+    function updateStreamModeButton() {
+      const nameEl = document.getElementById('stream-mode-current');
+      const iconEl = document.getElementById('stream-mode-icon');
+      const m = STREAM_MODES.find(x => x.value === currentStreamMode) || STREAM_MODES[0];
+      if (nameEl) nameEl.textContent = m.shortName;
+      if (iconEl) { iconEl.innerHTML = m.icon; iconEl.className = `icon ${m.colorClass}`; }
+    }
+
+    function renderStreamModeList() {
+      const list = document.getElementById('stream-mode-list');
+      if (!list) return;
+      list.innerHTML = STREAM_MODES.map(m => {
+        const disabled = m.value === '3' && !cliModeSupported;
+        const isActive = m.value === currentStreamMode;
+        return `
+          <div class="mode-row ${isActive ? 'active' : ''} ${disabled ? 'disabled' : ''}" ${disabled ? '' : `onclick="selectStreamMode('${m.value}')"`}>
+            <div class="mode-row-left">
+              <span class="icon ${m.colorClass}">${m.icon}</span>
+              <span class="mode-row-name">${m.name}</span>
+            </div>
+            ${isActive ? `<span class="icon icon-sm mode-color-amber">${ICON_CHECK_SVG}</span>` : ''}
+          </div>`;
+      }).join('');
+    }
+
+    function selectStreamMode(value) {
+      currentStreamMode = value;
+      localStorage.setItem('antigravity_stream_mode', value);
+      updateStreamModeButton();
+      renderStreamModeList();
+      closeStreamModePicker();
+    }
+
+    function toggleStreamModePicker() {
+      const dropdown = document.getElementById('stream-mode-dropdown');
+      if (!dropdown) return;
+      const opening = !dropdown.classList.contains('open');
+      closeModelPicker();
+      const usagePanel = document.getElementById('usage-panel');
+      if (usagePanel) usagePanel.classList.remove('open');
+      dropdown.classList.toggle('open', opening);
+    }
+
+    function closeStreamModePicker() {
+      const dropdown = document.getElementById('stream-mode-dropdown');
+      if (dropdown) dropdown.classList.remove('open');
+    }
+
+    // Model / Effort Picker (Mode 3). There is no separate --effort flag --
+    // effort is baked into the model slug itself (e.g. gemini-3.7-flash-high
+    // vs -medium vs -low are three distinct slugs), so currentModelSlug here
+    // is the picker's *group* id and currentEffort selects which of that
+    // group's variant_slugs actually gets sent as --model.
+    let modelCatalog = [];
+    let familyLabels = {};
+    let familyUsage = {};
+    let dismissedQuotaKey = '';
+    let currentModelSlug = localStorage.getItem('antigravity_model_slug') || '';
+    let currentEffort = localStorage.getItem('antigravity_effort') || '';
+    let policyDescription = '';
+    const EFFORT_LABELS = { low: 'Low', medium: 'Medium', high: 'High' };
+
+    function resolveCurrentModelSlug() {
+      const model = modelCatalog.find(m => m.slug === currentModelSlug);
+      if (!model) return currentModelSlug;
+      const variants = model.variant_slugs || {};
+      return variants[currentEffort] || variants[''] || Object.values(variants)[0] || model.slug;
+    }
+
+    function isFamilyWeeklyExhausted(family) {
+      const stats = familyUsage[family];
+      return !!stats && stats.weekly_remaining_pct === 0;
+    }
+
+    function formatResetTime(iso) {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      } catch (e) {
+        return iso;
+      }
+    }
+
+    function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+
+    async function loadModelCatalog() {
+      const list = document.getElementById('model-dropdown-list');
+      try {
+        const apiUrl = new URL('api/models', window.location.href).href;
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        modelCatalog = data.models || [];
+        familyLabels = data.family_labels || {};
+
+        const knownSlugs = modelCatalog.map(m => m.slug);
+        if (!currentModelSlug || knownSlugs.indexOf(currentModelSlug) === -1) {
+          currentModelSlug = data.default_model || knownSlugs[0] || '';
+        }
+        const activeModel = modelCatalog.find(m => m.slug === currentModelSlug);
+        if (activeModel && activeModel.efforts.indexOf(currentEffort) === -1) {
+          currentEffort = activeModel.default_effort;
+        }
+        renderModelDropdownList();
+        updateModelPickerButton();
+      } catch (e) {
+        if (list) list.innerHTML = '<div class="model-dropdown-error">⚠️ 모델 목록을 불러오지 못했습니다.</div>';
+      }
+    }
+
+    function updateModelPickerButton() {
+      const model = modelCatalog.find(m => m.slug === currentModelSlug);
+      const nameEl = document.getElementById('model-picker-current');
+      const effortEl = document.getElementById('model-picker-effort');
+      if (nameEl) nameEl.textContent = model ? model.label : '모델 선택';
+      if (effortEl) {
+        if (model && model.efforts.length > 1) {
+          effortEl.textContent = EFFORT_LABELS[currentEffort] || capitalize(currentEffort);
+          effortEl.style.display = '';
+        } else {
+          effortEl.style.display = 'none';
+        }
+      }
+    }
+
+    const ICON_CHEVRON_RIGHT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+    const ICON_INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+
+    function renderModelDropdownList() {
+      const list = document.getElementById('model-dropdown-list');
+      if (!list) return;
+      let html = '';
+      modelCatalog.forEach(m => {
+        const isActive = m.slug === currentModelSlug;
+        const shownEffort = isActive ? currentEffort : m.default_effort;
+        const hasEffortChoice = m.efforts.length > 1;
+        const quotaExhausted = isFamilyWeeklyExhausted(m.family);
+        const trailingIcon = hasEffortChoice
+          ? `<button class="model-row-caret" onclick="toggleEffortFlyout(event, '${m.slug}')"><span class="icon">${ICON_CHEVRON_RIGHT_SVG}</span></button>`
+          : isActive
+          ? `<span class="model-row-check"><span class="icon">${ICON_CHECK_SVG}</span></span>`
+          : `<span style="width:13px;display:inline-block;"></span>`;
+        // A model with effort choices always opens the effort submenu on tap/click
+        // (rather than immediately selecting its default effort and closing) --
+        // hover still previews it on desktop, but touch has no hover at all, so
+        // this is the only way to actually reach the effort options on mobile.
+        const rowMainClick = hasEffortChoice ? `toggleEffortFlyout(event, '${m.slug}')` : `selectModel('${m.slug}')`;
+        html += `
+          <div class="model-row ${isActive ? 'active' : ''}">
+            <div class="model-row-main" onclick="${rowMainClick}">
+              <span class="model-row-name">${m.label}</span>
+            </div>
+            <div class="model-row-right">
+              ${quotaExhausted ? '<span title="주간 할당량 소진">⚠️</span>' : ''}
+              <span class="model-row-effort">${EFFORT_LABELS[shownEffort] || ''}</span>
+              <span class="model-row-badge">${m.badge}<span class="icon">${ICON_INFO_SVG}</span></span>
+              ${trailingIcon}
+            </div>
+            ${hasEffortChoice ? `
+            <div class="effort-flyout" id="effort-flyout-${m.slug}">
+              ${m.efforts.map(ef => `
+                <div class="effort-option ${(isActive && currentEffort === ef) ? 'selected' : ''}" onclick="selectModelEffort(event, '${m.slug}', '${ef}')">
+                  <span>${EFFORT_LABELS[ef]}</span>
+                  ${(isActive && currentEffort === ef) ? `<span class="icon">${ICON_CHECK_SVG}</span>` : ''}
+                </div>
+              `).join('')}
+            </div>` : ''}
+          </div>`;
+      });
+      list.innerHTML = html;
+    }
+
+    function selectModel(slug) {
+      const model = modelCatalog.find(m => m.slug === slug);
+      if (!model) return;
+      currentModelSlug = slug;
+      currentEffort = model.default_effort;
+      localStorage.setItem('antigravity_model_slug', currentModelSlug);
+      localStorage.setItem('antigravity_effort', currentEffort);
+      updateModelPickerButton();
+      renderModelDropdownList();
+      updateQuotaBanner();
+      closeModelPicker();
+    }
+
+    function toggleEffortFlyout(evt, slug) {
+      evt.stopPropagation();
+      document.querySelectorAll('.effort-flyout.open').forEach(el => {
+        if (el.id !== `effort-flyout-${slug}`) el.classList.remove('open');
+      });
+      const flyout = document.getElementById(`effort-flyout-${slug}`);
+      if (flyout) flyout.classList.toggle('open');
+    }
+
+    function selectModelEffort(evt, slug, effort) {
+      evt.stopPropagation();
+      currentModelSlug = slug;
+      currentEffort = effort;
+      localStorage.setItem('antigravity_model_slug', currentModelSlug);
+      localStorage.setItem('antigravity_effort', currentEffort);
+      updateModelPickerButton();
+      renderModelDropdownList();
+      updateQuotaBanner();
+      closeModelPicker();
+    }
+
+    function toggleModelPicker() {
+      const dropdown = document.getElementById('model-dropdown');
+      if (!dropdown) return;
+      const opening = !dropdown.classList.contains('open');
+      closeStreamModePicker();
+      const usagePanel = document.getElementById('usage-panel');
+      if (usagePanel) usagePanel.classList.remove('open');
+      dropdown.classList.toggle('open', opening);
+    }
+
+    function closeModelPicker() {
+      const dropdown = document.getElementById('model-dropdown');
+      if (dropdown) dropdown.classList.remove('open');
+      document.querySelectorAll('.effort-flyout.open').forEach(el => el.classList.remove('open'));
+    }
+
+    document.addEventListener('click', (e) => {
+      const picker = document.getElementById('model-picker');
+      if (picker && !picker.contains(e.target)) {
+        closeModelPicker();
+        const usagePanel = document.getElementById('usage-panel');
+        if (usagePanel) usagePanel.classList.remove('open');
+      }
+      const streamPicker = document.getElementById('stream-mode-picker');
+      if (streamPicker && !streamPicker.contains(e.target)) {
+        closeStreamModePicker();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        startNewSession();
+      }
+    });
+
+    let usagePanelCloseTimer = null;
+
+    async function openUsagePanel() {
+      clearTimeout(usagePanelCloseTimer);
+      const panel = document.getElementById('usage-panel');
+      if (!panel) return;
+      panel.classList.add('open');
+      // prefetchUsage() already keeps this panel rendered in the background
+      // (see DOMContentLoaded / the 55s interval) -- only block on a fresh
+      // fetch here if nothing has come back yet at all.
+      if (Object.keys(familyUsage).length === 0) {
+        await loadUsageSnapshot();
+      }
+    }
+
+    function closeUsagePanel() {
+      clearTimeout(usagePanelCloseTimer);
+      usagePanelCloseTimer = setTimeout(() => {
+        const panel = document.getElementById('usage-panel');
+        if (panel) panel.classList.remove('open');
+      }, 150);
+    }
+
+    function renderUsageBar(remainingPct, resetTime, label, windowKey, agyDescription) {
+      // Matches the official Antigravity app's own usage panel: the gauge
+      // shows *remaining* % (not used), as a small ring next to the number
+      // rather than a big ring with the number inside it.
+      const safeRemaining = (typeof remainingPct === 'number') ? Math.max(0, Math.min(100, remainingPct)) : null;
+      const color = safeRemaining === null ? 'var(--text-muted)'
+        : safeRemaining <= 15 ? 'var(--accent-red)'
+        : safeRemaining <= 40 ? 'var(--accent-yellow)'
+        : 'var(--accent-green)';
+      // "N/A" (not "0%") when the account's response simply has no bucket
+      // for this window at all -- distinct from an actual 0% remaining.
+      const display = safeRemaining === null ? 'N/A' : `${safeRemaining}%`;
+      const windowLabel = windowKey === 'weekly' ? '주간' : '5시간';
+      // Prefer agy's own human-readable status line (has the real relative
+      // refresh time, e.g. "will fully refresh in 6 days, 2 hours") over a
+      // locally-generated one.
+      const hint = agyDescription || (safeRemaining === null
+        ? '이 계정 응답에는 해당 한도 정보가 없습니다.'
+        : safeRemaining === 0
+        ? `${windowLabel} 한도를 모두 사용했습니다.${resetTime ? ` ${formatResetTime(resetTime)}에 초기화됩니다.` : ''}`
+        : `${windowLabel} 한도의 일부를 사용했습니다.`);
+      return `
+        <div class="usage-row">
+          <div class="usage-row-label">
+            <span>${label}</span>
+            <span class="usage-row-hint">${hint}</span>
+          </div>
+          <div class="usage-row-gauge">
+            <span class="usage-row-pct">${display}</span>
+            <span class="usage-mini-ring" style="--pct: ${safeRemaining === null ? 0 : safeRemaining}; --ring-color: ${color};"></span>
+          </div>
+        </div>`;
+    }
+
+    function dismissQuotaBanner() {
+      const banner = document.getElementById('quota-banner');
+      if (banner) banner.style.display = 'none';
+      dismissedQuotaKey = quotaKeyForCurrentModel();
+    }
+
+    function quotaKeyForCurrentModel() {
+      const model = modelCatalog.find(m => m.slug === currentModelSlug);
+      if (!model) return '';
+      const stats = familyUsage[model.family];
+      return `${model.family}:${stats ? stats.weekly_reset_time || '' : ''}`;
+    }
+
+    function updateQuotaBanner() {
+      const banner = document.getElementById('quota-banner');
+      const descEl = document.getElementById('quota-banner-desc');
+      if (!banner || !descEl) return;
+      const model = modelCatalog.find(m => m.slug === currentModelSlug);
+      if (!model || !isFamilyWeeklyExhausted(model.family)) {
+        banner.style.display = 'none';
+        return;
+      }
+      const key = quotaKeyForCurrentModel();
+      if (key === dismissedQuotaKey) return;
+      const resetTime = familyUsage[model.family].weekly_reset_time;
+      descEl.textContent = resetTime
+        ? `이 모델의 주간 할당량을 모두 사용했습니다. ${formatResetTime(resetTime)}에 초기화됩니다.`
+        : '이 모델의 주간 할당량을 모두 사용했습니다.';
+      banner.style.display = 'flex';
+    }
+
+    function renderUsagePanelFromData(data) {
+      const panel = document.getElementById('usage-panel');
+      if (!panel) return;
+      if (!data.available) {
+        panel.innerHTML = `<div class="usage-panel-error">⚠️ 사용량 정보를 가져올 수 없습니다.<br>${data.reason || ''}</div>`;
+        return;
+      }
+      familyUsage = data.families || {};
+      policyDescription = data.policy_description || '';
+      let html = '';
+      const labels = data.family_labels || {};
+      Object.keys(labels).forEach(fam => {
+        const stats = familyUsage[fam] || {};
+        html += `<div class="usage-family-title">${labels[fam]}</div>`;
+        html += renderUsageBar(stats.weekly_remaining_pct, stats.weekly_reset_time, 'Weekly Limit Remaining', 'weekly', stats.weekly_description);
+        html += renderUsageBar(stats.five_hour_remaining_pct, stats.five_hour_reset_time, 'Five Hour Limit Remaining', 'five_hour', stats.five_hour_description);
+      });
+      panel.innerHTML = html || '<div class="usage-panel-error">표시할 사용량 데이터가 없습니다.</div>';
+      renderModelDropdownList();
+      updateQuotaBanner();
+    }
+
+
+    // agy's own /usage refresh can take 10+ seconds, so warm the server-side
+    // cache in the background instead of making the user wait every time
+    // they open the panel -- see core/usage_client.py's _CACHE_TTL_SEC. Also
+    // keeps the exhausted-model warning icons and the quota banner current
+    // even while the usage panel itself is closed.
+    async function prefetchUsage() {
+      try {
+        const apiUrl = new URL('api/usage', window.location.href).href;
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        // Renders the (currently hidden) usage-panel content too, not just
+        // the derived model warnings/banner -- so opening the panel later
+        // shows this immediately instead of triggering its own fresh fetch.
+        renderUsagePanelFromData(data);
+      } catch (e) {}
+    }
+
+    async function loadUsageSnapshot() {
+      const panel = document.getElementById('usage-panel');
+      if (!panel) return;
+      panel.innerHTML = '<div class="usage-panel-loading">사용량 불러오는 중...</div>';
+      try {
+        const apiUrl = new URL('api/usage', window.location.href).href;
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        renderUsagePanelFromData(data);
+      } catch (e) {
+        panel.innerHTML = '<div class="usage-panel-error">⚠️ 사용량 조회 중 오류가 발생했습니다.</div>';
+      }
     }
 
     // Session Management & History Restore
@@ -522,6 +924,74 @@ function switchTab(tabId) {
       return str;
     }
 
+    const ICON_CHECK_SQUARE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
+    const ICON_SQUARE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+    const ICON_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
+    let sessionSelectMode = false;
+    let selectedSessionIds = new Set();
+    let lastLoadedSessionIds = [];
+
+    function toggleSessionSelectMode() {
+      sessionSelectMode = !sessionSelectMode;
+      selectedSessionIds.clear();
+      const btn = document.getElementById('session-select-btn');
+      if (btn) btn.textContent = sessionSelectMode ? '완료' : '선택';
+      loadSessionsList();
+    }
+
+    function updateSessionSelectToolbar() {
+      const toolbar = document.getElementById('session-select-toolbar');
+      const footer = document.getElementById('sidebar-footer');
+      const allLabel = document.getElementById('session-select-all-label');
+      const delBtn = document.getElementById('session-delete-btn');
+      const delCount = document.getElementById('session-delete-count');
+      if (toolbar) toolbar.style.display = sessionSelectMode ? 'flex' : 'none';
+      if (footer) footer.style.display = sessionSelectMode ? 'none' : 'block';
+      if (allLabel) allLabel.textContent = (selectedSessionIds.size > 0 && selectedSessionIds.size === lastLoadedSessionIds.length) ? '선택 해제' : '전체 선택';
+      if (delBtn) delBtn.disabled = selectedSessionIds.size === 0;
+      if (delCount) delCount.textContent = selectedSessionIds.size;
+    }
+
+    function selectAllSessions() {
+      if (selectedSessionIds.size === lastLoadedSessionIds.length) {
+        selectedSessionIds.clear();
+      } else {
+        lastLoadedSessionIds.forEach(id => selectedSessionIds.add(id));
+      }
+      loadSessionsList();
+    }
+
+    async function deleteSelectedSessions() {
+      if (selectedSessionIds.size === 0) return;
+      if (!confirm(`선택한 ${selectedSessionIds.size}개의 대화 기록을 삭제하시겠습니까?`)) return;
+      try {
+        const apiUrl = new URL('api/sessions', window.location.href).href;
+        await fetch(apiUrl, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_ids: Array.from(selectedSessionIds) })
+        });
+      } catch (e) {}
+      if (selectedSessionIds.has(currentConversationId)) startNewSession();
+      selectedSessionIds.clear();
+      sessionSelectMode = false;
+      const btn = document.getElementById('session-select-btn');
+      if (btn) btn.textContent = '선택';
+      loadSessionsList();
+    }
+
+    async function deleteSingleSession(cid, evt) {
+      if (evt) evt.stopPropagation();
+      if (!confirm('이 대화 기록을 삭제하시겠습니까?')) return;
+      try {
+        const apiUrl = new URL('api/sessions/' + encodeURIComponent(cid), window.location.href).href;
+        await fetch(apiUrl, { method: 'DELETE' });
+      } catch (e) {}
+      if (cid === currentConversationId) startNewSession();
+      loadSessionsList();
+    }
+
     async function loadSessionsList() {
       const listEl = document.getElementById('session-list');
       if (!listEl) return;
@@ -532,26 +1002,39 @@ function switchTab(tabId) {
         const data = await res.json();
         const sessions = data.sessions || [];
 
+        const titleEl = document.getElementById('session-list-title');
+        if (titleEl) titleEl.textContent = `최근 대화 기록 (${sessions.length})`;
+        const footerEl = document.getElementById('sidebar-footer');
+        if (footerEl) footerEl.textContent = `총 ${sessions.length}개 세션`;
+        const selectBtn = document.getElementById('session-select-btn');
+        if (selectBtn) selectBtn.style.display = sessions.length > 0 ? '' : 'none';
+        lastLoadedSessionIds = sessions.map(s => s.conversation_id);
+        updateSessionSelectToolbar();
+
         if (sessions.length === 0) {
-          listEl.innerHTML = "<div class='session-loading'>저장된 대화가 없습니다.</div>";
+          listEl.innerHTML = "<div class='session-loading'>대화 기록이 없습니다.</div>";
           return;
         }
 
         listEl.innerHTML = '';
         sessions.forEach(sess => {
+          const cid = sess.conversation_id;
+          const isChecked = selectedSessionIds.has(cid);
           const card = document.createElement('div');
-          card.className = `session-card ${sess.conversation_id === currentConversationId ? 'active' : ''}`;
-          card.setAttribute('data-cid', sess.conversation_id);
-          card.onclick = () => openSession(sess.conversation_id);
+          card.className = `session-card ${cid === currentConversationId && !sessionSelectMode ? 'active' : ''} ${isChecked ? 'selected' : ''}`;
+          card.setAttribute('data-cid', cid);
+          card.onclick = sessionSelectMode
+            ? () => toggleSessionSelected(cid, card)
+            : () => openSession(cid);
 
-          const timeStr = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
           const displayTitle = decodeUnicodeString(sess.title || '새 대화');
           card.innerHTML = `
-            <div class="session-card-title">${displayTitle}</div>
-            <div class="session-card-meta">
-              <span>💬 ${sess.turns}턴</span>
-              <span>${timeStr}</span>
+            ${sessionSelectMode ? `<span class="icon session-card-checkbox">${isChecked ? ICON_CHECK_SQUARE_SVG : ICON_SQUARE_SVG}</span>` : ''}
+            <div class="session-card-body">
+              <div class="session-card-title">${displayTitle}</div>
+              <div class="session-card-meta"><span>${sess.date_str || ''}</span><span>·</span><span>${sess.turns}단계</span></div>
             </div>
+            ${!sessionSelectMode ? `<button class="session-card-delete-btn" onclick="deleteSingleSession('${cid}', event)" title="대화 삭제"><span class="icon">${ICON_TRASH_SVG}</span></button>` : ''}
           `;
           listEl.appendChild(card);
         });
@@ -560,21 +1043,34 @@ function switchTab(tabId) {
       }
     }
 
+    function toggleSessionSelected(cid, cardEl) {
+      if (selectedSessionIds.has(cid)) {
+        selectedSessionIds.delete(cid);
+      } else {
+        selectedSessionIds.add(cid);
+      }
+      cardEl.classList.toggle('selected', selectedSessionIds.has(cid));
+      const iconEl = cardEl.querySelector('.session-card-checkbox');
+      if (iconEl) iconEl.innerHTML = selectedSessionIds.has(cid) ? ICON_CHECK_SQUARE_SVG : ICON_SQUARE_SVG;
+      updateSessionSelectToolbar();
+    }
+
     function startNewSession() {
       currentConversationId = '';
       localStorage.removeItem('antigravity_active_conv_id');
       const box = document.getElementById('chat-box');
       box.innerHTML = `
         <div class="hero-card" id="chat-hero-card">
-          <h2>Google Antigravity 스마트홈 실시간 어시스턴트</h2>
-          <p>자연어 발화 및 Antigravity AI 딥 브레인이 연동된 실시간 스트리밍 대시보드입니다.</p>
-          <div class="quick-chips">
-            <div class="chip" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 종합 상황</div>
-            <div class="chip" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도</div>
-            <div class="chip" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도</div>
-            <div class="chip" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명</div>
-            <div class="chip" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그</div>
-            <div class="chip" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</div>
+          <span class="hero-badge">Google Antigravity Engine</span>
+          <h2>무엇을 도와드릴까요?</h2>
+          <p>Home Assistant 스마트홈 제어 및 환경 분석 실시간 AI 어시스턴트입니다.</p>
+          <div class="quick-grid">
+            <button class="quick-card" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 우리집 종합 상황</button>
+            <button class="quick-card" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도 조회</button>
+            <button class="quick-card" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도 조회</button>
+            <button class="quick-card" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명 목록</button>
+            <button class="quick-card" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그 진단</button>
+            <button class="quick-card" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</button>
           </div>
         </div>
       `;
@@ -779,28 +1275,73 @@ function switchTab(tabId) {
     }
 
     window.addEventListener('DOMContentLoaded', async () => {
-      const savedMode = localStorage.getItem('antigravity_stream_mode') || '1';
-      const sel = document.getElementById('stream-mode');
-      if (sel) sel.value = savedMode;
+      updateStreamModeButton();
+      renderStreamModeList();
       const sessBadge = document.getElementById('session-tokens');
       if (sessBadge) sessBadge.textContent = sessionTotalTokens.toLocaleString();
 
       // Initial Status Poll & Load Session History List
       await pollStatus();
       await loadSessionsList();
+      await loadModelCatalog();
+      prefetchUsage();
 
       // Start 3-second Periodic Status Polling
       setInterval(pollStatus, 3000);
+      // Keep the usage snapshot warm so opening "View Usage" feels instant
+      setInterval(prefetchUsage, 55000);
     });
 
     function updateSendBtn() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
       const hasText = input.value.trim().length > 0;
-      btn.style.opacity = hasText ? '1' : '0.4';
-      btn.style.background = hasText ? 'var(--accent-blue)' : 'var(--bg-bubble-user)';
-      btn.style.transform = hasText ? 'scale(1.05)' : 'scale(1)';
-      btn.style.cursor = hasText ? 'pointer' : 'default';
+      btn.classList.toggle('has-text', hasText);
+      btn.disabled = !hasText;
+    }
+
+    // Voice input (Web Speech API) -- client-side only, no backend involved.
+    let speechRecognition = null;
+    let isRecording = false;
+
+    function toggleRecording() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert('이 브라우저는 음성 인식(STT)을 지원하지 않습니다. Chrome 또는 Edge 브라우저를 권장합니다.');
+        return;
+      }
+      const micBtn = document.getElementById('mic-btn');
+      if (isRecording) {
+        if (speechRecognition) speechRecognition.stop();
+        isRecording = false;
+        if (micBtn) micBtn.classList.remove('recording');
+        return;
+      }
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'ko-KR';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.onstart = () => {
+          isRecording = true;
+          if (micBtn) micBtn.classList.add('recording');
+        };
+        recognition.onresult = (event) => {
+          const input = document.getElementById('user-input');
+          const transcript = Array.from(event.results).map(r => r[0].transcript).join('');
+          if (input) { input.value = transcript; updateSendBtn(); }
+        };
+        const stopRecording = () => {
+          isRecording = false;
+          if (micBtn) micBtn.classList.remove('recording');
+        };
+        recognition.onerror = stopRecording;
+        recognition.onend = stopRecording;
+        recognition.start();
+        speechRecognition = recognition;
+      } catch (e) {
+        isRecording = false;
+      }
     }
 
     function sendQuick(prompt) {
@@ -821,8 +1362,7 @@ function switchTab(tabId) {
     async function sendMessage() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
-      const modeSel = document.getElementById('stream-mode');
-      const streamMode = modeSel ? parseInt(modeSel.value) : 1;
+      const streamMode = parseInt(currentStreamMode) || 1;
       const prompt = input.value.trim();
       if (!prompt) return;
 
@@ -849,7 +1389,8 @@ function switchTab(tabId) {
             is_direct_llm: isDirectLLM,
             stream_mode: streamMode,
             client_width: window.innerWidth,
-            is_mobile: isMobile
+            is_mobile: isMobile,
+            model: resolveCurrentModelSlug()
           })
         });
 
