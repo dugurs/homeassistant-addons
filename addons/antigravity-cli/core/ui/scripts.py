@@ -28,6 +28,39 @@ function notSupportedYet(feature) {
       } else if (tabId === 'terminal') {
         if (chatView) chatView.classList.remove('active');
         if (termView) termView.classList.add('active');
+        closeSidebarForTerminalMode();
+        const overlay = document.getElementById('terminal-confirm-overlay');
+        if (overlay) overlay.style.display = 'flex';
+      }
+    }
+
+    // "agy를 실행하시겠습니까?" Yes/No shown on entering the terminal tab
+    // (see switchTab above), instead of landing straight on the bash cursor.
+    // Yes types `agy` + Enter into the same persistent tmux session ttyd is
+    // attached to (server-side, via /api/terminal/run_agy) -- exactly what
+    // the user would've typed by hand. No just dismisses the prompt.
+    async function confirmRunAgy(shouldRun) {
+      const overlay = document.getElementById('terminal-confirm-overlay');
+      if (overlay) overlay.style.display = 'none';
+      if (!shouldRun) return;
+      try {
+        const apiUrl = new URL('api/run_agy', window.location.href).href;
+        await fetch(apiUrl, { method: 'POST' });
+      } catch (e) {}
+    }
+
+    // Terminal mode wants the full width -- close the left session sidebar
+    // (collapsed on desktop, slid-out on mobile) the same way its own close
+    // controls would, rather than leaving it open over the terminal.
+    function closeSidebarForTerminalMode() {
+      const sidebar = document.getElementById('session-sidebar');
+      if (!sidebar) return;
+      if (window.innerWidth <= 768) {
+        sidebar.classList.remove('open');
+        const overlay = document.getElementById('sidebar-overlay');
+        if (overlay) overlay.classList.remove('open');
+      } else {
+        sidebar.classList.add('collapsed');
       }
     }
 
@@ -122,48 +155,36 @@ function notSupportedYet(feature) {
       });
     }
 
-    function createBotStreamMessage(streamMode) {
-      const box = document.getElementById('chat-box');
+    // Shared bot-bubble skeleton -- the ONE markup template for a bot reply,
+    // used identically whether the answer is arriving live (createBotStreamMessage)
+    // or being rendered from restored history (buildRestoredBotRow). Previously
+    // these were two separately-maintained HTML strings that had drifted apart
+    // (no header/view-toggle/raw-view on restored bubbles), which is what made
+    // restored conversations look different from a live answer.
+    function buildBotBubbleDOM(modeText, modeClass, timeStr) {
       const row = document.createElement('div');
-      const timeStr = getCurrentTimeStr();
-      const startTime = performance.now();
-      
-      let modeText = '🧠 AI 딥 브레인';
-      let modeClass = 'mode-badge';
-      if (streamMode === 3) {
-        modeText = '🚀 Headless CLI';
-        modeClass = 'mode-badge cli';
-      } else if (streamMode === 2) {
-        modeText = '⚡ 초고속 스마트홈';
-        modeClass = 'mode-badge fast';
-      }
-
       row.className = 'msg-row bot';
       row.innerHTML = `
         <div class="bubble-wrap">
           <div class="bubble">
-            <div class="bubble-header">
-              <div class="header-left-group">
-                <span class="${modeClass}">${modeText}</span>
-                <div class="view-toggle-wrap">
-                  <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
-                  <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 원문</button>
-                </div>
-              </div>
-              <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
-            </div>
-            <!-- Mini Terminal Live Window for real-time operations -->
-            <div class="term-box" style="display: none;">
+            <!-- Reasoning/tool-call log -- header always visible (carries the
+                 mode tag), body only shown once there's an actual line to show. -->
+            <div class="term-box">
               <div class="term-header">
-                <div class="term-dots">
-                  <span class="term-dot red"></span>
-                  <span class="term-dot yellow"></span>
-                  <span class="term-dot green"></span>
+                <div class="term-header-left">
+                  <span class="term-mode-tag ${modeClass}">${modeText}</span>
+                  <span class="term-title">💻 Antigravity Terminal Live</span>
                 </div>
-                <span class="term-title">💻 Antigravity Terminal Live</span>
                 <span class="term-badge live">● LIVE</span>
               </div>
-              <div class="term-body"></div>
+              <div class="term-body" style="display: none;"></div>
+            </div>
+            <div class="bubble-header">
+              <div class="view-toggle-wrap">
+                <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
+                <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 원문</button>
+              </div>
+              <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
             </div>
             <!-- Main Final Answer Content -->
             <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 처리 중...</span></div>
@@ -177,16 +198,37 @@ function notSupportedYet(feature) {
           </div>
         </div>
       `;
+      return {
+        row,
+        termBox: row.querySelector('.term-box'),
+        termBody: row.querySelector('.term-body'),
+        termBadge: row.querySelector('.term-badge'),
+        answerContent: row.querySelector('.answer-content'),
+        rawCode: row.querySelector('.raw-markdown-view code'),
+        latencyEl: row.querySelector('.meta-latency'),
+        tokensEl: row.querySelector('.meta-tokens'),
+      };
+    }
+
+    // Short "[고속]/[복합]/[CLI]" tag for the reasoning-log header, derived
+    // from STREAM_MODES (defined further below) so the picker's mode names
+    // and the bubble's mode tag can never drift apart the way the old
+    // hardcoded emoji-badge text did.
+    function modeBadgeFor(streamMode) {
+      const m = STREAM_MODES.find(x => x.value === String(streamMode)) || STREAM_MODES[0];
+      return { text: `[${m.shortName}]`, cls: m.colorClass };
+    }
+
+    function createBotStreamMessage(streamMode) {
+      const box = document.getElementById('chat-box');
+      const timeStr = getCurrentTimeStr();
+      const startTime = performance.now();
+
+      const { text: modeText, cls: modeClass } = modeBadgeFor(streamMode);
+      const { row, termBody, termBadge, answerContent, rawCode, latencyEl, tokensEl } =
+        buildBotBubbleDOM(modeText, modeClass, timeStr);
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
-
-      const termBox = row.querySelector('.term-box');
-      const termBody = row.querySelector('.term-body');
-      const termBadge = row.querySelector('.term-badge');
-      const answerContent = row.querySelector('.answer-content');
-      const rawCode = row.querySelector('.raw-markdown-view code');
-      const latencyEl = row.querySelector('.meta-latency');
-      const tokensEl = row.querySelector('.meta-tokens');
 
       let answerText = "";
       let finished = false;
@@ -203,8 +245,8 @@ function notSupportedYet(feature) {
 
       return {
         addLiveLog: function(logStr) {
-          if (!termBox || !termBody) return;
-          termBox.style.display = 'block';
+          if (!termBody) return;
+          termBody.style.display = 'block';
           const lineEl = document.createElement('div');
           lineEl.className = 'term-line';
           
@@ -467,20 +509,6 @@ function notSupportedYet(feature) {
         if (valAddonRam) valAddonRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
         if (valSysRam) valSysRam.textContent = `${data.used_memory_gb || 0}GB (${sysRamPct.toFixed(1)}%)`;
 
-        // Update Panel Stat Boxes
-        const pstatAddonRam = document.getElementById('pstat-addon-ram');
-        const pstatSysRam = document.getElementById('pstat-sys-ram');
-        const pstatUptime = document.getElementById('pstat-uptime');
-        const pstatStream = document.getElementById('pstat-stream');
-
-        if (pstatAddonRam) pstatAddonRam.textContent = `${addonRamMb} MB (${addonRamPct.toFixed(1)}%)`;
-        if (pstatSysRam) pstatSysRam.textContent = `${data.used_memory_gb || 0}GB / ${data.total_memory_gb || 0}GB (${sysRamPct.toFixed(0)}%)`;
-        if (pstatUptime) pstatUptime.textContent = formatUptime(data.uptime);
-        if (pstatStream) {
-          pstatStream.textContent = data.agy_stream_supported ? '✅ 지원 (Host 모드)' : '❌ 미지원 (kvm64)';
-          pstatStream.style.color = data.agy_stream_supported ? 'var(--accent-green)' : 'var(--text-muted)';
-        }
-
         // Mode 3 (CLI 모드) Conditional Enable/Disable
         cliModeSupported = !!data.agy_stream_supported;
         if (!cliModeSupported && currentStreamMode === '3') {
@@ -505,9 +533,9 @@ function notSupportedYet(feature) {
     const ICON_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
     const STREAM_MODES = [
-      { value: '1', icon: ICON_ZAP_SVG, colorClass: 'mode-color-amber', shortName: '고속', name: '스마트홈 고속 제어', desc: '0.05초 네이티브 기기 즉시 제어 & 빠른 질의' },
-      { value: '2', icon: ICON_BRAIN_SVG, colorClass: 'mode-color-purple', shortName: '복합', name: 'AI 딥 브레인', desc: '다차원 환경 분석 & 스마트 어드바이스' },
-      { value: '3', icon: ICON_TERMINAL_SVG, colorClass: 'mode-color-sky', shortName: 'CLI', name: 'Antigravity CLI', desc: '공식 agy 0초 실시간 스트리밍 엔진' },
+      { value: '1', icon: ICON_ZAP_SVG, colorClass: 'mode-color-amber', shortName: '고속', name: '고속 제어 모드', desc: '0.05초 네이티브 기기 즉시 제어 & 빠른 질의' },
+      { value: '2', icon: ICON_BRAIN_SVG, colorClass: 'mode-color-purple', shortName: '복합', name: '고속 제어 & 스마트 모드', desc: '다차원 환경 분석 & 스마트 어드바이스' },
+      { value: '3', icon: ICON_TERMINAL_SVG, colorClass: 'mode-color-sky', shortName: 'CLI', name: 'CLI 추론 모드', desc: '공식 agy 0초 실시간 스트리밍 엔진' },
     ];
     let currentStreamMode = localStorage.getItem('antigravity_stream_mode') || '3';
     let cliModeSupported = true;
@@ -616,6 +644,7 @@ function notSupportedYet(feature) {
         }
         renderModelDropdownList();
         updateModelPickerButton();
+        updateModelPickerUsageRing();
       } catch (e) {
         if (list) list.innerHTML = '<div class="model-dropdown-error">⚠️ 모델 목록을 불러오지 못했습니다.</div>';
       }
@@ -693,6 +722,7 @@ function notSupportedYet(feature) {
       updateModelPickerButton();
       renderModelDropdownList();
       updateQuotaBanner();
+      updateModelPickerUsageRing();
       closeModelPicker();
     }
 
@@ -714,6 +744,7 @@ function notSupportedYet(feature) {
       updateModelPickerButton();
       renderModelDropdownList();
       updateQuotaBanner();
+      updateModelPickerUsageRing();
       closeModelPicker();
     }
 
@@ -861,6 +892,40 @@ function notSupportedYet(feature) {
       panel.innerHTML = html || '<div class="usage-panel-error">표시할 사용량 데이터가 없습니다.</div>';
       renderModelDropdownList();
       updateQuotaBanner();
+      updateModelPickerUsageRing();
+    }
+
+    // Small ring gauge inline in the model-picker button itself, right after
+    // the effort tag ("Low"/"Medium"/"High") -- no separate panel/block, no
+    // label or percentage text, just the ring. Prefers the weekly limit
+    // (the more meaningful long-term budget); falls back to the 5-hour
+    // window only if weekly isn't available for this family; hides entirely
+    // if neither is (no fabricated "N/A" ring).
+    function updateModelPickerUsageRing() {
+      const ring = document.getElementById('model-picker-usage-ring');
+      if (!ring) return;
+      const model = modelCatalog.find(m => m.slug === currentModelSlug);
+      const stats = model ? familyUsage[model.family] : null;
+
+      let pct = null;
+      let hint = '';
+      if (stats && typeof stats.weekly_remaining_pct === 'number') {
+        pct = stats.weekly_remaining_pct;
+        hint = `주간 잔여 ${pct}%`;
+      } else if (stats && typeof stats.five_hour_remaining_pct === 'number') {
+        pct = stats.five_hour_remaining_pct;
+        hint = `5시간 잔여 ${pct}%`;
+      }
+
+      if (pct === null) {
+        ring.style.display = 'none';
+        return;
+      }
+      const color = pct <= 15 ? 'var(--accent-red)' : pct <= 40 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+      ring.style.setProperty('--pct', pct);
+      ring.style.setProperty('--ring-color', color);
+      ring.title = hint;
+      ring.style.display = 'inline-block';
     }
 
 
@@ -898,8 +963,20 @@ function notSupportedYet(feature) {
     // Session Management & History Restore
     let currentConversationId = localStorage.getItem('antigravity_active_conv_id') || '';
     let loadedHistorySteps = [];
-    let currentHistoryRenderIndex = 0;
-    const HISTORY_CHUNK_SIZE = 15;
+    // Raw transcript steps are grouped into turns (one USER_INPUT + every
+    // following non-USER_INPUT step up to the next USER_INPUT) before any
+    // pagination happens. Paginating by raw step count instead of by turn
+    // used to slice straight through a turn's reasoning/tool-call steps --
+    // a Mode 3 turn alone can be dozens of steps (one PLANNER_RESPONSE per
+    // tool call) -- which showed up as an answer bubble with no question
+    // above it, or a question followed by a fake "작업이 완료되었습니다"
+    // placeholder once the rest loaded. Paginating by whole turns instead
+    // makes that structurally impossible.
+    let sessionTurns = [];
+    let renderedFromTurnIndex = 0;
+    let isLoadingMoreHistory = false;
+    let historyScrollObserver = null;
+    const HISTORY_TURNS_PER_PAGE = 10;
 
     function toggleSessionSidebar() {
       const sidebar = document.getElementById('session-sidebar');
@@ -1055,7 +1132,15 @@ function notSupportedYet(feature) {
       updateSessionSelectToolbar();
     }
 
+    function teardownHistoryScrollObserver() {
+      if (historyScrollObserver) {
+        historyScrollObserver.disconnect();
+        historyScrollObserver = null;
+      }
+    }
+
     function startNewSession() {
+      teardownHistoryScrollObserver();
       currentConversationId = '';
       localStorage.removeItem('antigravity_active_conv_id');
       const box = document.getElementById('chat-box');
@@ -1081,8 +1166,32 @@ function notSupportedYet(feature) {
       document.getElementById('user-input').focus();
     }
 
+    // Group a flat transcript into turns: one USER_INPUT plus every following
+    // non-USER_INPUT step up to the next USER_INPUT. Pagination and rendering
+    // both operate on these groups, never on raw step indices -- that's what
+    // guarantees a turn's reasoning/tool-call steps can never be split across
+    // a page boundary.
+    function buildSessionTurns(steps) {
+      const turns = [];
+      let i = 0;
+      while (i < steps.length) {
+        const step = steps[i];
+        const isUserStart = step.type === 'USER_INPUT';
+        const turn = { user: isUserStart ? step : null, responses: [] };
+        if (isUserStart) i++;
+        else turn.responses.push(step), i++; // defensive: responses with no leading USER_INPUT
+        while (i < steps.length && steps[i].type !== 'USER_INPUT') {
+          turn.responses.push(steps[i]);
+          i++;
+        }
+        turns.push(turn);
+      }
+      return turns;
+    }
+
     async function openSession(cid) {
       if (!cid) return;
+      teardownHistoryScrollObserver();
       currentConversationId = cid;
       localStorage.setItem('antigravity_active_conv_id', cid);
 
@@ -1110,18 +1219,17 @@ function notSupportedYet(feature) {
           return;
         }
 
-        // Render latest chunk with pagination if long
-        currentHistoryRenderIndex = Math.max(0, loadedHistorySteps.length - HISTORY_CHUNK_SIZE);
+        sessionTurns = buildSessionTurns(loadedHistorySteps);
+        renderedFromTurnIndex = Math.max(0, sessionTurns.length - HISTORY_TURNS_PER_PAGE);
 
-        if (currentHistoryRenderIndex > 0) {
-          const loadMoreDiv = document.createElement('div');
-          loadMoreDiv.id = 'history-load-more';
-          loadMoreDiv.className = 'history-load-more';
-          loadMoreDiv.innerHTML = `<button onclick="loadMoreHistory()">⬆️ 이전 대화 ${currentHistoryRenderIndex}개 더보기</button>`;
-          box.appendChild(loadMoreDiv);
-        }
+        const statusDiv = document.createElement('div');
+        statusDiv.id = 'history-load-status';
+        statusDiv.className = 'history-load-more';
+        box.appendChild(statusDiv);
 
-        renderHistorySteps(currentHistoryRenderIndex, loadedHistorySteps.length);
+        renderTurnsRange(renderedFromTurnIndex, sessionTurns.length, false);
+        updateHistoryStatusIndicator();
+        setupHistoryScrollObserver();
         box.scrollTop = box.scrollHeight;
       } catch (err) {
         box.innerHTML = `<div class='session-loading' style='color: var(--accent-red);'>히스토리 로드 실패: ${err.message}</div>`;
@@ -1140,138 +1248,167 @@ function notSupportedYet(feature) {
       return decodeUnicodeString(text);
     }
 
-    function renderHistorySteps(fromIdx, toIdx, prepend = false) {
-      const box = document.getElementById('chat-box');
-      const loadMoreEl = document.getElementById('history-load-more');
-      const fragment = document.createDocumentFragment();
-
-      const slice = loadedHistorySteps.slice(fromIdx, toIdx);
-
-      // Group interactions (USER_INPUT -> aggregated PLANNER_RESPONSES)
-      let i = 0;
-      while (i < slice.length) {
-        const step = slice[i];
-        if (step.type === 'USER_INPUT') {
-          const row = document.createElement('div');
-          row.className = 'msg-row user';
-          const timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
-          const cleanText = cleanUserPromptString(step.content || '');
-          row.innerHTML = `
-            <div class="bubble-wrap">
-              <div class="bubble">${cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
-              <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
-            </div>
-          `;
-          fragment.appendChild(row);
-          i++;
-        } else {
-          // Gather ALL contiguous response/tool/planner steps until the next USER_INPUT
-          let thinkingList = [];
-          let toolCalls = [];
-          let finalContent = '';
-          let lastTimeStr = '';
-
-          while (i < slice.length && slice[i].type !== 'USER_INPUT') {
-            const cur = slice[i];
-            if (cur.created_at) {
-              lastTimeStr = new Date(cur.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-            }
-            if (cur.thinking && typeof cur.thinking === 'string' && cur.thinking.trim()) {
-              thinkingList.push(cur.thinking.trim());
-            }
-            if (cur.tool_calls && Array.isArray(cur.tool_calls)) {
-              toolCalls = toolCalls.concat(cur.tool_calls);
-            }
-            if (cur.content && typeof cur.content === 'string' && cur.content.trim()) {
-              finalContent = cur.content.trim();
-            }
-            i++;
-          }
-
-          const botRow = document.createElement('div');
-          botRow.className = 'msg-row bot';
-
-          let toolSectionHtml = '';
-          if (thinkingList.length > 0 || toolCalls.length > 0) {
-            let logLines = '';
-            thinkingList.forEach(th => {
-              logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${th.replace(/</g, "&lt;")}</span></div>`;
-            });
-            toolCalls.forEach(tc => {
-              const tname = tc.name || 'tool';
-              let act = '';
-              if (tc.toolAction) act = tc.toolAction;
-              else if (tc.toolSummary) act = tc.toolSummary;
-              else if (tc.args) act = JSON.stringify(tc.args);
-              logLines += `<div class="term-line"><span class="term-text tool">🔧 [도구] ${tname}: ${act.replace(/</g, "&lt;")}</span></div>`;
-            });
-
-            const totalCount = toolCalls.length + thinkingList.length;
-            toolSectionHtml = `
-              <details class="term-box" style="display: block; margin-bottom: 8px;">
-                <summary class="term-header" style="cursor: pointer; list-style: none;">
-                  <div class="term-dots"><span></span><span></span><span></span></div>
-                  <span class="term-title">⚙️ 도구 실행 및 추론 로그 (${totalCount}건)</span>
-                  <span class="term-badge done">클릭하여 펼치기/접기</span>
-                </summary>
-                <div class="term-body" style="max-height: 180px; overflow-y: auto;">
-                  ${logLines}
-                </div>
-              </details>
-            `;
-          }
-
-          const displayAnswer = finalContent || (toolCalls.length > 0 ? '작업이 완료되었습니다.' : '답변이 없습니다.');
-
-          botRow.innerHTML = `
-            <div class="bubble-wrap">
-              <div class="bubble">
-                ${toolSectionHtml}
-                <div class="answer-content" data-raw="${displayAnswer.replace(/"/g, '&quot;')}">${formatMarkdown(displayAnswer)}</div>
-              </div>
-              <div class="msg-meta bot">
-                <span class="meta-time">${lastTimeStr}</span>
-                <span class="meta-latency">⚡ 복원됨</span>
-              </div>
-            </div>
-          `;
-          fragment.appendChild(botRow);
+    // Best-effort mode badge for a restored turn. record_mode1_interaction /
+    // record_mode2_interaction (core/session_manager.py) always prefix their
+    // synthetic `thinking` text this way; a turn with neither prefix ran
+    // through Mode 3 (agy), whose native transcript entries don't use this
+    // convention. No explicit "which mode" field is stored per turn, so this
+    // is inferred rather than authoritative.
+    function inferTurnModeBadge(turn) {
+      for (const r of turn.responses) {
+        if (typeof r.thinking === 'string') {
+          if (r.thinking.startsWith('AI 딥 브레인')) return modeBadgeFor('2');
+          if (r.thinking.startsWith('초고속 스마트홈 엔진')) return modeBadgeFor('1');
         }
       }
+      return modeBadgeFor('3');
+    }
 
-      if (prepend && loadMoreEl) {
-        box.insertBefore(fragment, loadMoreEl.nextSibling);
+    function buildUserRow(step) {
+      const row = document.createElement('div');
+      row.className = 'msg-row user';
+      const timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
+      const cleanText = cleanUserPromptString(step.content || '');
+      row.innerHTML = `
+        <div class="bubble-wrap">
+          <div class="bubble">${cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
+        </div>
+      `;
+      return row;
+    }
+
+    // Builds a restored bot turn using the exact same markup as a live answer
+    // (buildBotBubbleDOM) -- just filled in all at once instead of
+    // progressively, and labeled "복원됨" instead of a live timer.
+    function buildRestoredBotRow(turn) {
+      let thinkingList = [];
+      let toolCalls = [];
+      let finalContent = '';
+      let lastTimeStr = '';
+
+      turn.responses.forEach(cur => {
+        if (cur.created_at) {
+          lastTimeStr = new Date(cur.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+        }
+        if (cur.thinking && typeof cur.thinking === 'string' && cur.thinking.trim()) {
+          thinkingList.push(cur.thinking.trim());
+        }
+        if (cur.tool_calls && Array.isArray(cur.tool_calls)) {
+          toolCalls = toolCalls.concat(cur.tool_calls);
+        }
+        if (cur.content && typeof cur.content === 'string' && cur.content.trim()) {
+          finalContent = cur.content.trim();
+        }
+      });
+
+      const { text: modeText, cls: modeClass } = inferTurnModeBadge(turn);
+      const { row, termBody, termBadge, answerContent, rawCode, latencyEl } =
+        buildBotBubbleDOM(modeText, modeClass, lastTimeStr);
+
+      // A restored turn is always "done" -- never actually live -- regardless
+      // of whether it had any reasoning/tool-call steps to show.
+      termBadge.textContent = '● COMPLETED';
+      termBadge.classList.remove('live');
+      termBadge.classList.add('done');
+
+      if (thinkingList.length > 0 || toolCalls.length > 0) {
+        termBody.style.display = 'block';
+        let logLines = '';
+        thinkingList.forEach(th => {
+          logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${th.replace(/</g, "&lt;")}</span></div>`;
+        });
+        toolCalls.forEach(tc => {
+          const tname = tc.name || 'tool';
+          let act = '';
+          if (tc.toolAction) act = tc.toolAction;
+          else if (tc.toolSummary) act = tc.toolSummary;
+          else if (tc.args) act = JSON.stringify(tc.args);
+          logLines += `<div class="term-line"><span class="term-text tool">🔧 [도구] ${tname}: ${String(act).replace(/</g, "&lt;")}</span></div>`;
+        });
+        termBody.innerHTML = logLines;
+      }
+
+      const displayAnswer = finalContent || (toolCalls.length > 0 ? '작업이 완료되었습니다.' : '답변이 없습니다.');
+      answerContent.innerHTML = formatMarkdown(displayAnswer);
+      answerContent.setAttribute('data-raw', displayAnswer);
+      if (rawCode) rawCode.textContent = displayAnswer;
+      if (latencyEl) {
+        latencyEl.textContent = '⚡ 복원됨';
+        latencyEl.style.display = 'inline';
+      }
+      return row;
+    }
+
+    // Renders turns [fromIdx, toIdx) of sessionTurns. prepend=true inserts
+    // above the existing content (used when auto-loading older turns) instead
+    // of appending at the bottom (initial load).
+    function renderTurnsRange(fromIdx, toIdx, prepend) {
+      const box = document.getElementById('chat-box');
+      const statusEl = document.getElementById('history-load-status');
+      const fragment = document.createDocumentFragment();
+
+      for (let t = fromIdx; t < toIdx; t++) {
+        const turn = sessionTurns[t];
+        if (turn.user) fragment.appendChild(buildUserRow(turn.user));
+        if (turn.responses.length > 0) fragment.appendChild(buildRestoredBotRow(turn));
+      }
+
+      if (prepend && statusEl) {
+        box.insertBefore(fragment, statusEl.nextSibling);
       } else {
         box.appendChild(fragment);
       }
     }
 
-    function loadMoreHistory() {
-      const box = document.getElementById('chat-box');
-      const loadMoreEl = document.getElementById('history-load-more');
-      if (currentHistoryRenderIndex <= 0) {
-        if (loadMoreEl) loadMoreEl.style.display = 'none';
-        return;
+    function updateHistoryStatusIndicator() {
+      const statusEl = document.getElementById('history-load-status');
+      if (!statusEl) return;
+      if (renderedFromTurnIndex <= 0) {
+        statusEl.innerHTML = `<span class="history-status-text">🏁 더 이상 이전 대화가 없습니다</span>`;
+        teardownHistoryScrollObserver();
+      } else {
+        statusEl.innerHTML = `<span class="history-status-text">⬆️ 위로 스크롤하면 이전 대화 ${renderedFromTurnIndex}개를 더 불러옵니다</span>`;
       }
+    }
 
+    // Auto-loads older turns as the user scrolls near the top of chat-box --
+    // no button, matches "더 이상 대화가 없으면 없다고 보여주고" (show an
+    // end-of-history message once exhausted, keep loading automatically
+    // until then).
+    function loadMoreHistoryTurns() {
+      if (isLoadingMoreHistory || renderedFromTurnIndex <= 0) return;
+      isLoadingMoreHistory = true;
+
+      const box = document.getElementById('chat-box');
       const oldScrollHeight = box.scrollHeight;
       const oldScrollTop = box.scrollTop;
 
-      const newFrom = Math.max(0, currentHistoryRenderIndex - HISTORY_CHUNK_SIZE);
-      const newTo = currentHistoryRenderIndex;
-      currentHistoryRenderIndex = newFrom;
+      const newFrom = Math.max(0, renderedFromTurnIndex - HISTORY_TURNS_PER_PAGE);
+      const newTo = renderedFromTurnIndex;
+      renderedFromTurnIndex = newFrom;
 
-      renderHistorySteps(newFrom, newTo, true);
+      renderTurnsRange(newFrom, newTo, true);
+      updateHistoryStatusIndicator();
 
-      // Restore relative scroll position
+      // Restore relative scroll position so prepended content doesn't yank
+      // the viewport.
       const newScrollHeight = box.scrollHeight;
       box.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
 
-      if (currentHistoryRenderIndex <= 0 && loadMoreEl) {
-        loadMoreEl.style.display = 'none';
-      } else if (loadMoreEl) {
-        loadMoreEl.querySelector('button').textContent = `⬆️ 이전 대화 ${currentHistoryRenderIndex}개 더보기`;
-      }
+      isLoadingMoreHistory = false;
+    }
+
+    function setupHistoryScrollObserver() {
+      teardownHistoryScrollObserver();
+      if (renderedFromTurnIndex <= 0) return; // already showing everything
+      const box = document.getElementById('chat-box');
+      const statusEl = document.getElementById('history-load-status');
+      if (!box || !statusEl) return;
+      historyScrollObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) loadMoreHistoryTurns();
+      }, { root: box, rootMargin: '200px 0px 0px 0px', threshold: 0 });
+      historyScrollObserver.observe(statusEl);
     }
 
     window.addEventListener('DOMContentLoaded', async () => {

@@ -431,6 +431,26 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         elif clean_path.endswith("/api/restart"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"result": "restarted", "status": "online"}).encode("utf-8"))
+
+        elif clean_path.endswith("/api/run_agy"):
+            # "agy를 실행하시겠습니까?" confirmation in the terminal tab, on
+            # Yes: types `agy` + Enter into the persistent tmux session
+            # (run.sh's `main` session, the one ttyd attaches to) exactly as
+            # if the user had typed it themselves at the bash prompt.
+            # NOTE: deliberately NOT under /api/terminal/* -- do_POST's very
+            # first check unconditionally proxies any path containing
+            # "/terminal" straight to ttyd, before auth or routing even runs.
+            import subprocess
+            try:
+                subprocess.run(
+                    ["tmux", "-u", "send-keys", "-t", "main", "agy", "Enter"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"result": "sent"}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
         else:
             self._set_headers(404)
             self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))

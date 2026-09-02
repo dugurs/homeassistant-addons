@@ -16,13 +16,13 @@ reports against: Gemini models share one pool, Claude+GPT-OSS share the other.
 
 MODEL_CATALOG = [
     {"slug": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "family": "gemini", "badge": "Fast",
-     "efforts": ["high", "medium", "low"], "default_effort": "high",
+     "efforts": ["low", "medium", "high"], "default_effort": "high",
      "variant_slugs": {"high": "gemini-3.7-flash-high", "medium": "gemini-3.7-flash-medium", "low": "gemini-3.7-flash-low"}},
     {"slug": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "family": "gemini", "badge": "Fast",
-     "efforts": ["high", "medium", "low"], "default_effort": "high",
+     "efforts": ["low", "medium", "high"], "default_effort": "high",
      "variant_slugs": {"high": "gemini-3.6-flash-high", "medium": "gemini-3.6-flash-medium", "low": "gemini-3.6-flash-low"}},
     {"slug": "gemini-3.1-pro", "label": "Gemini 3.1 Pro", "family": "gemini", "badge": "Pro",
-     "efforts": ["high", "low"], "default_effort": "high",
+     "efforts": ["low", "high"], "default_effort": "high",
      "variant_slugs": {"high": "gemini-3.1-pro-high", "low": "gemini-3.1-pro-low"}},
     {"slug": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (Thinking)", "family": "claude_gpt", "badge": "Claude",
      "efforts": [], "default_effort": "", "variant_slugs": {"": "claude-sonnet-4-6"}},

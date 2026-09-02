@@ -218,46 +218,13 @@ CSS_STYLES = """
       flex-direction: column;
       gap: 10px;
     }
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .panel-title {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.88rem;
-      font-weight: 700;
-      color: var(--text-bold);
-    }
-    .panel-sub {
-      font-size: 0.72rem;
-      font-weight: 400;
-      color: var(--text-muted);
-    }
-    .panel-close-btn {
-      background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      font-size: 0.76rem;
-      font-weight: 600;
-      cursor: pointer;
-      padding: 3px 8px;
-      border-radius: 6px;
-      transition: all 0.15s ease;
-    }
-    .panel-close-btn:hover {
-      color: var(--accent-blue);
-      border-color: var(--accent-blue);
-    }
+    /* Charts stay side-by-side (one row) at every width -- only the header
+       bar and the stat-box row were removed; on narrow screens everything
+       inside just scales down instead of the charts stacking into 2 rows. */
     .panel-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
-    }
-    @media (max-width: 768px) {
-      .panel-grid { grid-template-columns: 1fr; }
     }
     .chart-box {
       background: var(--bg-base);
@@ -301,26 +268,14 @@ CSS_STYLES = """
       height: 100%;
       display: block;
     }
-    .panel-stats {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-    }
     @media (max-width: 768px) {
-      .panel-stats { grid-template-columns: 1fr 1fr; }
+      .top-resource-panel { padding: 8px 10px; }
+      .panel-grid { gap: 6px; }
+      .chart-box { padding: 6px 8px; }
+      .chart-top { margin-bottom: 3px; font-size: 0.62rem; }
+      .chart-legend { gap: 4px; font-size: 0.58rem; }
+      .canvas-holder { height: 40px; }
     }
-    .pstat {
-      background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 6px 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.74rem;
-    }
-    .pstat span { color: var(--text-muted); }
-    .pstat strong { color: var(--text-bold); }
 
     /* .icon-btn-lg (defined near the top) now covers both the theme toggle
        and sidebar toggle buttons -- same 32x32 rounded-lg icon-button shape
@@ -648,6 +603,11 @@ CSS_STYLES = """
       color: var(--accent-blue);
       border-color: var(--accent-blue);
     }
+    .history-status-text {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      padding: 6px 14px;
+    }
 
     /* Main Container */
     main { flex: 1; position: relative; overflow: hidden; }
@@ -819,33 +779,6 @@ CSS_STYLES = """
       margin: 4px 0;
     }
 
-    /* Header Mode Badge */
-    .header-left-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .mode-badge {
-      font-size: 0.72rem;
-      font-weight: 600;
-      padding: 2px 7px;
-      border-radius: 6px;
-      background: var(--badge-bg);
-      color: var(--accent-blue);
-      border: 1px solid var(--badge-border);
-      white-space: nowrap;
-    }
-    .mode-badge.fast {
-      background: rgba(16, 185, 129, 0.12);
-      color: var(--accent-green);
-      border-color: rgba(16, 185, 129, 0.25);
-    }
-    .mode-badge.cli {
-      background: rgba(168, 85, 247, 0.12);
-      color: #c084fc;
-      border-color: rgba(168, 85, 247, 0.3);
-    }
-    
     /* Thought & Tool Step Timeline Accordion */
     .thought-box {
       margin-bottom: 12px;
@@ -996,7 +929,7 @@ CSS_STYLES = """
        GitHub Dark/Light Standard Markdown Typography & Elements
        ========================================================================== */
     .answer-content {
-      font-size: 0.935rem;
+      font-size: 0.875rem;
       line-height: 1.65;
       color: var(--text-main);
     }
@@ -1116,18 +1049,17 @@ CSS_STYLES = """
       font-family: 'Fira Code', Consolas, monospace;
       user-select: none;
     }
-    .term-dots {
+    .term-header-left {
       display: flex;
-      gap: 5px;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
     }
-    .term-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
+    .term-mode-tag {
+      font-weight: 700;
+      font-size: 0.68rem;
+      white-space: nowrap;
     }
-    .term-dot.red { background: #ff5f56; }
-    .term-dot.yellow { background: #ffbd2e; }
-    .term-dot.green { background: #27c93f; }
     .term-title {
       font-weight: 600;
       color: #c9d1d9;
@@ -1393,6 +1325,16 @@ CSS_STYLES = """
       color: var(--text-dim);
       font-family: ui-monospace, monospace;
       font-size: 11px;
+    }
+    /* Compact variant of .usage-mini-ring for the model-picker button --
+       just the ring, no label/percentage, sized to match the button's own
+       12px icons rather than the 16px used in the usage dropdown rows. */
+    .model-picker-usage-ring {
+      width: 8.8px;
+      height: 8.8px;
+    }
+    .model-picker-usage-ring::before {
+      inset: 1.1px; /* scaled down from the base 2px so the ring stays the same relative thickness */
     }
 
     .model-dropdown {
@@ -1747,7 +1689,55 @@ CSS_STYLES = """
     .toast-msg.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     /* Terminal View */
-    #terminal-view { height: 100%; display: none; width: 100%; }
+    #terminal-view { height: 100%; display: none; width: 100%; position: relative; }
     #terminal-view.active { display: block; }
     iframe { width: 100%; height: 100%; border: none; background: #000; }
+
+    /* "agy를 실행하시겠습니까?" prompt shown on entering the terminal tab,
+       instead of dropping straight into the bare bash cursor. */
+    .terminal-confirm-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .terminal-confirm-box {
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 20px 24px;
+      text-align: center;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    }
+    .terminal-confirm-box p {
+      color: var(--text-main);
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 0 0 14px 0;
+    }
+    .terminal-confirm-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .terminal-confirm-actions button {
+      padding: 6px 22px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+    }
+    .terminal-confirm-yes {
+      background: var(--accent-blue);
+      color: #fff;
+      border-color: var(--accent-blue);
+    }
+    .terminal-confirm-no {
+      background: var(--bg-base);
+      color: var(--text-main);
+    }
 """.strip()

@@ -49,6 +49,14 @@ _REFRESH_LOCK = threading.Lock()
 _EFFORT_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<effort>high|medium|low)$")
 _LABEL_SUFFIX_RE = re.compile(r"\s*\((?:High|Medium|Low)\)\s*$", re.IGNORECASE)
 
+# Picker display order (low -> high), independent of whatever order `agy
+# models` happens to list variants in (observed as high/medium/low).
+_EFFORT_DISPLAY_ORDER = ["low", "medium", "high"]
+
+
+def _sort_efforts(efforts: list) -> list:
+    return sorted(efforts, key=lambda e: _EFFORT_DISPLAY_ORDER.index(e) if e in _EFFORT_DISPLAY_ORDER else 99)
+
 
 def _agy_env() -> dict:
     env = os.environ.copy()
@@ -114,14 +122,18 @@ def _parse_models_tsv(raw: str) -> list:
     out = []
     for base in order:
         g = groups[base]
-        efforts = g["efforts_order"]
+        efforts = _sort_efforts(g["efforts_order"])
+        # Prefer "high" as the default (most capable) regardless of display
+        # order; fall back to whichever effort sorts highest if this account's
+        # lineup doesn't offer "high" for this model.
+        default_effort = "high" if "high" in efforts else (efforts[-1] if efforts else "")
         out.append({
             "slug": base,
             "label": g["label"],
             "family": _classify_family(f"{base} {g['label']}"),
             "badge": _derive_badge(base, g["label"]),
             "efforts": efforts,
-            "default_effort": efforts[0] if efforts else "",
+            "default_effort": default_effort,
             "variant_slugs": g["variants"],
         })
     return out

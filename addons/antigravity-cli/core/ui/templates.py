@@ -61,13 +61,6 @@ HTML_BODY = f"""
   <!-- Top Pinned Resource Panel (Collapsible) -->
   <div id="top-resource-panel" class="top-resource-panel">
     <div class="panel-inner">
-      <div class="panel-header">
-        <div class="panel-title">
-          <span>📊 시스템 및 애드온 리소스 실시간 모니터</span>
-          <span class="panel-sub">3초 실시간 갱신 · 듀얼 오버레이 차트</span>
-        </div>
-        <button class="panel-close-btn" onclick="toggleResourcePanel()" title="상단 고정 패널 닫기">✕ 닫기</button>
-      </div>
       <div class="panel-grid">
         <div class="chart-box">
           <div class="chart-top">
@@ -93,12 +86,6 @@ HTML_BODY = f"""
             <canvas id="ram-dual-chart" width="460" height="75"></canvas>
           </div>
         </div>
-      </div>
-      <div class="panel-stats">
-        <div class="pstat"><span>애드온 메모리</span><strong id="pstat-addon-ram">-</strong></div>
-        <div class="pstat"><span>시스템 전체 RAM</span><strong id="pstat-sys-ram">-</strong></div>
-        <div class="pstat"><span>가동 시간 (Uptime)</span><strong id="pstat-uptime">-</strong></div>
-        <div class="pstat"><span>Antigravity Stream</span><strong id="pstat-stream">-</strong></div>
       </div>
     </div>
   </div>
@@ -147,9 +134,6 @@ HTML_BODY = f"""
       <!-- Chat View -->
       <section id="chat-view" class="tab-view active">
         <div class="chat-container" id="chat-box">
-          <div id="history-load-more" class="history-load-more" style="display: none;">
-            <button onclick="loadMoreHistory()">⬆️ 이전 대화 더보기</button>
-          </div>
           <div class="hero-card" id="chat-hero-card">
             <span class="hero-badge">Google Antigravity Engine</span>
             <h2>무엇을 도와드릴까요?</h2>
@@ -196,6 +180,7 @@ HTML_BODY = f"""
                     <span class="icon icon-sm icon-dim">{ICON_PLUS}</span>
                     <span id="model-picker-current" class="model-picker-name">모델 선택</span>
                     <span class="model-effort-tag" id="model-picker-effort" style="display:none;"></span>
+                    <span class="usage-mini-ring model-picker-usage-ring" id="model-picker-usage-ring" style="display:none;"></span>
                     <span class="icon icon-sm">{ICON_CHEVRON_UP}</span>
                   </button>
                   <div class="model-dropdown" id="model-dropdown">
@@ -224,6 +209,15 @@ HTML_BODY = f"""
 
       <!-- Terminal View -->
       <section id="terminal-view" class="tab-view">
+        <div id="terminal-confirm-overlay" class="terminal-confirm-overlay" style="display:none;">
+          <div class="terminal-confirm-box">
+            <p>agy(Antigravity CLI)를 실행할까요?</p>
+            <div class="terminal-confirm-actions">
+              <button class="terminal-confirm-yes" onclick="confirmRunAgy(true)">Yes</button>
+              <button class="terminal-confirm-no" onclick="confirmRunAgy(false)">No</button>
+            </div>
+          </div>
+        </div>
         <iframe id="terminal-iframe" src="./terminal/"></iframe>
       </section>
     </main>
