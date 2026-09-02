@@ -1,4 +1,4 @@
-# Antigravity CLI 통신 규격 정의서 (Session-Aware Baseline v2.3)
+# Antigravity CLI 통신 규격 정의서 (Session-Aware Baseline v2.4)
 
 > **상태: 영구 관리 (LOCKED)**
 > **기준 커밋: `1fd3b01` 기반 세션 지속(Resume) 규격 재구현 (`feature/session-resume-v2`)**
@@ -114,12 +114,15 @@ Home Assistant 애드온(`addons/antigravity-cli`)의 백엔드와 프론트엔�
    `result.response`가 비어 있어도 실패로 간주하지 않고 "완료"로 처리하면 안 된다. 공식 문서 기준 `status`는 `SUCCESS/ERROR/CANCELED/INTERRUPTED/INVALID/WAITING/RUNNING` 중 하나이며, `SUCCESS`가 아닌 모든 경우(그리고 `error` 필드가 없는 경우까지 포함해) `chunk`/`live_log`로 스트리밍해 사용자에게 보여준다.
 6. **클라이언트가 conversation_id를 자체 생성해서 agy에게 넘기지 말 것.**
    Mode 3의 conversation_id는 **agy 자신이 발급**한다 (`init` 이벤트의 `conversation_id` 필드). 새 대화의 경우 `session_init` SSE는 agy의 `init` 이벤트를 받은 뒤에 그 id로 발급해야 한다 — 미리 자체 생성한 id를 `session_init`으로 먼저 알리고 그걸 `--conversation`에 넘기면, agy는 모르는 id이므로 조용히 새 대화를 또 시작하고 서로 다른 두 개의 분리된 id가 생긴다. Modes 1/2는 agy 프로세스가 없으므로 자체 생성한 id를 그대로 써도 무방하다(`stream_ai_deep_brain`/`stream_fast_dashboard` 참고).
+7. **제약 #6은 "신규 대화"만 다뤘다 — 한 채팅 안에서 Modes 1/2 → Mode 3으로 전환하는 경우도 동일한 문제가 생긴다.**
+   Modes 1/2가 자체 생성한 id로 이미 `transcript.jsonl`을 써놓은 상태에서 같은 채팅을 Mode 3으로 전환하면, `session_exists(conversation_id)`가 `True`가 되어(파일이 이미 존재하므로) `--conversation <그-id>`를 그대로 agy에 넘기게 된다 — agy는 이 id를 발급한 적이 없으므로 제약 #6과 동일한 실패(조용한 분리)가 재현된다. `stream_headless_cli()`의 `resume_this_session`은 이제 `session_exists()`뿐 아니라 **`is_agy_native_session()`**(agy 자신의 첫턴 스냅샷 `.system_generated/logs/chunks/transcript_full/00000000.jsonl` 존재 여부)까지 함께 확인해, agy가 손댄 적 없는 Modes-1/2 전용 id는 Mode 3 입장에서 "신규 대화"로 취급한다(즉 `--conversation`을 넘기지 않고 agy가 새 id를 발급하도록 둔다). 이 경우 원래 id와 agy가 새로 발급한 id는 `link_conversation_continuation()`이 양쪽 폴더에 남기는 마커(`continued_as.txt`/`continued_from.txt`)로 연결되며, `get_session_history()`/`list_all_sessions()`가 이 체인을 따라가 하나의 병합된 대화로 보여준다. 와이어 프로토콜(SSE 이벤트 모양, `/api/sessions*` 응답 스키마)은 전혀 바뀌지 않는다 — 세션 폴더 내부에 마커 파일이 추가될 뿐.
 
 ---
 
 ## 4. 변경 이력
 | 날짜 | 버전 | 변경 내용 | 사유 및 근거 |
 |:---|:---|:---|:---|
+| 2026-09-02 | v2.4 | 제약 #7 추가: Modes 1/2 → Mode 3 한 채팅 내 전환 시 세션이 분리되던 문제 수정. `is_agy_native_session()`으로 agy-native 여부를 확인해 `resume_this_session`을 강화하고, 전환으로 새로 생긴 id를 `link_conversation_continuation()`으로 원래 id와 연결, `get_session_history()`/`list_all_sessions()`/`delete_session()`이 이 체인을 인식하도록 수정 | 제약 #6이 "신규 대화" 케이스만 다루고 있었고, "이미 Modes 1/2 히스토리가 있는 채팅을 Mode 3으로 전환"하는 사각지대는 그대로 남아있어 실사용 중 세션 복원 끊김으로 재발견됨 |
 | 2026-08-31 | v2.3 | 공식 문서(`/docs/cli/conversations`, `/docs/cli/headless`) 및 `agy --help` 대조 확인. `--resume`→`--conversation`으로 flag 수정(존재하지 않는 flag였음), conversation_id를 agy의 `init` 이벤트에서 받아오도록 수정(클라이언트 자체 생성 id를 쓰면 agy가 인식 못 해 재개가 조용히 실패), `result.status` 체크를 `"ERROR"` 단일값에서 `!= "SUCCESS"` 전체로 확장 | Gitea 이슈 #2 원문이 애초에 `--resume`을 문서화된 flag로 잘못 전제하고 있었고, "클라이언트가 전달한 conversation_id"를 쓰라고 되어 있어 원인이 됨 — 라이브 2턴 테스트로 재발견 |
 | 2026-08-31 | v2.2 | `feature/session-resume-v2`에서 재구현. 재개 세션 seek-to-end, 정규식 기반 유니코드 디코딩, Mode 3/Modes 1·2 이원 transcript 경로 지원, `result.status=="ERROR"` 처리 추가 | `feature/integrate-react-webui`(v2.1)가 위 항목들의 부재로 Mode 3 실시간 통신을 깨뜨려 롤백 후 재작업 |
 | 2026-08-31 | v2.1 (폐기) | 세션 관리 REST API(`GET /api/sessions`, `GET /api/sessions/<id>`) 및 `session_init` SSE 이벤트 추가 — Mode 3 실시간 통신 손상으로 병합되지 않고 폐기됨 | 대화 지속(Resume) 및 다중 모드 통합 맥락 지원 (Gitea Issue #2) |

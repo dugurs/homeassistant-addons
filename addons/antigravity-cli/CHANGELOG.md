@@ -1,3 +1,12 @@
+## 1.1.0-beta.20
+
+### 수정 (Fix)
+- 한 채팅에서 모드1/2로 대화를 시작한 뒤 모드3(Antigravity CLI)으로 전환하면, 프론트가 들고 있던 자체 생성 id로 `agy --conversation`을 호출하게 되어 agy가 이를 인식 못 하고 조용히 별개의 새 id로 대화를 시작 → 세션이 두 조각으로 쪼개져 나중에 목록에서 열면 일부 내용이 복원되지 않던 문제 수정
+  - `is_agy_native_session()` 추가: agy 자신의 첫 턴 스냅샷 존재 여부로 "agy가 이 id를 실제로 발급했는지" 판별
+  - `resume_this_session`이 `is_agy_native_session()`까지 확인하도록 강화 — 모드1/2 전용 히스토리는 모드3 입장에서 신규 대화로 취급(agy가 자체 id 발급하도록 둠)
+  - 전환으로 새로 생긴 id는 `link_conversation_continuation()`으로 원래 id와 연결(`continued_as.txt`/`continued_from.txt` 마커), `get_session_history()`/`list_all_sessions()`/`delete_session()`이 이 체인을 따라가 하나의 병합된 세션으로 표시·삭제
+  - 상세: `docs/COMMUNICATION_SPEC.md` v2.4 (제약 #7) 참고
+
 ## 1.1.0-beta.19
 
 ### 수정 (Fix)

@@ -14,6 +14,8 @@ from core.ha_engine import (
 )
 from core.session_manager import (
     generate_conversation_id,
+    is_agy_native_session,
+    link_conversation_continuation,
     record_mode1_interaction,
     record_mode2_interaction,
     session_exists,
@@ -156,7 +158,17 @@ def stream_headless_cli(
             yield ev
         return
 
-    resume_this_session = bool(conversation_id) and session_exists(conversation_id)
+    # Require agy's own first-turn marker, not just "a transcript.jsonl exists" --
+    # Modes 1/2 write that file themselves via record_mode1_interaction /
+    # record_mode2_interaction, for an id agy has never seen. Handing such an
+    # id to --conversation would hit the exact failure this function's
+    # docstring warns about (docs/COMMUNICATION_SPEC.md constraint #6), so a
+    # Modes-1/2-only conversation switching to Mode 3 is treated as new here
+    # (see the `cid != conversation_id` hand-off handling in read_stdout()
+    # below, which links the two ids together once agy assigns its own).
+    resume_this_session = (
+        bool(conversation_id) and session_exists(conversation_id) and is_agy_native_session(conversation_id)
+    )
     if resume_this_session:
         # We already know the id (echoed back from a previous session_init for
         # this same conversation) — announce it again immediately. For a new
@@ -363,6 +375,15 @@ def stream_headless_cli(
                 if evt == "init":
                     tools = data.get("init", {}).get("tools", [])
                     cid = data.get("conversation_id", "")
+                    if cid and conversation_id and cid != conversation_id:
+                        # Modes 1/2 -> Mode 3 hand-off: we came in with an id
+                        # of our own (already carrying Modes-1/2 history) but
+                        # withheld --conversation since agy never issued it
+                        # (see is_agy_native_session() above), so agy minted
+                        # its own, different id. Link the two so session
+                        # listing/history reads present one merged
+                        # conversation regardless of which id is opened.
+                        link_conversation_continuation(conversation_id, cid)
                     if cid and not resume_this_session:
                         # New conversation: agy just assigned its own id (we
                         # never sent --conversation, so it can't be echoing
