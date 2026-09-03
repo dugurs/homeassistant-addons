@@ -32,6 +32,42 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.end_headers()
 
+    def _read_request_body(self) -> bytes:
+        """Read a request body regardless of whether it arrived with a fixed
+        Content-Length or chunked Transfer-Encoding.
+
+        HA's ingress proxy can relay a POST body chunked (no Content-Length
+        header at all) rather than with a fixed length -- a handler that only
+        checks Content-Length silently treats the body as empty in that case
+        (confirmed live: this is exactly why /api/upload always saw zero
+        files with no error, even for a tiny test file -- see core/uploads.py
+        history). /api/chat already handled both; this is that same logic,
+        shared so every POST handler gets it.
+        """
+        content_length = self.headers.get("Content-Length")
+        if content_length:
+            try:
+                return self.rfile.read(int(content_length))
+            except Exception:
+                return b""
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            chunks = []
+            while True:
+                line = self.rfile.readline().strip()
+                if not line:
+                    break
+                try:
+                    chunk_len = int(line, 16)
+                except ValueError:
+                    break
+                if chunk_len == 0:
+                    self.rfile.readline()
+                    break
+                chunks.append(self.rfile.read(chunk_len))
+                self.rfile.readline()
+            return b"".join(chunks)
+        return b""
+
     def _check_auth(self):
         """Check API authentication key."""
         options_path = "/data/options.json"
@@ -305,6 +341,16 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(get_live_model_catalog(force=force), ensure_ascii=False).encode("utf-8"))
             return
 
+        # Custom agent list for the Mode 3 agent picker -- read directly off
+        # disk (see core/agent_discovery.py), not via `agy agents` (no
+        # --output-format support, and prints nothing on an install with no
+        # custom agents defined -- indistinguishable from an error).
+        if clean_path.endswith("/api/agents"):
+            from core.agent_discovery import list_available_agents
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"agents": list_available_agents()}, ensure_ascii=False).encode("utf-8"))
+            return
+
         # Quota (/usage) snapshot for the Mode 3 model picker's usage panel
         if clean_path.endswith("/api/usage"):
             from core.usage_client import get_usage_snapshot
@@ -329,6 +375,30 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"conversation_id": target_cid, "history": history}, ensure_ascii=False).encode("utf-8"))
             return
 
+        # Serve a previously uploaded chat attachment (see core/uploads.py) --
+        # this is what lets an attached image actually render in the browser
+        # via markdown (`![name](api/uploads/<batch>/<name>)`); agy itself
+        # reads the same file straight off disk by absolute path instead.
+        if "/api/uploads/" in clean_path:
+            from core.uploads import resolve_upload_path
+            import mimetypes
+            parts = clean_path.split("/api/uploads/")[-1].split("/")
+            file_path = resolve_upload_path(parts[0], parts[1]) if len(parts) == 2 else None
+            if not file_path:
+                self._set_headers(404)
+                self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
+                return
+            content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+            try:
+                with open(file_path, "rb") as f:
+                    data = f.read()
+                self._set_headers(200, content_type)
+                self.wfile.write(data)
+            except Exception:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": "Failed to read file"}).encode("utf-8"))
+            return
+
         # Serve Web UI
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(HTML_INDEX.encode("utf-8"))
@@ -349,29 +419,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
         # 2. Real-Time Chat Streaming API
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
-            body = b""
-            content_length = self.headers.get("Content-Length")
-            if content_length:
-                try:
-                    body = self.rfile.read(int(content_length))
-                except Exception:
-                    body = b""
-            elif self.headers.get("Transfer-Encoding", "").lower() == "chunked":
-                chunks = []
-                while True:
-                    line = self.rfile.readline().strip()
-                    if not line:
-                        break
-                    try:
-                        chunk_len = int(line, 16)
-                    except ValueError:
-                        break
-                    if chunk_len == 0:
-                        self.rfile.readline()
-                        break
-                    chunks.append(self.rfile.read(chunk_len))
-                    self.rfile.readline()
-                body = b"".join(chunks)
+            body = self._read_request_body()
 
             payload = {}
             if body:
@@ -398,6 +446,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             is_mobile = bool(payload.get("is_mobile", False))
             conversation_id = str(payload.get("conversation_id", "")).strip()
             model = str(payload.get("model", "")).strip()
+            agent = str(payload.get("agent", "")).strip()
 
             if not prompt:
                 self._set_headers(400)
@@ -421,6 +470,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     is_mobile=is_mobile,
                     conversation_id=conversation_id,
                     model=model,
+                    agent=agent,
                 ):
                     self.wfile.write(event_str.encode("utf-8"))
                     self.wfile.flush()
@@ -431,6 +481,28 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
         elif clean_path.endswith("/api/restart"):
             self._set_headers(200)
             self.wfile.write(json.dumps({"result": "restarted", "status": "online"}).encode("utf-8"))
+
+        elif clean_path.endswith("/api/upload"):
+            # File attachments for Mode 3 (CLI 추론 모드) only -- see core/uploads.py
+            # for why this is plain "save bytes, hand back an absolute path"
+            # rather than a multimodal API integration: agy's own `view_file`
+            # tool already reads and visually understands image files given
+            # just the path in a headless -p prompt (confirmed live).
+            from core.uploads import save_uploaded_files
+            try:
+                body = self._read_request_body()
+                payload = json.loads(body or b"{}")
+                print(f"[Upload] body_len={len(body)} files_in_payload={len(payload.get('files') or [])}", file=sys.stderr)
+                results = save_uploaded_files(payload.get("files") or [])
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"files": results}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                # Guarantee some response even on an unexpected failure --
+                # otherwise the client sees a bare connection error with no
+                # diagnostic detail (fetch() rejects instead of resolving).
+                print(f"[Upload Error] {e}", file=sys.stderr)
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
         elif clean_path.endswith("/api/run_agy"):
             # "agy를 실행하시겠습니까?" confirmation in the terminal tab, on
@@ -487,6 +559,33 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
         self._set_headers(404)
         self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
+
+    def do_PATCH(self):
+        """Handle PATCH requests -- session rename.
+
+        PATCH /api/sessions/<cid> with JSON body {"title": "..."} sets a
+        user-chosen title that overrides the auto-generated (first-prompt)
+        one in list_all_sessions().
+        """
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if "/api/sessions/" not in clean_path:
+            self._set_headers(404)
+            self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
+            return
+
+        from core.session_manager import set_session_title
+
+        target_cid = clean_path.split("/api/sessions/")[-1].strip()
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            payload = json.loads(body or b"{}")
+        except Exception:
+            payload = {}
+        title = str(payload.get("title", "")).strip()
+        ok = set_session_title(target_cid, title)
+        self._set_headers(200 if ok else 400)
+        self.wfile.write(json.dumps({"conversation_id": target_cid, "renamed": ok}, ensure_ascii=False).encode("utf-8"))
 
     def log_message(self, format, *args):
         """Suppress noisy request logs."""

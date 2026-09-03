@@ -44,7 +44,18 @@ _last_cgroup_usage = None
 
 
 def get_addon_cpu_percent() -> float:
-    """Calculate real-time CPU utilization of the add-on container via cgroups."""
+    """Calculate real-time CPU utilization of the add-on container via cgroups,
+    normalized to % of total host capacity (not % of one core).
+
+    cgroup cpu.stat's usage_usec sums CPU time across every core the
+    container ran on, so a container briefly saturating a single core on a
+    multi-core host reports close to 100% *before* this normalization --
+    directly comparable to get_cpu_percent() (a host-wide, all-cores-combined
+    percentage) would then show the addon's line spiking above the system
+    total's line, which is physically impossible since the addon's usage is
+    itself part of the system total. Dividing by core count puts both on the
+    same 0-100 scale.
+    """
     global _last_cgroup_cpu_time, _last_cgroup_usage
     usage_usec = None
     try:
@@ -60,6 +71,7 @@ def get_addon_cpu_percent() -> float:
     except Exception:
         pass
 
+    num_cores = os.cpu_count() or 1
     now = time.time()
     if usage_usec is not None and _last_cgroup_usage is not None:
         dt = now - _last_cgroup_cpu_time
@@ -67,7 +79,7 @@ def get_addon_cpu_percent() -> float:
         _last_cgroup_usage = usage_usec
         _last_cgroup_cpu_time = now
         if dt > 0.05:
-            pct = round((d_usec / (dt * 1_000_000)) * 100, 1)
+            pct = round((d_usec / (dt * 1_000_000 * num_cores)) * 100, 1)
             return max(0.0, min(100.0, pct))
 
     if usage_usec is not None:

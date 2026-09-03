@@ -222,6 +222,48 @@ def delete_session(conversation_id: str) -> bool:
     return deleted_any
 
 
+def _custom_title_path(conversation_id: str) -> str:
+    """Path to a conversation's user-set custom title marker (see set_session_title)."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "custom_title.txt")
+
+
+def set_session_title(conversation_id: str, title: str) -> bool:
+    """Persist a user-chosen title for a conversation, overriding the auto-generated one.
+
+    Path-safety-checked like delete_session(), since conversation_id comes
+    from client-supplied JSON and is joined directly into a filesystem path.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return False
+    title = (title or "").strip()[:80]
+    if not title:
+        return False
+    cdir = os.path.join(get_brain_base_dir(), conversation_id)
+    if not os.path.isdir(cdir):
+        return False
+    path = _custom_title_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(title)
+        return True
+    except Exception:
+        return False
+
+
+def get_custom_title(conversation_id: str) -> str | None:
+    """User-set title for a conversation, if any (see set_session_title)."""
+    path = _custom_title_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                title = f.read().strip()
+                return title or None
+    except Exception:
+        pass
+    return None
+
+
 def get_current_iso_time() -> str:
     """Return ISO 8601 formatted timestamp with timezone."""
     now = datetime.datetime.now(datetime.timezone.utc).astimezone()
@@ -498,7 +540,7 @@ def list_all_sessions(limit: int = 50) -> list:
 
             if mtime == 0.0:
                 mtime = os.path.getmtime(cdir)
-            clean_title = first_prompt[:50] if first_prompt else f"Session {cid[:8]}"
+            clean_title = get_custom_title(cid) or (first_prompt[:50] if first_prompt else f"Session {cid[:8]}")
             updated_dt = datetime.datetime.fromtimestamp(mtime)
             sessions.append({
                 "conversation_id": cid,

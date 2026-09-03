@@ -56,6 +56,44 @@ def evaluate_room_env_health(room_data: dict) -> str:
     return "🟢 쾌적"
 
 
+def get_metric_status_comment(metric: str, value: float, unit: str = "") -> str:
+    """Short natural-language status comment for a single metric, using the same
+    thresholds as evaluate_room_env_health so single-metric answers stay consistent
+    with the room's overall diagnosis."""
+    if metric == "co2":
+        if value >= 1500:
+            return "지금 바로 환기가 필요해요."
+        if value >= 1000:
+            return "환기를 한 번 시켜주시는 게 좋겠어요."
+        return "쾌적한 수준이에요."
+    if metric == "tvoc":
+        is_ppb = "ppb" in (unit or "").lower()
+        if (is_ppb and value >= 220) or (not is_ppb and value >= 660):
+            return "수치가 높은 편이라 환기가 필요해요."
+        if (is_ppb and value >= 80) or (not is_ppb and value >= 250):
+            return "다소 오르고 있어 환기를 신경 써주시면 좋겠어요."
+        return "쾌적한 수준이에요."
+    if metric == "pm25":
+        if value >= 75:
+            return "매우 나쁜 수준이니 공기청정기를 가동해주세요."
+        if value >= 35:
+            return "다소 나쁜 편이에요."
+        return "쾌적한 수준이에요."
+    if metric == "temperature":
+        if value >= 30.0:
+            return "다소 더운 편이에요."
+        if value <= 18.0:
+            return "다소 쌀쌀한 편이에요."
+        return "쾌적한 온도예요."
+    if metric == "humidity":
+        if value >= 68.0:
+            return "다소 습한 편이에요."
+        if value <= 35.0:
+            return "다소 건조한 편이에요."
+        return "쾌적한 습도예요."
+    return ""
+
+
 def generate_dynamic_ai_recommendations(
     outdoor_temp: float,
     outdoor_hum: int,
@@ -144,7 +182,7 @@ def generate_dynamic_ai_recommendations(
 
     if outdoor_hum >= 70 and outdoor_hum > avg_indoor_hum:
         recs.append(
-            f"• **환기 제어**: 외부 습도({outdoor_hum}%)가 실내 평균({avg_indoor_hum:.1f}%)보다 높습니다. 창문 개방 대신 **주방/화장실 환풍기 및 제습 장치 가동**을 권장합니다."
+            f"• **환기 안내**: 외부 습도({outdoor_hum}%)가 실내 평균({avg_indoor_hum:.1f}%)보다 높습니다. 창문 개방 대신 **주방/화장실 환풍기 및 제습 장치 가동**을 권장합니다."
         )
     elif outdoor_hum <= 55 and outdoor_hum < avg_indoor_hum and not co2_findings:
         recs.append(
@@ -169,12 +207,12 @@ def generate_dynamic_ai_recommendations(
     if hot_rooms:
         hot_str = ", ".join([f"**{r}**({t}°C)" for r, t in hot_rooms[:2]])
         recs.append(
-            f"• **온열 환경 케어**: 현재 {hot_str}의 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 공기를 순환시키거나 냉방을 가동하세요."
+            f"• **온도 관리**: 현재 {hot_str}의 온도가 높게 측정되고 있으므로 서큘레이터를 가동하여 공기를 순환시키거나 냉방을 가동하세요."
         )
     elif cold_rooms:
         cold_str = ", ".join([f"**{r}**({t}°C)" for r, t in cold_rooms[:2]])
         recs.append(
-            f"• **온열 환경 케어**: 현재 {cold_str}의 온도가 낮습니다. 단열 상태를 점검하거나 난방 설정을 확인하세요."
+            f"• **온도 관리**: 현재 {cold_str}의 온도가 낮습니다. 단열 상태를 점검하거나 난방 설정을 확인하세요."
         )
     elif not co2_findings and not tvoc_findings and not pm25_findings:
         avg_t = sum(indoor_temps) / len(indoor_temps) if indoor_temps else 25.0
@@ -189,7 +227,7 @@ def generate_dynamic_ai_recommendations(
         )
     elif len(active_fans) == 0 and hot_rooms:
         recs.append(
-            "• **에너지 케어**: 실내 과열 구역이 있으나 팬이 정지 상태입니다. 공기 순환 팬 가동 시 냉방 효율을 높일 수 있습니다."
+            "• **에너지 관리 안내**: 실내 과열 구역이 있으나 팬이 정지 상태입니다. 공기 순환 팬 가동 시 냉방 효율을 높일 수 있습니다."
         )
     else:
         recs.append(

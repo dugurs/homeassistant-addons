@@ -28,6 +28,7 @@ ICON_CHECK = f'<svg {_SVG}><polyline points="20 6 9 17 4 12"/></svg>'
 ICON_BAR_CHART = f'<svg {_SVG}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'
 ICON_INFO = f'<svg {_SVG}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
 ICON_X = f'<svg {_SVG}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+ICON_USER = f'<svg {_SVG}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
 
 # Compact badge text ("b13") -- short like the reference's "v2.0", full version stays in the tooltip.
 _UI_VERSION_SHORT = "b" + UI_BUILD_VERSION.rsplit(".", 1)[-1] if "beta." in UI_BUILD_VERSION else UI_BUILD_VERSION
@@ -55,8 +56,41 @@ HTML_BODY = f"""
         <strong id="session-tokens" class="amber-text">0</strong>
       </button>
       <button class="icon-btn-lg" id="theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 테마 전환"><span class="icon" id="theme-toggle-icon">{ICON_MOON}</span></button>
+      <button class="icon-btn-lg" id="help-btn" onclick="toggleHelpPanel()" title="도움말 / 피드백"><span class="icon">{ICON_INFO}</span></button>
     </div>
   </header>
+
+  <div class="image-lightbox-overlay" id="image-lightbox-overlay" onclick="closeImageLightbox()">
+    <img id="image-lightbox-img" src="" alt="">
+  </div>
+
+  <div class="help-overlay" id="help-overlay" onclick="if(event.target===this) toggleHelpPanel()">
+    <div class="help-box">
+      <div class="help-box-top">
+        <h3>도움말 &amp; 피드백</h3>
+        <button class="help-box-close" onclick="toggleHelpPanel()"><span class="icon">{ICON_X}</span></button>
+      </div>
+      <div class="help-section">
+        <h4>실행 모드</h4>
+        <ul>
+          <li><strong>고속 제어 모드</strong> — 기기 제어/상태 조회를 즉시 처리</li>
+          <li><strong>고속 제어 &amp; 스마트 모드</strong> — 센서 기반 환경 분석 및 조언</li>
+          <li><strong>CLI 추론 모드</strong> — Antigravity CLI(agy) 기반 심층 에이전트</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h4>단축키</h4>
+        <ul>
+          <li><span class="mono">Ctrl+K</span> — 새 대화 시작</li>
+          <li><span class="mono">Enter</span> — 전송, <span class="mono">Shift+Enter</span> — 줄바꿈</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h4>버그 신고 / 기능 제안</h4>
+        <a href="https://github.com/dugurs/homeassistant-addons/issues" target="_blank" rel="noopener">GitHub Issues에 남기기 ↗</a>
+      </div>
+    </div>
+  </div>
 
   <!-- Top Pinned Resource Panel (Collapsible) -->
   <div id="top-resource-panel" class="top-resource-panel">
@@ -158,10 +192,12 @@ HTML_BODY = f"""
             <button class="quota-banner-dismiss" onclick="dismissQuotaBanner()">닫기</button>
           </div>
           <div class="composer" id="composer">
-            <textarea id="user-input" placeholder="Ask anything, @ to mention, / for actions" rows="1" oninput="updateSendBtn()" onkeydown="handleKey(event)"></textarea>
+            <div class="attach-preview-row" id="attach-preview-row" style="display:none;"></div>
+            <input type="file" id="attach-file-input" multiple accept=".py,.js,.ts,.java,.c,.cpp,.go,.rs,.sh,.bat,.ps1,.json,.yaml,.yml,.xml,.toml,.ini,.env,.csv,.tsv,.txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style="display:none;" onchange="handleFilesSelected(event)">
+            <textarea id="user-input" placeholder="Ask anything, @ to mention, / for actions" rows="1" oninput="updateSendBtn(); autoResizeTextarea()" onkeydown="handleKey(event)"></textarea>
             <div class="composer-toolbar">
               <div class="composer-toolbar-left">
-                <button class="attach-btn" onclick="notSupportedYet('파일 첨부')" title="파일 또는 이미지 추가"><span class="icon">{ICON_PLUS}</span></button>
+                <button class="attach-btn" id="attach-btn" onclick="triggerFileAttach()" title="파일 또는 이미지 추가 (CLI 추론 모드 전용)"><span class="icon">{ICON_PLUS}</span></button>
 
                 <div class="model-picker" id="stream-mode-picker">
                   <button class="mode-picker-btn" id="stream-mode-btn" onclick="toggleStreamModePicker()" title="실행 모드 변경">
@@ -195,6 +231,18 @@ HTML_BODY = f"""
                   </div>
                   <div class="usage-panel" id="usage-panel" onmouseenter="openUsagePanel()" onmouseleave="closeUsagePanel()">
                     <div class="usage-panel-loading">사용량 불러오는 중...</div>
+                  </div>
+                </div>
+
+                <div class="model-picker" id="agent-picker" style="display:none;">
+                  <button class="mode-picker-btn model-picker-btn" id="agent-picker-btn" onclick="toggleAgentPicker()" title="커스텀 에이전트 변경">
+                    <span class="icon icon-sm icon-dim">{ICON_USER}</span>
+                    <span id="agent-picker-current" class="model-picker-name">Default agent</span>
+                    <span class="icon icon-sm">{ICON_CHEVRON_UP}</span>
+                  </button>
+                  <div class="model-dropdown" id="agent-dropdown">
+                    <div class="model-dropdown-title">Agent</div>
+                    <div id="agent-dropdown-list" class="model-dropdown-list"></div>
                   </div>
                 </div>
               </div>

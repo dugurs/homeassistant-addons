@@ -76,6 +76,11 @@ function notSupportedYet(feature) {
       if (icon) icon.innerHTML = next === 'dark' ? ICON_MOON_SVG : ICON_SUN_SVG;
     }
 
+    function toggleHelpPanel() {
+      const overlay = document.getElementById('help-overlay');
+      if (overlay) overlay.classList.toggle('open');
+    }
+
     function getCurrentTimeStr() {
       const now = new Date();
       return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -97,19 +102,48 @@ function notSupportedYet(feature) {
       });
     }
 
-    function appendUserMessage(text) {
+    // markdownText is rendered through the exact same formatMarkdown() pipeline
+    // as AI responses -- attachments (rendered as `![name](url)` / file links,
+    // see sendMessage()) and the user's own typed text share one bubble with
+    // no separate thumbnail-strip markup needed.
+    function appendUserMessage(markdownText) {
       const box = document.getElementById('chat-box');
       const row = document.createElement('div');
       const timeStr = getCurrentTimeStr();
       row.className = 'msg-row user';
       row.innerHTML = `
         <div class="bubble-wrap">
-          <div class="bubble">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          <div class="bubble markdown-body">${formatMarkdown(markdownText)}</div>
           <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
         </div>
       `;
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
+    }
+
+    // Click-to-enlarge for any image rendered inside a chat bubble (user
+    // attachments and any images an AI response happens to include) --
+    // delegated so it works on content injected later via innerHTML.
+    document.addEventListener('click', (e) => {
+      const img = e.target.closest('.bubble img');
+      if (!img) return;
+      openImageLightbox(img.src, img.alt || '');
+    });
+
+    function openImageLightbox(src, alt) {
+      const overlay = document.getElementById('image-lightbox-overlay');
+      const img = document.getElementById('image-lightbox-img');
+      if (!overlay || !img) return;
+      img.src = src;
+      img.alt = alt || '';
+      overlay.classList.add('open');
+    }
+
+    function closeImageLightbox() {
+      const overlay = document.getElementById('image-lightbox-overlay');
+      const img = document.getElementById('image-lightbox-img');
+      if (overlay) overlay.classList.remove('open');
+      if (img) img.src = '';
     }
 
     let sessionTotalTokens = parseInt(localStorage.getItem('antigravity_total_tokens') || '0', 10);
@@ -325,7 +359,9 @@ function notSupportedYet(feature) {
     }
 
     // Sticky Resource Panel & Dual-Line History
-    const MAX_HISTORY = 24;
+    // 3s poll x 60 points = 3 minutes of visible history (was 24 = 72s, felt
+    // like it scrolled by too fast).
+    const MAX_HISTORY = 60;
     const addonCpuHistory = [];
     const sysCpuHistory = [];
     const addonRamHistory = [];
@@ -546,6 +582,7 @@ function notSupportedYet(feature) {
       const m = STREAM_MODES.find(x => x.value === currentStreamMode) || STREAM_MODES[0];
       if (nameEl) nameEl.textContent = m.shortName;
       if (iconEl) { iconEl.innerHTML = m.icon; iconEl.className = `icon ${m.colorClass}`; }
+      updateAttachBtnState();
     }
 
     function renderStreamModeList() {
@@ -775,7 +812,84 @@ function notSupportedYet(feature) {
       if (streamPicker && !streamPicker.contains(e.target)) {
         closeStreamModePicker();
       }
+      const agentPicker = document.getElementById('agent-picker');
+      if (agentPicker && !agentPicker.contains(e.target)) {
+        closeAgentPicker();
+      }
     });
+
+    // Custom agent picker (Mode 3, `agy --agent <id>`). Discovered from
+    // .agents/agents/*/agent.md and ~/.gemini/config/agents/*/agent.md (see
+    // core/agent_discovery.py) -- most installs have none defined, so the
+    // whole picker stays hidden until at least one is found.
+    let agentCatalog = [];
+    let currentAgentId = localStorage.getItem('antigravity_agent_id') || '';
+
+    async function loadAgentCatalog() {
+      try {
+        const apiUrl = new URL('api/agents', window.location.href).href;
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        agentCatalog = data.agents || [];
+      } catch (e) {
+        agentCatalog = [];
+      }
+      const picker = document.getElementById('agent-picker');
+      if (!picker) return;
+      if (agentCatalog.length === 0) {
+        picker.style.display = 'none';
+        return;
+      }
+      if (!agentCatalog.some(a => a.id === currentAgentId)) currentAgentId = '';
+      picker.style.display = '';
+      renderAgentDropdownList();
+      updateAgentPickerButton();
+    }
+
+    function updateAgentPickerButton() {
+      const nameEl = document.getElementById('agent-picker-current');
+      if (!nameEl) return;
+      const agent = agentCatalog.find(a => a.id === currentAgentId);
+      nameEl.textContent = agent ? agent.name : 'Default agent';
+    }
+
+    function renderAgentDropdownList() {
+      const list = document.getElementById('agent-dropdown-list');
+      if (!list) return;
+      const rows = [{ id: '', name: 'Default agent', description: '' }, ...agentCatalog];
+      list.innerHTML = rows.map(a => `
+        <div class="model-row ${a.id === currentAgentId ? 'active' : ''}">
+          <div class="model-row-main" onclick="selectAgent('${a.id}')">
+            <span class="model-row-name">${a.name}</span>
+          </div>
+          <div class="model-row-right">
+            ${a.id === currentAgentId ? `<span class="model-row-check"><span class="icon">${ICON_CHECK_SVG}</span></span>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function selectAgent(id) {
+      currentAgentId = id;
+      localStorage.setItem('antigravity_agent_id', currentAgentId);
+      updateAgentPickerButton();
+      renderAgentDropdownList();
+      closeAgentPicker();
+    }
+
+    function toggleAgentPicker() {
+      const dropdown = document.getElementById('agent-dropdown');
+      if (!dropdown) return;
+      const opening = !dropdown.classList.contains('open');
+      closeModelPicker();
+      closeStreamModePicker();
+      dropdown.classList.toggle('open', opening);
+    }
+
+    function closeAgentPicker() {
+      const dropdown = document.getElementById('agent-dropdown');
+      if (dropdown) dropdown.classList.remove('open');
+    }
 
     document.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -1004,6 +1118,7 @@ function notSupportedYet(feature) {
     const ICON_CHECK_SQUARE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
     const ICON_SQUARE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
     const ICON_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+    const ICON_EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
 
     let sessionSelectMode = false;
     let selectedSessionIds = new Set();
@@ -1069,6 +1184,45 @@ function notSupportedYet(feature) {
       loadSessionsList();
     }
 
+    function startInlineRename(cid, evt) {
+      if (evt) evt.stopPropagation();
+      const card = evt.target.closest('.session-card');
+      if (!card) return;
+      const titleEl = card.querySelector('.session-card-title');
+      if (!titleEl || titleEl.tagName === 'INPUT') return;
+      const currentTitle = titleEl.textContent;
+      const input = document.createElement('input');
+      input.className = 'session-card-title session-card-title-input';
+      input.value = currentTitle;
+      input.onclick = (e) => e.stopPropagation();
+      input.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); input.dataset.cancelled = '1'; input.blur(); }
+      };
+      input.onblur = () => commitInlineRename(cid, currentTitle, input);
+      titleEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    async function commitInlineRename(cid, previousTitle, input) {
+      const title = input.value.trim();
+      if (input.dataset.cancelled || !title || title === previousTitle) {
+        loadSessionsList();
+        return;
+      }
+      try {
+        const apiUrl = new URL('api/sessions/' + encodeURIComponent(cid), window.location.href).href;
+        await fetch(apiUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title })
+        });
+      } catch (e) {}
+      loadSessionsList();
+    }
+
     async function loadSessionsList() {
       const listEl = document.getElementById('session-list');
       if (!listEl) return;
@@ -1111,6 +1265,7 @@ function notSupportedYet(feature) {
               <div class="session-card-title">${displayTitle}</div>
               <div class="session-card-meta"><span>${sess.date_str || ''}</span><span>·</span><span>${sess.turns}단계</span></div>
             </div>
+            ${!sessionSelectMode ? `<button class="session-card-delete-btn" onclick="startInlineRename('${cid}', event)" title="제목 변경"><span class="icon">${ICON_EDIT_SVG}</span></button>` : ''}
             ${!sessionSelectMode ? `<button class="session-card-delete-btn" onclick="deleteSingleSession('${cid}', event)" title="대화 삭제"><span class="icon">${ICON_TRASH_SVG}</span></button>` : ''}
           `;
           listEl.appendChild(card);
@@ -1421,6 +1576,7 @@ function notSupportedYet(feature) {
       await pollStatus();
       await loadSessionsList();
       await loadModelCatalog();
+      await loadAgentCatalog();
       prefetchUsage();
 
       // Start 3-second Periodic Status Polling
@@ -1481,10 +1637,148 @@ function notSupportedYet(feature) {
       }
     }
 
+    // Textarea auto-grow, capped at 3 lines (measured from the element's own
+    // computed line-height so it stays correct regardless of font metrics).
+    function autoResizeTextarea() {
+      const el = document.getElementById('user-input');
+      if (!el) return;
+      el.style.height = 'auto';
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 21;
+      const maxHeight = Math.round(lineHeight * 3);
+      const next = Math.min(el.scrollHeight, maxHeight);
+      el.style.height = next + 'px';
+      el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    }
+
+    // File attachments -- Mode 3 (CLI 추론 모드) only. agy's own `view_file`
+    // tool reads and visually understands an image given just its absolute
+    // path in a headless -p prompt (confirmed live), so there's no direct
+    // multimodal API integration here -- just save the bytes and reference
+    // the returned path in the prompt text. Modes 1/2 never invoke agy, so
+    // the attach button stays disabled outside Mode 3 (see
+    // updateAttachBtnState(), called from updateStreamModeButton()).
+    let pendingAttachments = [];
+    let attachmentSeq = 0;
+
+    function updateAttachBtnState() {
+      const btn = document.getElementById('attach-btn');
+      if (!btn) return;
+      const enabled = currentStreamMode === '3';
+      btn.classList.toggle('disabled', !enabled);
+      btn.title = enabled ? '파일 또는 이미지 추가' : '파일 첨부는 CLI 추론 모드에서만 가능합니다';
+    }
+
+    function triggerFileAttach() {
+      if (currentStreamMode !== '3') {
+        notSupportedYet('파일 첨부는 CLI 추론 모드에서만');
+        return;
+      }
+      const input = document.getElementById('attach-file-input');
+      if (input) input.click();
+    }
+
+    function isImageFile(file) {
+      return file.type && file.type.startsWith('image/');
+    }
+
+    function readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Files are only staged (local preview, no network call) on selection --
+    // the actual upload happens in sendMessage(), bundled with the message
+    // send itself, so "attach + type + send" reads as one action instead of
+    // two separate steps.
+    async function handleFilesSelected(event) {
+      const files = Array.from(event.target.files || []);
+      event.target.value = ''; // allow re-selecting the same file later
+      if (files.length === 0) return;
+
+      const entries = [];
+      for (const file of files) {
+        const id = ++attachmentSeq;
+        let previewUrl = null;
+        if (isImageFile(file)) {
+          try { previewUrl = await readFileAsDataURL(file); } catch (e) {}
+        }
+        entries.push({ id, filename: file.name, previewUrl, isImage: isImageFile(file), path: null, url: null, uploading: false, error: null, file });
+      }
+      pendingAttachments = pendingAttachments.concat(entries);
+      renderAttachPreviewRow();
+    }
+
+    async function uploadAttachment(entry) {
+      entry.uploading = true;
+      entry.error = null;
+      renderAttachPreviewRow();
+      try {
+        const dataUrl = entry.previewUrl || await readFileAsDataURL(entry.file);
+        const base64 = dataUrl.split(',')[1] || '';
+        const apiUrl = new URL('api/upload', window.location.href).href;
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: [{ filename: entry.filename, data: base64, content_type: entry.file.type || '' }] })
+        });
+        entry.uploading = false;
+        if (!res.ok) {
+          entry.error = `업로드 실패 (HTTP ${res.status})`;
+        } else {
+          const data = await res.json();
+          const result = (data.files || [])[0];
+          if (result && result.path) {
+            entry.path = result.path;
+            entry.url = result.url;
+          } else {
+            entry.error = (result && result.error) || '업로드 실패';
+          }
+        }
+      } catch (e) {
+        entry.uploading = false;
+        entry.error = `업로드 실패: ${e.message || e}`;
+      }
+      renderAttachPreviewRow();
+    }
+
+    function removeAttachment(id) {
+      pendingAttachments = pendingAttachments.filter(a => a.id !== id);
+      renderAttachPreviewRow();
+    }
+
+    function renderAttachPreviewRow() {
+      const row = document.getElementById('attach-preview-row');
+      if (!row) return;
+      if (pendingAttachments.length === 0) {
+        row.style.display = 'none';
+        row.innerHTML = '';
+        return;
+      }
+      row.style.display = 'flex';
+      row.innerHTML = pendingAttachments.map(a => `
+        <div class="attach-chip ${a.error ? 'attach-chip-error' : ''}">
+          ${a.isImage && a.previewUrl
+            ? `<img src="${a.previewUrl}" alt="">`
+            : `<span class="attach-chip-file-icon">📄</span>`}
+          <span class="attach-chip-text">
+            <span class="attach-chip-name">${a.filename}</span>
+            ${a.uploading ? `<span class="attach-chip-status">업로드 중…</span>` : ''}
+            ${a.error ? `<span class="attach-chip-status attach-chip-status-error">⚠️ ${a.error}</span>` : ''}
+          </span>
+          <button class="attach-chip-remove" onclick="removeAttachment(${a.id})">&times;</button>
+        </div>
+      `).join('');
+    }
+
     function sendQuick(prompt) {
       const input = document.getElementById('user-input');
       input.value = prompt;
       updateSendBtn();
+      autoResizeTextarea();
       sendMessage();
     }
 
@@ -1500,18 +1794,64 @@ function notSupportedYet(feature) {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
       const streamMode = parseInt(currentStreamMode) || 1;
-      const prompt = input.value.trim();
-      if (!prompt) return;
+      const typedText = input.value.trim();
+      if (!typedText && pendingAttachments.length === 0) return;
+      if (pendingAttachments.some(a => a.uploading)) return; // already sending
+
+      // Upload happens here, bundled into the send action itself, rather than
+      // eagerly on file selection -- "attach + type + send" is one step.
+      // Attempt every not-yet-uploaded (or previously failed) attachment;
+      // one that still errors is simply left out of the message below.
+      const toUpload = pendingAttachments.filter(a => !a.path);
+      if (toUpload.length > 0) {
+        btn.disabled = true;
+        await Promise.all(toUpload.map(uploadAttachment));
+      }
+      const readyAttachments = pendingAttachments.filter(a => a.path && !a.error);
+      if (!typedText && readyAttachments.length === 0) {
+        btn.disabled = false;
+        updateSendBtn();
+        return; // every attachment failed and there's no text -- nothing to send
+      }
+
+      // Attachments are woven in as markdown at the top of the message, in
+      // two parallel versions: `path` (the container's absolute filesystem
+      // path) is what actually goes to agy -- its own `view_file` tool reads
+      // straight off disk and genuinely understands images given just that
+      // path in a headless -p prompt (confirmed live, see core/uploads.py).
+      // `url` (this server's own GET /api/uploads/<batch>/<file>) is what the
+      // *browser* renders instead, since it can't load a raw container path.
+      // Non-image files use a plain bold label instead of a markdown link --
+      // the container path isn't browser-fetchable either way, so a link
+      // would just be dead weight.
+      const bodyText = typedText || '첨부된 파일을 확인해줘.';
+      const attachmentsMarkdownFor = (pathField) => readyAttachments.map(a =>
+        a.isImage ? `![${a.filename}](${a[pathField]})` : `📄 **${a.filename}**`
+      ).join('\\n');
+
+      const prompt = readyAttachments.length > 0
+        ? `${attachmentsMarkdownFor('path')}\\n\\n${bodyText}`
+        : bodyText;
+      const displayMarkdown = readyAttachments.length > 0
+        ? `${attachmentsMarkdownFor('url')}\\n\\n${bodyText}`
+        : bodyText;
 
       const hero = document.getElementById('chat-hero-card');
       if (hero) hero.remove();
 
-      appendUserMessage(prompt);
+      appendUserMessage(displayMarkdown);
       input.value = '';
+      autoResizeTextarea();
+      pendingAttachments = [];
+      renderAttachPreviewRow();
       btn.disabled = true;
       updateSendBtn();
 
-      const streamUI = createBotStreamMessage(streamMode);
+      // Attachments only work under Mode 3 (agy's view_file tool) -- force it
+      // even if the disabled attach button was somehow bypassed while another
+      // mode was selected, so the referenced paths are actually usable.
+      const effectiveStreamMode = readyAttachments.length > 0 ? 3 : streamMode;
+      const streamUI = createBotStreamMessage(effectiveStreamMode);
       const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
       const isMobile = window.innerWidth < 768;
 
@@ -1524,10 +1864,11 @@ function notSupportedYet(feature) {
             prompt: prompt,
             conversation_id: currentConversationId,
             is_direct_llm: isDirectLLM,
-            stream_mode: streamMode,
+            stream_mode: effectiveStreamMode,
             client_width: window.innerWidth,
             is_mobile: isMobile,
-            model: resolveCurrentModelSlug()
+            model: resolveCurrentModelSlug(),
+            agent: currentAgentId
           })
         });
 

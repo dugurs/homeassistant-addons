@@ -1,5 +1,6 @@
 """Sensor data processing, multi-dimensional environmental parsing, and area parser module."""
 
+import datetime
 import re
 from core.system_info import get_resource_usage
 
@@ -71,6 +72,9 @@ EXCLUDE_KEYWORDS = [
 ]
 
 
+_ROOM_WORD_EXCLUDE = ["알림", "설정", "동작", "스위치", "환풍기", "재실", "센서"]
+
+
 def get_dynamic_rooms(states: list) -> list:
     """Dynamically discover all defined rooms/areas from HA entity attributes and names."""
     known_candidates = [
@@ -78,6 +82,7 @@ def get_dynamic_rooms(states: list) -> list:
         "현관", "서재", "아이방", "드레스룸", "다용도실", "팬트리", "침실", "욕실"
     ]
     discovered = []
+    compound_discovered = []
 
     # 1. Discover rooms from friendly_name and entity_ids
     for s in states:
@@ -92,16 +97,58 @@ def get_dynamic_rooms(states: list) -> list:
     for s in states:
         fn = s.get("attributes", {}).get("friendly_name", "")
         for word in re.findall(r"([가-힣]{2,4}(?:방|실|룸|홀|테라스|베란다|현관))", fn):
-            if word not in discovered and word not in ["알림", "설정", "동작", "스위치", "환풍기"]:
+            if word not in discovered and word not in _ROOM_WORD_EXCLUDE:
                 discovered.append(word)
+
+    # 3. Discover compound areas made of two adjacent single-word room candidates
+    # already found above (e.g. "안방" + "화장실" -> "안방 화장실") -- checked
+    # against `discovered` itself, not a fresh regex: step 2's suffix pattern
+    # needs a 2-4 char prefix before the suffix, so short base words like
+    # "안방"/"거실" (only 1 char before the suffix) never match it on their own
+    # and must come from `known_candidates` instead. Without this compound
+    # step, "안방 화장실" is never a candidate on its own and room matching
+    # would misidentify it as plain "안방" (see match_room). The space is kept
+    # (not "안방화장실") so this candidate still works with every other
+    # `room in friendly_name` containment check elsewhere in the codebase --
+    # match_room is the only place that needs a space-stripped comparison, and
+    # it strips its own operands rather than requiring room labels to.
+    for s in states:
+        fn = s.get("attributes", {}).get("friendly_name", "")
+        tokens = fn.split()
+        for i in range(len(tokens) - 1):
+            a, b = tokens[i], tokens[i + 1]
+            if a in discovered and b in discovered:
+                combo = f"{a} {b}"
+                if combo not in discovered and combo not in compound_discovered:
+                    compound_discovered.append(combo)
 
     priority_order = ["거실", "안방", "작은방", "옷방", "주방", "화장실", "세탁실", "베란다", "현관", "서재", "드레스룸", "아이방"]
     sorted_rooms = [r for r in priority_order if r in discovered]
     for r in discovered:
         if r not in sorted_rooms:
             sorted_rooms.append(r)
+    for r in compound_discovered:
+        if r not in sorted_rooms:
+            sorted_rooms.append(r)
 
     return sorted_rooms or priority_order[:8]
+
+
+def match_room(rooms: list, no_space: str) -> str | None:
+    """Match the most specific room name contained in a (space-stripped) prompt.
+
+    Checks longer candidates first so a compound area ("안방 화장실") wins over a
+    generic room that's also a substring of it ("안방") when both are discovered
+    candidates -- prevents a request about a sub-area from being silently
+    misrouted to the containing room. Each room label is space-stripped only
+    for this comparison (not mutated in the returned value), since `no_space`
+    has no spaces at all but room labels like "안방 화장실" legitimately keep
+    theirs for every other `room in friendly_name` containment check.
+    """
+    for r in sorted(rooms, key=len, reverse=True):
+        if r.replace(" ", "") in no_space:
+            return r
+    return None
 
 
 def classify_sensor(entity: dict) -> str | None:
@@ -308,7 +355,7 @@ def get_room_env_summary(states: list, kind: str = "temperature") -> str:
                 lines.append(f"• **{r}**: {' | '.join(air_parts)}")
         if has_any:
             return "\n".join(lines)
-        return "실내 공기질(CO2, TVOC, 미세먼지) 센서 데이터를 수집하지 못했습니다."
+        return "실내 공기질(CO2, TVOC, 미세먼지) 센서 데이터를 찾지 못했습니다."
     else:
         target_metric = "temperature"
 
@@ -437,9 +484,28 @@ def get_todo_summary(states: list) -> str:
 
 
 def get_system_health_summary(states: list) -> str:
-    """Perform system health check on core, memory, CPU, and entities."""
+    """Perform system health check on core, memory, CPU, entities, battery, and updates."""
     usage = get_resource_usage()
     unavail = [s.get("entity_id") for s in states if s.get("state") in ("unavailable", "unknown")]
+
+    low_battery = []
+    for s in states:
+        attrs = s.get("attributes", {})
+        if str(attrs.get("device_class", "")).lower() != "battery":
+            continue
+        try:
+            val = float(str(s.get("state", "")).replace("%", ""))
+        except ValueError:
+            continue
+        if val < 20:
+            fn = attrs.get("friendly_name") or s.get("entity_id")
+            low_battery.append(f"{fn} ({val:.0f}%)")
+
+    pending_updates = [
+        s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
+        for s in states
+        if s.get("entity_id", "").startswith("update.") and s.get("state") not in ("off", "unavailable", "unknown")
+    ]
 
     lines = [
         "🛡️ **Home Assistant 시스템 헬스체크 진단 보고서**\n",
@@ -447,6 +513,188 @@ def get_system_health_summary(states: list) -> str:
         f"• ⚙️ 리소스 점검: 호스트 RAM {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | 애드온 RAM {usage['memory_usage']} MB",
         f"• 📊 엔티티 건전성: 전체 {len(states)}개 엔티티 중 응답 불가 {len(unavail)}개",
         "• 🔒 MCP 서버 상태: ha-mcp (stdio) 정상 바인딩 및 통신 중",
-        "\n✅ 치명적인 시스템 장애가 발견되지 않았습니다.",
     ]
+    if low_battery:
+        shown = ", ".join(low_battery[:5])
+        more = f" 외 {len(low_battery) - 5}개" if len(low_battery) > 5 else ""
+        lines.append(f"• 🔋 배터리 부족(20% 미만) {len(low_battery)}개: {shown}{more}")
+    else:
+        lines.append("• 🔋 배터리 부족 기기가 없습니다.")
+    if pending_updates:
+        shown = ", ".join(pending_updates[:5])
+        more = f" 외 {len(pending_updates) - 5}개" if len(pending_updates) > 5 else ""
+        lines.append(f"• 🆕 업데이트 대기 중인 기기 {len(pending_updates)}개: {shown}{more}")
+    else:
+        lines.append("• 🆕 모든 기기가 최신 상태입니다.")
+
+    lines.append(
+        "\n⚠️ 배터리 부족 기기가 있어 점검이 필요합니다." if low_battery else "\n✅ 치명적인 시스템 장애가 발견되지 않았습니다."
+    )
+    return "\n".join(lines)
+
+
+def get_openings_summary(states: list) -> str:
+    """Summarize open doors/windows and camera activity states."""
+    opens = []
+    for s in states:
+        eid = s.get("entity_id", "")
+        if not eid.startswith("binary_sensor."):
+            continue
+        attrs = s.get("attributes", {})
+        dev_class = str(attrs.get("device_class", "")).lower()
+        fn = attrs.get("friendly_name", "")
+        if dev_class in ("door", "window", "garage_door", "opening") or any(w in fn for w in ["문", "창문"]):
+            if s.get("state") == "on":
+                opens.append(fn or eid)
+
+    cameras = [s for s in states if s.get("entity_id", "").startswith("camera.")]
+    streaming = [
+        s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
+        for s in cameras
+        if s.get("state") == "streaming"
+    ]
+
+    lines = ["🚪 **문/창문 및 카메라 상태**\n"]
+    if opens:
+        lines.append(f"• 열려 있는 문/창문 {len(opens)}개: {', '.join(opens)}")
+    else:
+        lines.append("• 열려 있는 문/창문이 없습니다.")
+    cam_line = f"• 📷 카메라 총 {len(cameras)}대 (스트리밍 중 {len(streaming)}대)"
+    if streaming:
+        cam_line += f": {', '.join(streaming)}"
+    lines.append(cam_line)
+    return "\n".join(lines)
+
+
+def get_presence_summary(states: list, prompt: str = "") -> str:
+    """Summarize who is home, or a specific family member's location if named in the prompt."""
+    persons_home = []
+    persons_away = []
+    person_by_name = {}
+    for s in states:
+        if not s.get("entity_id", "").startswith("person."):
+            continue
+        fn = s.get("attributes", {}).get("friendly_name") or s.get("entity_id").split(".")[1]
+        st = s.get("state", "")
+        person_by_name[fn] = s
+        if st == "home":
+            persons_home.append(fn)
+        else:
+            persons_away.append(fn)
+
+    if prompt:
+        no_space = prompt.replace(" ", "")
+        zone_labels = {
+            s.get("entity_id"): s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
+            for s in states
+            if s.get("entity_id", "").startswith("zone.")
+        }
+        for name, s in person_by_name.items():
+            if name and name in no_space:
+                st = s.get("state", "")
+                if st == "home":
+                    return f"{name} 님은 지금 집에 있어요."
+                if st == "not_home":
+                    return f"{name} 님은 지금 외출 중이에요."
+                zone_label = zone_labels.get(f"zone.{st}", st)
+                return f"{name} 님은 지금 {zone_label}에 있어요."
+
+    if not person_by_name:
+        return "재실 정보를 확인할 수 있는 사용자가 등록되어 있지 않습니다."
+
+    lines = ["👥 **가족 재실 현황**\n"]
+    if persons_home:
+        lines.append(f"• 집에 있음: {', '.join(persons_home)}")
+    if persons_away:
+        lines.append(f"• 외출 중: {', '.join(persons_away)}")
+    return "\n".join(lines)
+
+
+def get_energy_summary(states: list) -> str:
+    """Summarize current power/energy sensor readings and gas meter value.
+
+    Uses live sensor states only -- HA's long-term recorder statistics (Energy
+    dashboard) are out of scope, so this reflects the current moment, not
+    historical usage trends.
+    """
+    power_items = []
+    energy_items = []
+    for s in states:
+        if not s.get("entity_id", "").startswith("sensor."):
+            continue
+        attrs = s.get("attributes", {})
+        dev_class = str(attrs.get("device_class", "")).lower()
+        try:
+            val = float(str(s.get("state", "")))
+        except ValueError:
+            continue
+        fn = attrs.get("friendly_name") or s.get("entity_id")
+        uom = attrs.get("unit_of_measurement", "")
+        if dev_class == "power":
+            power_items.append((fn, val, uom))
+        elif dev_class == "energy":
+            energy_items.append((fn, val, uom))
+
+    gas_val = None
+    for s in states:
+        eid = s.get("entity_id", "")
+        fn = s.get("attributes", {}).get("friendly_name", "")
+        if eid.startswith("input_number.") and ("가스" in fn or "gas" in eid.lower()):
+            try:
+                gas_val = float(s.get("state", ""))
+            except ValueError:
+                pass
+            break
+
+    lines = ["⚡ **에너지 사용 현황 (현재 값 기준)**\n"]
+    if power_items:
+        power_items.sort(key=lambda x: x[1], reverse=True)
+        total_w = sum(v for _, v, u in power_items if "w" in u.lower())
+        top = ", ".join(f"{fn} {v:.0f}{u}" for fn, v, u in power_items[:5])
+        lines.append(f"• 🔌 전력 사용 상위 기기: {top}")
+        if total_w:
+            lines.append(f"• 순간 전력 합계: 약 {total_w:.0f}W")
+    else:
+        lines.append("• 🔌 전력 센서 데이터를 찾지 못했습니다.")
+    if energy_items:
+        e_top = ", ".join(f"{fn} {v:.1f}{u}" for fn, v, u in energy_items[:5])
+        lines.append(f"• 📈 누적 에너지: {e_top}")
+    if gas_val is not None:
+        lines.append(f"• 🔥 가스 계량기: {gas_val}")
+    return "\n".join(lines)
+
+
+def get_anniversary_summary(states: list) -> str:
+    """Summarize upcoming family birthdays/anniversaries from input_datetime helpers."""
+    today = datetime.date.today()
+    events = []
+    for s in states:
+        eid = s.get("entity_id", "")
+        if not eid.startswith("input_datetime."):
+            continue
+        fn = s.get("attributes", {}).get("friendly_name", "")
+        if not any(w in fn for w in ["생일", "기념일", "제사"]):
+            continue
+        attrs = s.get("attributes", {})
+        month = attrs.get("month")
+        day = attrs.get("day")
+        if not month or not day:
+            continue
+        try:
+            next_date = datetime.date(today.year, int(month), int(day))
+        except ValueError:
+            continue
+        if next_date < today:
+            next_date = datetime.date(today.year + 1, int(month), int(day))
+        d_day = (next_date - today).days
+        events.append((fn, next_date, d_day))
+
+    if not events:
+        return "등록된 기념일(생일/기념일/제사) 정보를 찾지 못했습니다."
+
+    events.sort(key=lambda x: x[2])
+    lines = ["🎂 **다가오는 가족 기념일**\n"]
+    for fn, next_date, d_day in events[:8]:
+        d_label = "오늘" if d_day == 0 else f"D-{d_day}"
+        lines.append(f"• {fn}: {next_date.month}월 {next_date.day}일 ({d_label})")
     return "\n".join(lines)

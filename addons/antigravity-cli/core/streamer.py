@@ -60,7 +60,18 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: 
 
     states = get_ha_states()
     lower = actual_prompt.lower()
-    if states and any(w in lower for w in ["날씨", "환경", "온도", "습도", "기상", "기온", "공기", "co2", "미세먼지"]):
+    # Also route general "how's the house" queries here, not just explicit
+    # weather/env words -- otherwise a prompt like "우리집 종합 상황 알려줘"
+    # matches none of the weather words, falls through to the same
+    # handle_agent_chat() Mode 2 already calls, and 복합모드 ends up returning
+    # the exact same text as 고속모드 for the single most common status query.
+    if states and any(
+        w in lower
+        for w in [
+            "날씨", "환경", "온도", "습도", "기상", "기온", "공기", "co2", "미세먼지",
+            "상태", "상황", "현황", "요약", "브리핑", "종합", "분위기", "집안", "우리집", "어때",
+        ]
+    ):
         full_text = get_ai_deep_environment_analysis(states, actual_prompt, is_mobile=is_mobile)
     else:
         full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
@@ -128,6 +139,7 @@ def stream_headless_cli(
     is_mobile: bool = False,
     conversation_id: str = "",
     model: str = "",
+    agent: str = "",
 ):
     """Mode 3: Google Antigravity Headless CLI Real-Time NDJSON Streamer (0-latency).
 
@@ -136,6 +148,10 @@ def stream_headless_cli(
     baked into the slug itself; the picker resolves (base model, effort) to
     the right variant slug client-side before this is ever called. See
     core/model_discovery.py for how that mapping is discovered live.
+
+    `agent` must be the id (directory name) of a custom agent discovered by
+    core.agent_discovery -- see that module for why this is read off disk
+    instead of via `agy agents` (no structured output support).
     """
     import subprocess
     t_start = time.time()
@@ -148,6 +164,10 @@ def stream_headless_cli(
     from core.model_discovery import get_valid_variant_slugs
 
     model = model if model in get_valid_variant_slugs() else ""
+
+    from core.agent_discovery import get_valid_agent_ids
+
+    agent = agent if agent in get_valid_agent_ids() else ""
 
     hw_info = check_agy_hardware_support()
     agy_bin = "/usr/local/bin/agy"
@@ -185,11 +205,15 @@ def stream_headless_cli(
     env["TERM"] = "dumb"
 
     api_key = ""
+    print_timeout = "5m"
+    enable_sandbox = False
     if os.path.exists("/data/options.json"):
         try:
             with open("/data/options.json", "r") as f:
                 opts = json.load(f)
                 api_key = opts.get("api_key", "").strip()
+                print_timeout = str(opts.get("print_timeout") or "5m").strip()
+                enable_sandbox = bool(opts.get("enable_sandbox", False))
         except Exception:
             pass
 
@@ -208,12 +232,22 @@ def stream_headless_cli(
     # prior conversation by id (per `agy --help`); there is no `--resume` flag.
     resume_arg = f" --conversation {conversation_id}" if resume_this_session else ""
     model_arg = f" --model {model}" if model else ""
+    agent_arg = f" --agent {agent}" if agent else ""
+    # Go duration format only (e.g. "5m", "90s", "1h30m") -- print_timeout is
+    # addon-config-supplied but still gets embedded into a shell -c string
+    # below, so anything not matching this shape is dropped in favor of
+    # agy's own built-in default rather than passed through unsanitized.
+    timeout_arg = f" --print-timeout {print_timeout}" if re.fullmatch(r"[0-9]+(h|m|s)([0-9]+(m|s))?", print_timeout) else ""
+    sandbox_arg = " --sandbox" if enable_sandbox else ""
     script_cmd = (
         f"{agy_bin} -p {json.dumps(actual_prompt)}"
         f"{resume_arg}"
         f"{model_arg}"
+        f"{agent_arg}"
         f" --output-format stream-json"
         f" --dangerously-skip-permissions"
+        f"{timeout_arg}"
+        f"{sandbox_arg}"
     )
     cmd = ["script", "-q", "-e", "-c", script_cmd, "/dev/null"]
 
@@ -522,6 +556,7 @@ def stream_agent_chat(
     is_mobile: bool = False,
     conversation_id: str = "",
     model: str = "",
+    agent: str = "",
 ):
     """Router for the 3 Clean Streaming Modes with unified session management.
 
@@ -533,14 +568,14 @@ def stream_agent_chat(
     so resume silently no-ops and a *second*, disconnected id gets created.
     stream_headless_cli() handles id assignment itself for that reason.
 
-    model only applies to Mode 3 (agy) -- Modes 1/2 never invoke agy.
+    model/agent only apply to Mode 3 (agy) -- Modes 1/2 never invoke agy.
 
     Numbering matches the recovered reference UI's own AVAILABLE_MODES ids
     (1 = fast dashboard, 2 = deep brain, 3 = CLI) -- not the historical
     internal order of the two functions below.
     """
     if stream_mode == 3:
-        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model):
+        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model, agent=agent):
             yield ev
     elif stream_mode == 1:
         for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):

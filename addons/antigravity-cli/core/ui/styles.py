@@ -538,6 +538,15 @@ CSS_STYLES = """
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    input.session-card-title-input {
+      font-family: inherit;
+      width: 100%;
+      background: var(--bg-base);
+      border: 1px solid var(--accent-blue);
+      border-radius: 4px;
+      padding: 1px 4px;
+      outline: none;
+    }
     .session-card-meta {
       font-size: 10px;
       color: var(--text-dim);
@@ -693,6 +702,15 @@ CSS_STYLES = """
       border-radius: 20px;
       word-break: break-word;
       box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .bubble img {
+      display: block;
+      max-width: 240px;
+      max-height: 240px;
+      border-radius: 12px;
+      margin: 4px 0;
+      cursor: zoom-in;
+      object-fit: cover;
     }
     .msg-row.user .bubble {
       background: var(--bg-bubble-user);
@@ -1265,6 +1283,90 @@ CSS_STYLES = """
     }
     .attach-btn:hover { color: var(--text-main); }
     .attach-btn .icon { width: 14px; height: 14px; }
+    .attach-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* Pending attachment chips, shown above the textarea before sending (Mode 3 only) */
+    .attach-preview-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px dashed var(--border-color);
+    }
+    .attach-chip {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 4px 8px 4px 4px;
+      max-width: 260px;
+    }
+    .attach-chip.attach-chip-error { border-color: var(--accent-red); }
+    .attach-chip img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .attach-chip-file-icon { font-size: 16px; }
+    .attach-chip-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      gap: 1px;
+    }
+    .attach-chip-name {
+      font-size: 0.72rem;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .attach-chip-status { font-size: 0.68rem; color: var(--text-dim); }
+    .attach-chip-status-error {
+      color: var(--accent-red);
+      white-space: normal;
+      line-height: 1.3;
+    }
+    .attach-chip-remove {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 0.9rem;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .attach-chip-remove:hover { color: var(--accent-red); }
+
+    /* Uploaded attachment thumbnails shown inside the user's own chat bubble */
+    .bubble-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+      justify-content: flex-end;
+    }
+    .bubble-attachment-thumb {
+      width: 64px;
+      height: 64px;
+      border-radius: 10px;
+      object-fit: cover;
+      border: 1px solid var(--border-color);
+    }
+    .bubble-attachment-file {
+      font-size: 0.75rem;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 4px 8px;
+      color: var(--text-main);
+    }
 
     .mic-btn, .send-btn {
       width: 28px;
@@ -1740,4 +1842,78 @@ CSS_STYLES = """
       background: var(--bg-base);
       color: var(--text-main);
     }
+
+    /* Click-to-enlarge lightbox for any image inside a chat bubble */
+    .image-lightbox-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.85);
+      cursor: zoom-out;
+    }
+    .image-lightbox-overlay.open { display: flex; }
+    .image-lightbox-overlay img {
+      max-width: 92vw;
+      max-height: 92vh;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+
+    /* Help / Feedback modal (header info button) */
+    .help-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .help-overlay.open { display: flex; }
+    .help-box {
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 22px 24px;
+      width: min(420px, 90vw);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    }
+    .help-box-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .help-box-top h3 { margin: 0; font-size: 1rem; color: var(--text-bold); }
+    .help-box-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 2px;
+    }
+    .help-section { margin-bottom: 14px; }
+    .help-section h4 {
+      margin: 0 0 6px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-dim);
+    }
+    .help-section ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 0.85rem;
+      color: var(--text-main);
+      line-height: 1.7;
+    }
+    .help-section a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-size: 0.85rem;
+    }
+    .help-section a:hover { text-decoration: underline; }
 """.strip()
