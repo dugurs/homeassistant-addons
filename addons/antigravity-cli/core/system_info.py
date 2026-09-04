@@ -187,6 +187,32 @@ def get_ha_error_logs() -> str:
         return f"로그 조회 중 오류가 발생했습니다: {e}"
 
 
+def get_mcp_status() -> dict:
+    """Best-effort MCP connection status -- not a real handshake/ping (that
+    would mean shelling out to agy just to check), just whether run.sh wrote
+    a usable mcp_config.json and what it configured. See run.sh:59/73 for the
+    two shapes this file can take (stdio via uvx, or a user-supplied
+    serverUrl)."""
+    config_path = "/root/.gemini/config/mcp_config.json"
+    if not os.path.isfile(config_path):
+        return {"configured": False, "servers": []}
+    try:
+        with open(config_path, "r", encoding="utf-8", errors="ignore") as f:
+            config = json.load(f)
+        servers_obj = config.get("mcpServers") or {}
+        servers = [
+            {
+                "name": name,
+                "transport": "sse" if isinstance(spec, dict) and spec.get("serverUrl") else "stdio",
+            }
+            for name, spec in servers_obj.items()
+            if isinstance(spec, dict)
+        ]
+        return {"configured": len(servers) > 0, "servers": servers}
+    except Exception:
+        return {"configured": False, "servers": []}
+
+
 def get_all_addons_memory() -> str:
     """Fetch memory usage of all installed addons via Docker/Supervisor."""
     try:

@@ -120,6 +120,27 @@ CSS_STYLES = """
     .icon-amber { color: var(--accent-yellow); }
     .amber-text { color: var(--accent-yellow); }
 
+    /* Compact icon-only button -- same family as .icon-btn-lg (header /
+       left-menu / composer buttons) at a size that fits inline inside a chat
+       bubble (message copy buttons, reasoning-log copy, view-toggle tabs). */
+    .icon-btn-sm {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background: transparent;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .icon-btn-sm .icon { width: 13px; height: 13px; }
+    .icon-btn-sm:hover { color: var(--text-main); border-color: var(--accent-blue); background: var(--bg-card-high); }
+    .icon-btn-sm.copied { color: var(--accent-green); border-color: var(--accent-green); background: rgba(16, 185, 129, 0.15); }
+
     /* Header */
     header {
       height: 48px;
@@ -747,39 +768,28 @@ CSS_STYLES = """
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 3px 8px;
+      padding: 4px 7px;
       border-radius: 4px;
-      font-size: 0.73rem;
       cursor: pointer;
-      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       transition: all 0.15s ease;
     }
+    .view-tab .icon { width: 13px; height: 13px; }
     .view-tab.active {
       background: var(--bg-bubble-user);
       color: #ffffff;
     }
+    /* .top-copy-btn layers onto .icon-btn-sm (sizing/layout) -- this just
+       overrides its resting color to match the segmented view-toggle next to it. */
     .top-copy-btn {
       background: var(--bg-base);
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-size: 0.73rem;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      transition: all 0.15s ease;
     }
     .top-copy-btn:hover {
       background: var(--badge-bg);
       color: var(--accent-blue);
       border-color: var(--accent-blue);
-    }
-    .top-copy-btn.copied {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--accent-green);
-      border-color: var(--accent-green);
     }
     .raw-markdown-view {
       display: none;
@@ -919,30 +929,6 @@ CSS_STYLES = """
       white-space: nowrap;
     }
 
-    .copy-btn {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 2px 8px;
-      border-radius: 6px;
-      font-size: 0.72rem;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      transition: all 0.15s ease;
-    }
-    .copy-btn:hover {
-      background: var(--bg-base);
-      color: var(--text-main);
-      border-color: var(--accent-blue);
-    }
-    .copy-btn.copied {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--accent-green);
-      border-color: var(--accent-green);
-    }
-
     /* ==========================================================================
        GitHub Dark/Light Standard Markdown Typography & Elements
        ========================================================================== */
@@ -1073,6 +1059,12 @@ CSS_STYLES = """
       gap: 8px;
       min-width: 0;
     }
+    .term-header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
     .term-mode-tag {
       font-weight: 700;
       font-size: 0.68rem;
@@ -1083,6 +1075,26 @@ CSS_STYLES = """
       color: #c9d1d9;
       font-size: 0.72rem;
     }
+    /* Icon-only copy button for the reasoning log itself -- term-box always
+       renders in this fixed dark console palette regardless of app theme, so
+       (unlike .icon-btn-sm elsewhere) this doesn't use the themed CSS vars. */
+    .term-copy-btn {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      border: 1px solid #30363d;
+      background: transparent;
+      color: #8b949e;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+    .term-copy-btn .icon { width: 11px; height: 11px; }
+    .term-copy-btn:hover { color: #c9d1d9; border-color: #8b949e; background: rgba(255, 255, 255, 0.06); }
+    .term-copy-btn.copied { color: #3fb950; border-color: #3fb950; background: rgba(35, 134, 54, 0.2); }
     .term-badge {
       font-size: 0.65rem;
       font-weight: 700;
@@ -1105,41 +1117,40 @@ CSS_STYLES = """
       padding: 8px 12px;
       max-height: 180px;
       overflow-y: auto;
-      overflow-x: hidden;
+      overflow-x: auto;
       font-family: 'Fira Code', Consolas, Monaco, monospace;
       font-size: 0.72rem;
       line-height: 1.4;
       color: #c9d1d9;
       background: #0d1117;
-      word-break: break-all;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
     }
     .term-body::-webkit-scrollbar {
       width: 5px;
+      height: 5px;
     }
     .term-body::-webkit-scrollbar-thumb {
       background: #30363d;
       border-radius: 3px;
     }
+    /* Terminal-style lines don't wrap -- long tool-call args/commands scroll
+       horizontally in .term-body instead, same as a real terminal. width:
+       max-content lets a line grow past the box so overflow-x actually
+       triggers; min-width:100% keeps short lines filling the width. */
     .term-line {
       display: flex;
       gap: 6px;
       margin-bottom: 2px;
-      word-break: break-all;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
+      width: max-content;
+      min-width: 100%;
     }
     .term-time {
       color: #6e7681;
       flex-shrink: 0;
       font-size: 0.68rem;
+      white-space: nowrap;
     }
     .term-text {
-      flex: 1;
-      word-break: break-all;
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
+      white-space: pre;
     }
     .term-text.init { color: #58a6ff; font-weight: 600; }
     .term-text.think { color: #d2a8ff; font-style: italic; }
@@ -1148,6 +1159,8 @@ CSS_STYLES = """
     .term-text.cmd { color: #e3b341; }
     .term-text.done { color: #3fb950; font-weight: 600; }
     .term-text.error { color: #f85149; }
+    .diff-add { color: #3fb950; }
+    .diff-del { color: #f85149; }
 
     /* Tables */
     .table-wrapper {
@@ -1242,6 +1255,7 @@ CSS_STYLES = """
     }
     /* Unified composer: textarea on top, toolbar (attach/mode/model/mic/send) below, one bordered box */
     .composer {
+      position: relative;
       background: var(--bg-card-high);
       border: 1px solid var(--border-color);
       border-radius: 22px;
@@ -1249,6 +1263,45 @@ CSS_STYLES = """
       transition: border-color 0.2s;
     }
     .composer:focus-within { border-color: #3f3f46; }
+
+    /* "/" slash-command autocomplete -- appears above the textarea while
+       composing a command name (see updateSlashCommandMenu() in scripts.py),
+       same visual family as .model-dropdown. */
+    .slash-command-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 12px;
+      right: 12px;
+      max-width: 420px;
+      max-height: 240px;
+      overflow-y: auto;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+      padding: 6px;
+      z-index: 45;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .slash-command-menu.open { display: flex; }
+    .slash-command-row {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .slash-command-row:hover, .slash-command-row.active { background: rgba(255, 255, 255, 0.05); }
+    .slash-command-row .cmd {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .slash-command-row .desc { font-size: 0.72rem; color: var(--text-muted); }
     .composer-toolbar {
       display: flex;
       align-items: center;
@@ -1400,6 +1453,15 @@ CSS_STYLES = """
     }
     .send-btn.has-text:hover { background: #ffffff; }
     .send-btn .icon { width: 14px; height: 14px; }
+    /* Mode 3 generation in flight -- send button doubles as a stop button
+       (see updateSendBtn()/stopGeneration() in core/ui/scripts.py). */
+    .send-btn.stopping {
+      background: var(--accent-red);
+      color: #fff;
+      opacity: 1;
+      cursor: pointer;
+    }
+    .send-btn.stopping:hover { background: #dc2626; }
 
     /* Model / Effort Picker (Mode 3), also reused by the Engine Mode picker */
     .model-picker {
@@ -1656,6 +1718,12 @@ CSS_STYLES = """
       padding: 6px 4px 4px;
     }
     .usage-family-title:not(:first-child) { border-top: 1px solid var(--border-color); margin-top: 4px; }
+    .usage-credits-line {
+      font-size: 0.75rem;
+      color: var(--text-main);
+      padding: 2px 4px 8px;
+    }
+    .usage-credits-line a { color: var(--accent-blue); }
     .usage-row {
       display: flex;
       align-items: center;

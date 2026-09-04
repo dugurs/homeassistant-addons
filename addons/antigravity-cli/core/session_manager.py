@@ -264,6 +264,163 @@ def get_custom_title(conversation_id: str) -> str | None:
     return None
 
 
+def _rewound_marker_path(conversation_id: str) -> str:
+    """Path to a conversation's "was rewound, next Mode 3 turn needs a fresh agy id" marker."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "rewound.marker")
+
+
+def mark_rewound(conversation_id: str):
+    """Flag that this conversation was just rewound (see rewind_session()).
+
+    Read by core/streamer.py's resume-decision logic: agy has no --rewind
+    flag and can't actually be made to forget the turns rewind_session()
+    discarded from the *displayed* transcript, so the next Mode 3 turn must
+    start a brand-new agy id instead of resuming the old one with
+    --conversation (which would silently un-rewind everything from agy's own
+    point of view). Cleared once that fresh id is established -- see
+    clear_rewound().
+    """
+    path = _rewound_marker_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(get_current_iso_time())
+    except Exception as e:
+        print(f"[SessionManager Error] Failed to write rewound marker: {e}")
+
+
+def is_rewound(conversation_id: str) -> bool:
+    """Whether this conversation is waiting on a fresh agy id after a rewind (see mark_rewound())."""
+    return os.path.exists(_rewound_marker_path(conversation_id))
+
+
+def clear_rewound(conversation_id: str):
+    """Clear the rewound marker once a fresh agy id has taken over (see mark_rewound())."""
+    path = _rewound_marker_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def rewind_session(conversation_id: str, step_index: int) -> bool:
+    """Truncate a conversation's canonical transcript to discard the
+    USER_INPUT step at `step_index` and everything after it -- i.e. roll the
+    conversation back to right before that message was sent, so the user can
+    send a different one from that point. (Not "keep the clicked message but
+    drop its answer": that would leave a dangling, unanswered question sitting
+    in the middle of the retained history.) Also flags the conversation as
+    rewound (see mark_rewound()) so the next Mode 3 turn starts fresh instead
+    of silently resuming with all the "rewound-away" content still live in
+    agy's own memory.
+
+    Path-safety-checked like delete_session()/set_session_title() --
+    conversation_id comes from client-supplied JSON and is joined directly
+    into a filesystem path.
+
+    Only rewinds within conversation_id's own transcript file -- not an
+    earlier segment of its continuation chain (see get_continuation_chain).
+    The frontend enforces this by only offering the rewind action on turns
+    whose source_cid (see get_session_history()) matches the conversation
+    actually open.
+
+    Reads/writes whichever file get_readable_transcript_path() would read
+    (canonical transcript.jsonl if present, else agy's legacy first-turn
+    snapshot) -- NOT unconditionally get_session_transcript_path()'s
+    canonical path. A conversation created before this addon's canonical
+    transcript.jsonl convention (or one agy hasn't flushed it for yet) only
+    has the legacy snapshot; truncating a canonical path that doesn't exist
+    for it silently no-ops (os.path.exists() check fails) instead of
+    rewinding what's actually displayed. Rewriting the legacy snapshot here
+    is safe despite its own docstring warning ("must never be treated as the
+    source of truth for history/listing", i.e. don't read it back for
+    aggregation when a canonical file also exists) -- that warning is about
+    *listing*, not about mutating it, and a rewind always forces the next
+    Mode 3 turn onto a brand-new agy id (see mark_rewound() above), so agy
+    never reads this file back either.
+
+    Locates the physical line to cut at by matching each line's own
+    `step_index` JSON field rather than assuming line position N holds
+    step_index N -- true for our own writer (get_next_step_index() always
+    assigns len(existing lines)+1) but not a documented guarantee for agy's
+    own native transcript writer, which is what actually produces this file
+    for a Mode 3 conversation.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return False
+    if not isinstance(step_index, int) or step_index < 1:
+        return False
+    fpath = get_readable_transcript_path(conversation_id)
+    if not fpath:
+        return False
+    with _TRANSCRIPT_LOCK:
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+        except Exception:
+            return False
+        cutoff = None
+        for i, line in enumerate(lines):
+            l = line.strip()
+            if not l:
+                continue
+            try:
+                item = json.loads(l)
+            except Exception:
+                continue
+            if item.get("step_index") == step_index:
+                cutoff = i
+                break
+        if cutoff is None:
+            return False  # no line carries this step_index -- nothing to rewind to
+        try:
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.writelines(lines[:cutoff])
+        except Exception:
+            return False
+    mark_rewound(conversation_id)
+    return True
+
+
+def build_rewind_context_preamble(conversation_id: str, max_chars: int = 6000) -> str:
+    """Compact question/answer replay of a rewound conversation's retained
+    turns, meant to be prepended to the next Mode 3 prompt.
+
+    A rewind forces that next turn onto a brand-new agy id (see
+    is_rewound()/mark_rewound()) since agy has no --rewind flag and its own
+    internal memory of the discarded turns can't actually be erased -- so a
+    fresh agy conversation otherwise has *zero* awareness of what the user
+    chose to keep. This reconstructs just the retained question/answer text
+    (skipping raw tool-call/thinking noise) so the fresh id starts with real
+    context instead of none. Length-capped like the other best-effort text
+    blobs in this addon (crash logs, /usage raw_text) since a long kept
+    history would otherwise blow up prompt size.
+    """
+    history = get_session_history(conversation_id)
+    lines = []
+    for item in history:
+        if item.get("type") == "USER_INPUT":
+            q = clean_user_prompt(item.get("content", ""))
+            if q:
+                lines.append(f"User: {q}")
+        else:
+            content = item.get("content")
+            if isinstance(content, str) and content.strip():
+                lines.append(f"Assistant: {content.strip()}")
+    if not lines:
+        return ""
+    replay = "\n".join(lines)
+    if len(replay) > max_chars:
+        replay = "...(생략)...\n" + replay[-max_chars:]
+    return (
+        "<PRIOR_CONVERSATION_CONTEXT>\n"
+        "다음은 사용자가 이어가길 원하는 이전 대화 내용입니다. 이 맥락을 참고해서 답변하세요.\n\n"
+        f"{replay}\n"
+        "</PRIOR_CONVERSATION_CONTEXT>\n\n"
+    )
+
+
 def get_current_iso_time() -> str:
     """Return ISO 8601 formatted timestamp with timezone."""
     now = datetime.datetime.now(datetime.timezone.utc).astimezone()
@@ -484,7 +641,19 @@ def get_session_history(conversation_id: str) -> list:
     for cid in chain:
         fpath = get_readable_transcript_path(cid)
         if fpath:
-            history.extend(_parse_transcript_file(fpath))
+            items = _parse_transcript_file(fpath)
+            # Tag each item with the physical conversation_id/file it actually
+            # lives in -- distinct from `conversation_id` (the id this whole
+            # merged view was requested under, i.e. the chain's terminal id).
+            # rewind_session() can only truncate one physical file at a time,
+            # so the UI needs this to tell "this message is in the file we
+            # can actually rewind" (source_cid == the terminal id) apart from
+            # an earlier, already-superseded chain segment (see rewind_session()
+            # docstring) -- without it, a step_index from an old segment's
+            # file could be misapplied to truncate the wrong file.
+            for item in items:
+                item["source_cid"] = cid
+            history.extend(items)
     return history
 
 

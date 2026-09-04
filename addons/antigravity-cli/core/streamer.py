@@ -3,8 +3,12 @@
 import json
 import os
 import re
+import shlex
+import signal
 import sys
+import threading
 import time
+import uuid
 
 from core.ha_engine import (
     get_ai_deep_environment_analysis,
@@ -13,8 +17,11 @@ from core.ha_engine import (
     handle_agent_chat,
 )
 from core.session_manager import (
+    build_rewind_context_preamble,
+    clear_rewound,
     generate_conversation_id,
     is_agy_native_session,
+    is_rewound,
     link_conversation_continuation,
     record_mode1_interaction,
     record_mode2_interaction,
@@ -31,6 +38,41 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(korean_chars * 0.8 + other_chars * 0.3))
 
 
+def _agy_str(v):
+    """Unwrap agy's double-JSON-encoded tool-call arg values.
+
+    Content-bearing args (CodeContent, TargetContent, AbsolutePath,
+    CommandLine, toolSummary, ...) arrive as a JSON string literal *inside*
+    the already-parsed outer value -- e.g. parsing the transcript line once
+    leaves args["CodeContent"] == '"hello world\\n"' (quote characters and
+    all), and it takes a second json.loads() to get the real `hello world`
+    text. Scalar-looking args (Overwrite, StartLine, ...) aren't wrapped
+    this way (confirmed against a real write_to_file/replace_file_content
+    transcript) and pass through unchanged.
+    """
+    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        try:
+            return json.loads(v)
+        except Exception:
+            pass
+    return v
+
+
+def _diff_log_lines(old_text: str, new_text: str) -> str:
+    """Render a '- old' / '+ new' block diff for a live-log line.
+
+    write_to_file/replace_file_content already scope old/new content to
+    the exact changed range, so a real line-matching diff algorithm isn't
+    needed here -- just show what was removed then what was added.
+    """
+    lines = []
+    if old_text:
+        lines.extend(f"- {l}" for l in old_text.splitlines())
+    if new_text:
+        lines.extend(f"+ {l}" for l in new_text.splitlines())
+    return "\n".join(lines)
+
+
 def make_sse(event_type: str, content: str = "", tokens: dict = None) -> str:
     """Format SSE payload."""
     payload = {"type": event_type}
@@ -39,6 +81,33 @@ def make_sse(event_type: str, content: str = "", tokens: dict = None) -> str:
     if tokens:
         payload["tokens"] = tokens
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+# Mode 3 stop/cancel registry -- maps a per-request stream_id (minted at the
+# start of stream_headless_cli, before agy's own conversation_id is even
+# known) to the running `script`/agy process group and a stop flag. Lets
+# POST /api/chat/stop (antigravity_api.py) reach across HTTP request threads
+# and kill an in-flight generation without agy having to cooperate.
+_RUNNING_STREAMS_LOCK = threading.Lock()
+_RUNNING_STREAMS = {}  # stream_id -> (subprocess.Popen, threading.Event)
+
+
+def stop_stream(stream_id: str) -> bool:
+    """Kill the process group backing an in-flight Mode 3 stream, if any."""
+    with _RUNNING_STREAMS_LOCK:
+        entry = _RUNNING_STREAMS.get(stream_id)
+    if not entry:
+        return False
+    proc, stop_event = entry
+    stop_event.set()
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    return True
 
 
 def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
@@ -186,8 +255,23 @@ def stream_headless_cli(
     # Modes-1/2-only conversation switching to Mode 3 is treated as new here
     # (see the `cid != conversation_id` hand-off handling in read_stdout()
     # below, which links the two ids together once agy assigns its own).
+    # A rewind (see core/session_manager.py rewind_session()/mark_rewound())
+    # truncated this conversation's *displayed* transcript, but agy's own
+    # internal memory of the discarded turns can't actually be erased --
+    # there is no --rewind flag. Resuming with --conversation here would
+    # silently un-rewind everything from agy's point of view. So a rewound
+    # conversation is forced through the same "no --conversation, agy mints
+    # a fresh id, we link it as a continuation" path already used for the
+    # Modes-1/2 -> Mode-3 hand-off below (see the `evt == "init"` handling in
+    # read_stdout()), and the retained history is replayed into the prompt
+    # itself (build_rewind_context_preamble()) so the fresh id isn't
+    # starting from zero context.
+    was_rewound = bool(conversation_id) and is_rewound(conversation_id)
     resume_this_session = (
-        bool(conversation_id) and session_exists(conversation_id) and is_agy_native_session(conversation_id)
+        bool(conversation_id)
+        and session_exists(conversation_id)
+        and is_agy_native_session(conversation_id)
+        and not was_rewound
     )
     if resume_this_session:
         # We already know the id (echoed back from a previous session_init for
@@ -195,6 +279,12 @@ def stream_headless_cli(
         # conversation we don't know agy's id yet; that's announced once agy's
         # own "init" event reports it (see read_stdout() below).
         yield make_sse("session_init", conversation_id)
+    # Kept separate from actual_prompt (which gets the rewind context
+    # preamble prepended below) so the status line still shows the user's own
+    # new message rather than the replayed context that precedes it.
+    display_prompt = actual_prompt
+    if was_rewound:
+        actual_prompt = build_rewind_context_preamble(conversation_id) + actual_prompt
 
     env = os.environ.copy()
     env["HOME"] = "/root"
@@ -222,8 +312,8 @@ def stream_headless_cli(
         env["GOOGLE_API_KEY"] = api_key
         env["ANTIGRAVITY_API_KEY"] = api_key
 
-    resume_desc = " (대화 이어가기)" if resume_this_session else ""
-    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시{resume_desc}: '{actual_prompt[:30]}...'")
+    resume_desc = " (대화 이어가기)" if resume_this_session else (" (되돌리기 이후 새 대화로 이어감)" if was_rewound else "")
+    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시{resume_desc}: '{display_prompt[:30]}...'")
 
     # Use 'script -q -c' to run agy in a pseudo-TTY.
     # This forces the Go runtime to flush output line-by-line instead of buffering.
@@ -239,8 +329,17 @@ def stream_headless_cli(
     # agy's own built-in default rather than passed through unsanitized.
     timeout_arg = f" --print-timeout {print_timeout}" if re.fullmatch(r"[0-9]+(h|m|s)([0-9]+(m|s))?", print_timeout) else ""
     sandbox_arg = " --sandbox" if enable_sandbox else ""
+    # shlex.quote(), not json.dumps() -- this string is re-parsed by a POSIX
+    # shell (`script -c` runs it via `/bin/sh -c`), which has no idea what
+    # JSON escaping is. json.dumps("안녕\n하세요") produces
+    # "안녕\n하세요" -- inside shell double quotes neither
+    # \uXXXX nor \n is a recognized escape, so agy received those as *literal*
+    # backslash-u.../backslash-n text instead of Korean characters/a real
+    # newline (confirmed live: multi-line attachment captions showed a bare
+    # "\n" in the answer). shlex.quote() single-quotes the whole string, which
+    # passes UTF-8 bytes and embedded newlines through completely unchanged.
     script_cmd = (
-        f"{agy_bin} -p {json.dumps(actual_prompt)}"
+        f"{agy_bin} -p {shlex.quote(actual_prompt)}"
         f"{resume_arg}"
         f"{model_arg}"
         f"{agent_arg}"
@@ -261,6 +360,7 @@ def stream_headless_cli(
             bufsize=1,
             encoding="utf-8",
             env=env,
+            start_new_session=True,  # own process group -- lets stop_stream() kill script + its agy child together
         )
     except Exception as e:
         yield make_sse("tool", f"⚠️ CLI 프로세스 기동 실패 ({str(e)}) -> AI 딥 브레인으로 자동 전환")
@@ -268,7 +368,17 @@ def stream_headless_cli(
             yield ev
         return
 
-    import threading
+    # Register this process so a concurrent POST /api/chat/stop (a different
+    # HTTP request thread) can find and kill it. stream_id is announced to the
+    # client immediately -- unlike conversation_id, it doesn't depend on agy
+    # having assigned anything yet, so a stop is possible from the very first
+    # moment of a brand-new conversation.
+    stream_id = uuid.uuid4().hex
+    stop_event = threading.Event()
+    with _RUNNING_STREAMS_LOCK:
+        _RUNNING_STREAMS[stream_id] = (proc, stop_event)
+    yield make_sse("stream_id", stream_id)
+
     import queue
 
     event_queue = queue.Queue()
@@ -335,9 +445,11 @@ def stream_headless_cli(
                     # 1. Thinking / Reasoning step
                     thinking = (step_data.get("thinking") or "").strip()
                     if thinking:
+                        # No length cap -- the reasoning-log box scrolls
+                        # horizontally instead of wrapping (see .term-body in
+                        # core/ui/styles.py), so truncating here only threw
+                        # content away for no display reason.
                         clean_think = thinking.replace("\n\n", " · ").replace("\n", " ")
-                        if len(clean_think) > 220:
-                            clean_think = clean_think[:220] + "..."
                         event_queue.put(("live_log", f"💭 [추론] {clean_think}"))
 
                     # 2. Tool Calls
@@ -351,29 +463,59 @@ def stream_headless_cli(
                             except Exception:
                                 pass
 
-                        summary = tc.get("toolSummary") or (args.get("toolSummary") if isinstance(args, dict) else "")
-                        action = tc.get("toolAction") or (args.get("toolAction") if isinstance(args, dict) else "")
+                        summary = _agy_str(tc.get("toolSummary") or (args.get("toolSummary") if isinstance(args, dict) else "")) or ""
+                        action = _agy_str(tc.get("toolAction") or (args.get("toolAction") if isinstance(args, dict) else "")) or ""
                         desc = summary or action or ""
 
+                        # No length caps below (arg dumps/commands/queries used to be
+                        # cut at 50-70 chars with "...") -- the reasoning-log box
+                        # scrolls horizontally instead of wrapping (see .term-body
+                        # in core/ui/styles.py), so truncating here only threw
+                        # content away for no display reason (confirmed live: tool
+                        # args like automation identifiers/BestPracticeKey were
+                        # getting cut mid-string).
                         if tname == "call_mcp_tool" and isinstance(args, dict):
-                            tcalled = args.get("ToolName", "mcp")
+                            tcalled = _agy_str(args.get("ToolName", "mcp"))
                             targs = args.get("Arguments", {})
                             arg_str = json.dumps(targs, ensure_ascii=False) if isinstance(targs, dict) else str(targs)
-                            if len(arg_str) > 70:
-                                arg_str = arg_str[:70] + "..."
                             event_queue.put(("live_log", f"🔧 [HA 도구] {tcalled} {arg_str}"))
                         elif tname == "view_file" and isinstance(args, dict):
-                            fpath = args.get("AbsolutePath", "")
+                            fpath = _agy_str(args.get("AbsolutePath", ""))
                             fname = os.path.basename(fpath) if fpath else "file"
                             event_queue.put(("live_log", f"📄 [파일 확인] {fname} {f'({desc})' if desc else ''}"))
                         elif tname == "run_command" and isinstance(args, dict):
-                            cmd_str = args.get("CommandLine", "")
-                            event_queue.put(("live_log", f"⚙️ [명령어] {cmd_str[:60]}"))
+                            cmd_str = _agy_str(args.get("CommandLine", ""))
+                            event_queue.put(("live_log", f"⚙️ [명령어] {cmd_str}"))
                         elif tname == "search_web":
-                            q = args.get("query", "") if isinstance(args, dict) else str(args)
-                            event_queue.put(("live_log", f"🌐 [웹 검색] {q[:50]}"))
+                            q = _agy_str(args.get("query", "")) if isinstance(args, dict) else str(args)
+                            event_queue.put(("live_log", f"🌐 [웹 검색] {q}"))
+                        elif tname == "replace_file_content" and isinstance(args, dict):
+                            # old/new are both given, already scoped to the exact
+                            # changed range (StartLine/EndLine) -- see _agy_str's
+                            # docstring for why these need unwrapping.
+                            fpath = _agy_str(args.get("TargetFile", ""))
+                            fname = os.path.basename(fpath) if fpath else "file"
+                            old_c = _agy_str(args.get("TargetContent", "")) or ""
+                            new_c = _agy_str(args.get("ReplacementContent", "")) or ""
+                            instr = _agy_str(args.get("Instruction", "")) or desc
+                            header = f"✏️ [파일 수정] {fname}{f' ({instr})' if instr else ''}"
+                            diff_body = _diff_log_lines(old_c, new_c)
+                            event_queue.put(("live_log", f"{header}\n{diff_body}" if diff_body else header))
+                        elif tname == "write_to_file" and isinstance(args, dict):
+                            # Only the new content is ever given here -- no prior
+                            # content to diff against, so an overwrite of an
+                            # existing file is labeled distinctly rather than
+                            # implying a full diff we can't actually show.
+                            fpath = _agy_str(args.get("TargetFile", ""))
+                            fname = os.path.basename(fpath) if fpath else "file"
+                            new_c = _agy_str(args.get("CodeContent", "")) or ""
+                            overwrite = _agy_str(args.get("Overwrite", "false")) == "true"
+                            label = "파일 덮어쓰기" if overwrite else "파일 생성"
+                            header = f"📝 [{label}] {fname}{f' ({desc})' if desc else ''}"
+                            diff_body = _diff_log_lines("", new_c)
+                            event_queue.put(("live_log", f"{header}\n{diff_body}" if diff_body else header))
                         else:
-                            event_queue.put(("live_log", f"🔧 [도구 실행] {tname} {desc[:50] if desc else ''}"))
+                            event_queue.put(("live_log", f"🔧 [도구 실행] {tname} {desc}"))
 
                     # 3. Model Response (Final output)
                     content = step_data.get("content", "")
@@ -418,6 +560,12 @@ def stream_headless_cli(
                         # listing/history reads present one merged
                         # conversation regardless of which id is opened.
                         link_conversation_continuation(conversation_id, cid)
+                        # If this hand-off was caused by a rewind rather than
+                        # a Modes-1/2-only conversation's first Mode 3 turn,
+                        # the fresh id agy just minted is now the live one --
+                        # clear the marker so the *next* turn is free to
+                        # resume normally with --conversation again.
+                        clear_rewound(conversation_id)
                     if cid and not resume_this_session:
                         # New conversation: agy just assigned its own id (we
                         # never sent --conversation, so it can't be echoing
@@ -461,92 +609,128 @@ def stream_headless_cli(
     t_proc = threading.Thread(target=read_stdout, daemon=True)
     t_proc.start()
 
-    # Stream out events as they arrive in real time
-    while True:
-        try:
-            ev_type, ev_data = event_queue.get(timeout=0.08)
-            if ev_type == "session_init":
-                yield make_sse("session_init", ev_data)
-            elif ev_type == "live_log":
-                yield make_sse("live_log", ev_data)
-            elif ev_type == "chunk":
-                full_text_parts.append(ev_data)
-                output_chars += len(ev_data)
-                has_emitted_chunk = True
-                yield make_sse("chunk", ev_data)
-            elif ev_type == "content":
-                # Check if content was already streamed
-                already_streamed = any(ev_data[:40] in p for p in full_text_parts) if full_text_parts else False
-                if not already_streamed:
+    try:
+        # Stream out events as they arrive in real time
+        while True:
+            try:
+                ev_type, ev_data = event_queue.get(timeout=0.08)
+                if ev_type == "session_init":
+                    yield make_sse("session_init", ev_data)
+                elif ev_type == "live_log":
+                    yield make_sse("live_log", ev_data)
+                elif ev_type == "chunk":
                     full_text_parts.append(ev_data)
                     output_chars += len(ev_data)
                     has_emitted_chunk = True
                     yield make_sse("chunk", ev_data)
-            elif ev_type == "result":
-                # Documented terminal statuses: SUCCESS, ERROR, CANCELED,
-                # INTERRUPTED, INVALID, WAITING, RUNNING. Anything but SUCCESS
-                # (or a missing status, for older/other agy builds) means no
-                # real answer is coming — surface it instead of completing
-                # silently with a blank bubble.
-                status = ev_data.get("status")
-                if status and status != "SUCCESS" and not has_emitted_chunk:
-                    err_msg = ev_data.get("error") or f"작업이 정상적으로 완료되지 않았습니다 (status: {status})."
-                    yield make_sse("live_log", f"⚠️ [Antigravity CLI 오류] {err_msg}")
-                    yield make_sse("chunk", f"> ⚠️ **[Antigravity CLI 오류]**\n\n{err_msg}\n")
-                    full_text_parts.append(err_msg)
-                    has_emitted_chunk = True
+                elif ev_type == "content":
+                    # Check if content was already streamed. Must compare
+                    # against the *joined* text, not each chunk individually
+                    # (any(... in p for p in full_text_parts)) -- a chunked
+                    # answer accumulates as many small pieces, so the first 40
+                    # chars of a later duplicate rarely fall entirely inside
+                    # any single piece, and the false negative meant the whole
+                    # answer got appended a second time (confirmed live: full
+                    # responses were duplicated in the chat bubble).
+                    already_streamed = ev_data[:40] in "".join(full_text_parts) if full_text_parts else False
+                    if not already_streamed:
+                        full_text_parts.append(ev_data)
+                        output_chars += len(ev_data)
+                        has_emitted_chunk = True
+                        yield make_sse("chunk", ev_data)
+                elif ev_type == "result":
+                    # Documented terminal statuses: SUCCESS, ERROR, CANCELED,
+                    # INTERRUPTED, INVALID, WAITING, RUNNING. Anything but SUCCESS
+                    # (or a missing status, for older/other agy builds) means no
+                    # real answer is coming — surface it instead of completing
+                    # silently with a blank bubble.
+                    status = ev_data.get("status")
+                    if status and status != "SUCCESS" and not has_emitted_chunk:
+                        err_msg = ev_data.get("error") or f"작업이 정상적으로 완료되지 않았습니다 (status: {status})."
+                        yield make_sse("live_log", f"⚠️ [Antigravity CLI 오류] {err_msg}")
+                        yield make_sse("chunk", f"> ⚠️ **[Antigravity CLI 오류]**\n\n{err_msg}\n")
+                        full_text_parts.append(err_msg)
+                        has_emitted_chunk = True
 
-                resp_text = ev_data.get("response", "")
-                already_streamed = any(resp_text[:40] in p for p in full_text_parts) if full_text_parts else False
-                if resp_text and not already_streamed:
-                    full_text_parts.append(resp_text)
-                    output_chars += len(resp_text)
-                    has_emitted_chunk = True
-                    yield make_sse("chunk", resp_text)
+                    resp_text = ev_data.get("response", "")
+                    # Same joined-text comparison as the "content" branch
+                    # above -- this is the specific case that was actually
+                    # duplicating full answers live (the terminal "result"
+                    # event's `response` re-sends the whole answer that
+                    # already streamed in as many small "chunk"/step_update
+                    # deltas beforehand).
+                    already_streamed = resp_text[:40] in "".join(full_text_parts) if full_text_parts else False
+                    if resp_text and not already_streamed:
+                        full_text_parts.append(resp_text)
+                        output_chars += len(resp_text)
+                        has_emitted_chunk = True
+                        yield make_sse("chunk", resp_text)
 
-                usage = ev_data.get("usage", {})
-                duration = ev_data.get("duration_seconds", 0)
-                elapsed = duration or (time.time() - t_start)
-                in_tok = usage.get("input_tokens", 120)
-                out_tok = usage.get("output_tokens", max(1, int(output_chars * 0.4)))
-                think_tok = usage.get("thinking_tokens", 0)
-                total_tok = usage.get("total_tokens", in_tok + out_tok)
+                    usage = ev_data.get("usage", {})
+                    duration = ev_data.get("duration_seconds", 0)
+                    elapsed = duration or (time.time() - t_start)
+                    in_tok = usage.get("input_tokens", 120)
+                    out_tok = usage.get("output_tokens", max(1, int(output_chars * 0.4)))
+                    think_tok = usage.get("thinking_tokens", 0)
+                    total_tok = usage.get("total_tokens", in_tok + out_tok)
 
-                tokens_meta = {
-                    "input": in_tok,
-                    "output": out_tok,
-                    "thinking": think_tok,
-                    "total": total_tok,
-                    "speed_tps": round(out_tok / max(0.01, elapsed), 1),
-                    "elapsed": round(elapsed, 2),
-                }
-                yield make_sse("done", tokens=tokens_meta)
-                return
-        except queue.Empty:
-            if done_event.is_set() and event_queue.empty():
-                break
+                    tokens_meta = {
+                        "input": in_tok,
+                        "output": out_tok,
+                        "thinking": think_tok,
+                        "total": total_tok,
+                        "speed_tps": round(out_tok / max(0.01, elapsed), 1),
+                        "elapsed": round(elapsed, 2),
+                    }
+                    yield make_sse("done", tokens=tokens_meta)
+                    return
+            except queue.Empty:
+                if done_event.is_set() and event_queue.empty():
+                    break
 
-    if has_emitted_chunk:
-        elapsed = time.time() - t_start
-        tokens_meta = {
-            "input": 120,
-            "output": max(1, int(output_chars * 0.4)),
-            "thinking": 0,
-            "total": 120 + max(1, int(output_chars * 0.4)),
-            "speed_tps": round(max(1, int(output_chars * 0.4)) / max(0.01, elapsed), 1),
-            "elapsed": round(elapsed, 2),
-        }
-        yield make_sse("done", tokens=tokens_meta)
-        return
+        if stop_event.is_set():
+            # User-initiated stop (POST /api/chat/stop, see stop_stream() above)
+            # -- report whatever was generated so far and end here. This check
+            # must come before the fallback branches below: falling through to
+            # those would silently substitute a Mode 2 answer for a generation
+            # the user just cancelled.
+            yield make_sse("live_log", "⏹️ 사용자에 의해 중지되었습니다.")
+            elapsed = time.time() - t_start
+            tokens_meta = {
+                "input": 120,
+                "output": max(1, int(output_chars * 0.4)),
+                "thinking": 0,
+                "total": 120 + max(1, int(output_chars * 0.4)),
+                "speed_tps": round(max(1, int(output_chars * 0.4)) / max(0.01, elapsed), 1),
+                "elapsed": round(elapsed, 2),
+            }
+            yield make_sse("done", tokens=tokens_meta)
+            return
 
-    if auth_failed:
-        yield make_sse("live_log", "🔑 [인증 필요] Terminal 탭에서 agy 실행 후 로그인하세요.")
-        yield make_sse("chunk", "> 🔑 **[인증 필요]** Terminal 탭에서 `agy` 실행 후 Google 계정으로 1회 로그인하세요.\n\n")
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
-            yield ev
-    else:
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
-            yield ev
+        if has_emitted_chunk:
+            elapsed = time.time() - t_start
+            tokens_meta = {
+                "input": 120,
+                "output": max(1, int(output_chars * 0.4)),
+                "thinking": 0,
+                "total": 120 + max(1, int(output_chars * 0.4)),
+                "speed_tps": round(max(1, int(output_chars * 0.4)) / max(0.01, elapsed), 1),
+                "elapsed": round(elapsed, 2),
+            }
+            yield make_sse("done", tokens=tokens_meta)
+            return
+
+        if auth_failed:
+            yield make_sse("live_log", "🔑 [인증 필요] Terminal 탭에서 agy 실행 후 로그인하세요.")
+            yield make_sse("chunk", "> 🔑 **[인증 필요]** Terminal 탭에서 `agy` 실행 후 Google 계정으로 1회 로그인하세요.\n\n")
+            for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+                yield ev
+        else:
+            for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+                yield ev
+    finally:
+        with _RUNNING_STREAMS_LOCK:
+            _RUNNING_STREAMS.pop(stream_id, None)
 
 
 def stream_agent_chat(
@@ -715,7 +899,7 @@ def test_headless_cli_execution(prompt: str = "In one sentence, what is a git re
     # terminal 'result' event's raw JSON schema (diagnostic only).
     prod_prompt = "In one sentence, what is a git rebase?"
     script_cmd = (
-        f"{agy_bin} -p {json.dumps(prod_prompt)}"
+        f"{agy_bin} -p {shlex.quote(prod_prompt)}"
         f" --output-format stream-json"
         f" --dangerously-skip-permissions"
     )

@@ -1,7 +1,7 @@
 """Web UI Frontend Client JavaScript Application."""
 
 JS_SCRIPTS = """
-function notSupportedYet(feature) {
+function showToast(text) {
       let toast = document.getElementById('global-toast');
       if (!toast) {
         toast = document.createElement('div');
@@ -9,10 +9,14 @@ function notSupportedYet(feature) {
         toast.className = 'toast-msg';
         document.body.appendChild(toast);
       }
-      toast.textContent = `${feature} 기능은 아직 지원되지 않습니다.`;
+      toast.textContent = text;
       toast.classList.add('show');
       clearTimeout(toast._hideTimer);
       toast._hideTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    function notSupportedYet(feature) {
+      showToast(`${feature} 기능은 아직 지원되지 않습니다.`);
     }
 
     function switchTab(tabId) {
@@ -67,6 +71,21 @@ function notSupportedYet(feature) {
     const ICON_MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
     const ICON_SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
 
+    // Icon set for the chat bubbles -- same Lucide-equivalent inline-SVG,
+    // stroke=currentColor style as the composer/left-menu icons in
+    // core/ui/templates.py (that file can't be reused directly here since
+    // these are swapped in dynamically at runtime, not baked into initial HTML).
+    const ICON_COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    // ICON_CHECK_SVG already declared further below (model/agent picker
+    // checkmarks) -- reused here for copy-button feedback, see flashCopied().
+    const ICON_EYE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const ICON_CODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+    const ICON_STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+    // Restored history bubbles only (see buildUserRow) -- "되돌리기": rewinds
+    // the conversation back to this message, see rewindToStep().
+    const ICON_REWIND_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/></svg>';
+    const ICON_ARROW_UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
+
     function toggleTheme() {
       const current = document.documentElement.getAttribute('data-theme') || 'dark';
       const next = current === 'dark' ? 'light' : 'dark';
@@ -76,9 +95,62 @@ function notSupportedYet(feature) {
       if (icon) icon.innerHTML = next === 'dark' ? ICON_MOON_SVG : ICON_SUN_SVG;
     }
 
+    // MCP status is cached from the /api/status poll that's already running
+    // (see pollStatus()); skills/hooks are fetched once, lazily, the first
+    // time the Help modal actually opens (static-ish data, no need to poll).
+    let lastMcpStatus = null;
+    let helpPanelOpenedOnce = false;
+
+    function renderHelpMcpStatus() {
+      const el = document.getElementById('help-mcp-list');
+      if (!el) return;
+      if (!lastMcpStatus || !lastMcpStatus.configured || !(lastMcpStatus.servers || []).length) {
+        el.innerHTML = '<li>연동된 MCP 서버가 없습니다.</li>';
+        return;
+      }
+      el.innerHTML = lastMcpStatus.servers.map(s =>
+        `<li><span class="mono">${s.name}</span> — ${s.transport === 'sse' ? '외부 URL(SSE)' : 'stdio'} 방식으로 설정됨</li>`
+      ).join('');
+    }
+
+    async function loadHelpSkillsAndHooks() {
+      const skillsEl = document.getElementById('help-skills-list');
+      const hooksEl = document.getElementById('help-hooks-list');
+      try {
+        const res = await fetch('api/skills');
+        const data = await res.json();
+        const skills = data.skills || [];
+        if (skillsEl) {
+          skillsEl.innerHTML = skills.length
+            ? skills.map(s => `<li><span class="mono">${s.name}</span>${s.description ? ` — ${s.description}` : ''}</li>`).join('')
+            : '<li>등록된 스킬이 없습니다.</li>';
+        }
+      } catch (e) {
+        if (skillsEl) skillsEl.innerHTML = '<li>스킬 목록을 불러오지 못했습니다.</li>';
+      }
+      try {
+        const res = await fetch('api/hooks');
+        const data = await res.json();
+        const hooks = data.hooks || [];
+        if (hooksEl) {
+          hooksEl.innerHTML = hooks.length
+            ? hooks.map(h => `<li><span class="mono">${h.source}</span> · ${h.key} (${h.count}개)</li>`).join('')
+            : '<li>활성화된 훅이 없습니다.</li>';
+        }
+      } catch (e) {
+        if (hooksEl) hooksEl.innerHTML = '<li>훅 목록을 불러오지 못했습니다.</li>';
+      }
+    }
+
     function toggleHelpPanel() {
       const overlay = document.getElementById('help-overlay');
-      if (overlay) overlay.classList.toggle('open');
+      if (!overlay) return;
+      overlay.classList.toggle('open');
+      if (overlay.classList.contains('open') && !helpPanelOpenedOnce) {
+        helpPanelOpenedOnce = true;
+        renderHelpMcpStatus();
+        loadHelpSkillsAndHooks();
+      }
     }
 
     function getCurrentTimeStr() {
@@ -86,37 +158,63 @@ function notSupportedYet(feature) {
       return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
 
-    function copyMessage(btn) {
-      const bubble = btn.closest('.bubble-wrap').querySelector('.answer-content');
-      const text = bubble.getAttribute('data-raw') || bubble.innerText;
-      navigator.clipboard.writeText(text).then(() => {
-        btn.textContent = '✓ 복사완료';
-        btn.classList.add('copied');
-        setTimeout(() => {
-          btn.textContent = '📋 복사';
-          btn.classList.remove('copied');
-        }, 2000);
-      }).catch(() => {
-        btn.textContent = '❌ 실패';
-        setTimeout(() => { btn.textContent = '📋 복사'; }, 2000);
-      });
+    // Icon-only copy feedback shared by every copy button in the chat --
+    // swaps the icon to a checkmark briefly instead of the old text-swap
+    // (buttons here carry no label, see copyUserMessage/copyReasoningLog/copyMessageTop).
+    function flashCopied(btn) {
+      const icon = btn.querySelector('.icon');
+      if (icon) icon.innerHTML = ICON_CHECK_SVG;
+      btn.classList.add('copied');
+      setTimeout(() => {
+        if (icon) icon.innerHTML = ICON_COPY_SVG;
+        btn.classList.remove('copied');
+      }, 2000);
     }
 
-    // markdownText is rendered through the exact same formatMarkdown() pipeline
-    // as AI responses -- attachments (rendered as `![name](url)` / file links,
-    // see sendMessage()) and the user's own typed text share one bubble with
-    // no separate thumbnail-strip markup needed.
-    function appendUserMessage(markdownText) {
-      const box = document.getElementById('chat-box');
+    function copyUserMessage(btn) {
+      const bubble = btn.closest('.bubble-wrap').querySelector('.bubble');
+      const text = bubble.getAttribute('data-raw') || bubble.innerText;
+      navigator.clipboard.writeText(text).then(() => flashCopied(btn)).catch(() => {});
+    }
+
+    // Copies the reasoning/tool-call log itself (term-body) -- distinct from
+    // copyMessageTop()'s final-answer markdown copy.
+    function copyReasoningLog(btn) {
+      const termBox = btn.closest('.term-box');
+      const body = termBox ? termBox.querySelector('.term-body') : null;
+      const text = body ? body.innerText : '';
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => flashCopied(btn)).catch(() => {});
+    }
+
+    // Shared user-bubble skeleton -- mirrors buildBotBubbleDOM below: one
+    // markup module used identically whether the message is being typed live
+    // (appendUserMessage) or rebuilt from restored history (buildUserRow),
+    // so both go through the exact same formatMarkdown() pipeline. Attachments
+    // (rendered as `![name](url)` / file links, see sendMessage()) and the
+    // user's own typed text share one bubble with no separate thumbnail-strip
+    // markup needed.
+    function buildUserBubbleDOM(markdownText, timeStr) {
       const row = document.createElement('div');
-      const timeStr = getCurrentTimeStr();
       row.className = 'msg-row user';
       row.innerHTML = `
         <div class="bubble-wrap">
-          <div class="bubble markdown-body">${formatMarkdown(markdownText)}</div>
-          <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
+          <div class="bubble markdown-body"></div>
+          <div class="msg-meta user">
+            <span class="meta-time">${timeStr}</span>
+            <button class="icon-btn-sm" onclick="copyUserMessage(this)" title="복사"><span class="icon">${ICON_COPY_SVG}</span></button>
+          </div>
         </div>
       `;
+      const bubble = row.querySelector('.bubble');
+      bubble.innerHTML = formatMarkdown(markdownText);
+      bubble.setAttribute('data-raw', markdownText);
+      return row;
+    }
+
+    function appendUserMessage(markdownText) {
+      const box = document.getElementById('chat-box');
+      const row = buildUserBubbleDOM(markdownText, getCurrentTimeStr());
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
     }
@@ -179,14 +277,7 @@ function notSupportedYet(feature) {
       const bubble = btn.closest('.bubble');
       const rawCode = bubble.querySelector('.raw-markdown-view code');
       const text = rawCode ? rawCode.textContent : '';
-      navigator.clipboard.writeText(text).then(() => {
-        btn.innerHTML = '✓ 복사완료';
-        btn.classList.add('copied');
-        setTimeout(() => {
-          btn.innerHTML = '📋 복사';
-          btn.classList.remove('copied');
-        }, 2000);
-      });
+      navigator.clipboard.writeText(text).then(() => flashCopied(btn)).catch(() => {});
     }
 
     // Shared bot-bubble skeleton -- the ONE markup template for a bot reply,
@@ -209,16 +300,19 @@ function notSupportedYet(feature) {
                   <span class="term-mode-tag ${modeClass}">${modeText}</span>
                   <span class="term-title">💻 Antigravity Terminal Live</span>
                 </div>
-                <span class="term-badge live">● LIVE</span>
+                <div class="term-header-right">
+                  <button class="term-copy-btn" onclick="copyReasoningLog(this)" title="추론 로그 복사"><span class="icon">${ICON_COPY_SVG}</span></button>
+                  <span class="term-badge live">● LIVE</span>
+                </div>
               </div>
               <div class="term-body" style="display: none;"></div>
             </div>
             <div class="bubble-header">
               <div class="view-toggle-wrap">
-                <button class="view-tab active" onclick="switchMsgView(this, 'parsed')">🎨 렌더링</button>
-                <button class="view-tab" onclick="switchMsgView(this, 'raw')">📝 원문</button>
+                <button class="view-tab active" onclick="switchMsgView(this, 'parsed')" title="렌더링 보기"><span class="icon">${ICON_EYE_SVG}</span></button>
+                <button class="view-tab" onclick="switchMsgView(this, 'raw')" title="원문 보기"><span class="icon">${ICON_CODE_SVG}</span></button>
               </div>
-              <button class="top-copy-btn" onclick="copyMessageTop(this)" title="마크다운 원문 복사">📋 복사</button>
+              <button class="top-copy-btn icon-btn-sm" onclick="copyMessageTop(this)" title="마크다운 원문 복사"><span class="icon">${ICON_COPY_SVG}</span></button>
             </div>
             <!-- Main Final Answer Content -->
             <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 처리 중...</span></div>
@@ -228,7 +322,6 @@ function notSupportedYet(feature) {
             <span class="meta-time">${timeStr}</span>
             <span class="meta-latency" style="display: none;"></span>
             <span class="meta-tokens" style="display: none;"></span>
-            <button class="copy-btn" onclick="copyMessage(this)">📋 전체 복사</button>
           </div>
         </div>
       `;
@@ -251,6 +344,123 @@ function notSupportedYet(feature) {
     function modeBadgeFor(streamMode) {
       const m = STREAM_MODES.find(x => x.value === String(streamMode)) || STREAM_MODES[0];
       return { text: `[${m.shortName}]`, cls: m.colorClass };
+    }
+
+    // Single reasoning-log line renderer -- used by both a live stream
+    // (createBotStreamMessage's addLiveLog) and a restored turn
+    // (buildRestoredBotRow), so a re-loaded conversation's log looks exactly
+    // like it did while it was actually streaming instead of a separately
+    // hand-rolled markup. timeStr is optional -- restored steps don't carry
+    // a reliable per-line timestamp, so that span is simply omitted.
+    function formatTermLineHTML(logStr, timeStr) {
+      let lineClass = 'term-text';
+      if (logStr.includes('💭') || logStr.includes('[추론]')) lineClass += ' think';
+      else if (logStr.includes('🔧') || logStr.includes('[도구') || logStr.includes('[HA 도구]')) lineClass += ' tool';
+      else if (logStr.includes('📄') || logStr.includes('📝') || logStr.includes('[파일')) lineClass += ' file';
+      else if (logStr.includes('⚙️') || logStr.includes('[명령어')) lineClass += ' cmd';
+      else if (logStr.includes('🚀') || logStr.includes('[세션')) lineClass += ' init';
+      else if (logStr.includes('✅') || logStr.includes('[완료')) lineClass += ' done';
+      else if (logStr.includes('⚠️') || logStr.includes('오류') || logStr.includes('인증')) lineClass += ' error';
+
+      // write_to_file/replace_file_content (see formatToolCallLogStr) append a
+      // '- old' / '+ new' diff body after the header line -- colorize those
+      // lines instead of the flat escape below.
+      const esc = s => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const lines = String(logStr).split('\\n');
+      const isDiff = lines.some(l => l.startsWith('+ ') || l.startsWith('- '));
+      const safeText = isDiff
+        ? lines.map(l => {
+            const e = esc(l);
+            if (l.startsWith('+ ')) return `<span class="diff-add">${e}</span>`;
+            if (l.startsWith('- ')) return `<span class="diff-del">${e}</span>`;
+            return e;
+          }).join('\\n')
+        : esc(String(logStr));
+      const tsHtml = timeStr ? `<span class="term-time">[${timeStr}]</span> ` : '';
+      return `<div class="term-line">${tsHtml}<span class="${lineClass}">${safeText}</span></div>`;
+    }
+
+    // Mirrors the tool-name branching in core/streamer.py's tail_transcript()
+    // so a restored tool-call step (raw {name, args, ...} from transcript.jsonl)
+    // renders through formatTermLineHTML() with the exact same label text a
+    // live run would have streamed for that same call -- see buildRestoredBotRow().
+    // Unwraps agy's double-JSON-encoded tool-call arg values -- mirrors
+    // _agy_str() in core/streamer.py's tail_transcript(); see that
+    // function's docstring for why (CodeContent/TargetContent/AbsolutePath/
+    // etc. arrive as a JSON string literal *inside* the already-parsed
+    // outer value).
+    function agyStr(v) {
+      if (typeof v === 'string' && v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') {
+        try { return JSON.parse(v); } catch (e) {}
+      }
+      return v;
+    }
+
+    // Mirrors _diff_log_lines() in core/streamer.py -- write_to_file/
+    // replace_file_content already scope old/new content to the exact
+    // changed range, so a real line-matching diff algorithm isn't needed.
+    function diffLogLines(oldText, newText) {
+      const lines = [];
+      if (oldText) lines.push(...String(oldText).split('\\n').map(l => `- ${l}`));
+      if (newText) lines.push(...String(newText).split('\\n').map(l => `+ ${l}`));
+      return lines.join('\\n');
+    }
+
+    function formatToolCallLogStr(tc) {
+      const tname = tc.name || 'tool';
+      let args = tc.args || {};
+      if (typeof args === 'string') {
+        try { args = JSON.parse(args); } catch (e) {}
+      }
+      const isObj = args && typeof args === 'object' && !Array.isArray(args);
+      const summary = agyStr(tc.toolSummary || (isObj ? args.toolSummary : '')) || '';
+      const action = agyStr(tc.toolAction || (isObj ? args.toolAction : '')) || '';
+      const desc = summary || action || '';
+
+      // No length caps below (mirrors core/streamer.py's tail_transcript()) --
+      // the reasoning-log box scrolls horizontally instead of wrapping (see
+      // .term-body in core/ui/styles.py), so truncating threw content away
+      // for no display reason.
+      if (tname === 'call_mcp_tool' && isObj) {
+        const tcalled = agyStr(args.ToolName) || 'mcp';
+        const targs = args.Arguments || {};
+        const argStr = (targs && typeof targs === 'object') ? JSON.stringify(targs) : String(targs);
+        return `🔧 [HA 도구] ${tcalled} ${argStr}`;
+      }
+      if (tname === 'view_file' && isObj) {
+        const fpath = agyStr(args.AbsolutePath) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        return `📄 [파일 확인] ${fname}${desc ? ` (${desc})` : ''}`;
+      }
+      if (tname === 'run_command' && isObj) {
+        const cmdStr = agyStr(args.CommandLine) || '';
+        return `⚙️ [명령어] ${cmdStr}`;
+      }
+      if (tname === 'search_web') {
+        const q = isObj ? (args.query || '') : String(args);
+        return `🌐 [웹 검색] ${q}`;
+      }
+      if (tname === 'replace_file_content' && isObj) {
+        const fpath = agyStr(args.TargetFile) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        const oldC = agyStr(args.TargetContent) || '';
+        const newC = agyStr(args.ReplacementContent) || '';
+        const instr = agyStr(args.Instruction) || desc;
+        const header = `✏️ [파일 수정] ${fname}${instr ? ` (${instr})` : ''}`;
+        const body = diffLogLines(oldC, newC);
+        return body ? `${header}\n${body}` : header;
+      }
+      if (tname === 'write_to_file' && isObj) {
+        const fpath = agyStr(args.TargetFile) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        const newC = agyStr(args.CodeContent) || '';
+        const overwrite = agyStr(args.Overwrite) === 'true';
+        const label = overwrite ? '파일 덮어쓰기' : '파일 생성';
+        const header = `📝 [${label}] ${fname}${desc ? ` (${desc})` : ''}`;
+        const body = diffLogLines('', newC);
+        return body ? `${header}\n${body}` : header;
+      }
+      return `🔧 [도구 실행] ${tname} ${desc || ''}`;
     }
 
     function createBotStreamMessage(streamMode) {
@@ -281,23 +491,9 @@ function notSupportedYet(feature) {
         addLiveLog: function(logStr) {
           if (!termBody) return;
           termBody.style.display = 'block';
-          const lineEl = document.createElement('div');
-          lineEl.className = 'term-line';
-          
-          let lineClass = 'term-text';
-          if (logStr.includes('💭') || logStr.includes('[추론]')) lineClass += ' think';
-          else if (logStr.includes('🔧') || logStr.includes('[도구') || logStr.includes('[HA 도구]')) lineClass += ' tool';
-          else if (logStr.includes('📄') || logStr.includes('[파일')) lineClass += ' file';
-          else if (logStr.includes('⚙️') || logStr.includes('[명령어')) lineClass += ' cmd';
-          else if (logStr.includes('🚀') || logStr.includes('[세션')) lineClass += ' init';
-          else if (logStr.includes('✅') || logStr.includes('[완료')) lineClass += ' done';
-          else if (logStr.includes('⚠️') || logStr.includes('오류') || logStr.includes('인증')) lineClass += ' error';
-
           const now = new Date();
           const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-          
-          lineEl.innerHTML = `<span class="term-time">[${ts}]</span> <span class="${lineClass}">${logStr}</span>`;
-          termBody.appendChild(lineEl);
+          termBody.insertAdjacentHTML('beforeend', formatTermLineHTML(logStr, ts));
           termBody.scrollTop = termBody.scrollHeight;
           box.scrollTop = box.scrollHeight;
         },
@@ -553,6 +749,12 @@ function notSupportedYet(feature) {
           updateStreamModeButton();
         }
         renderStreamModeList();
+
+        // Cached for the Help modal's "MCP 연동" section (see
+        // renderHelpMcpStatus()) -- no need for a separate fetch since this
+        // poll already runs continuously.
+        lastMcpStatus = data.mcp_status || null;
+        if (helpPanelOpenedOnce) renderHelpMcpStatus();
 
         if (isResourcePanelOpen) {
           renderCharts();
@@ -1007,6 +1209,29 @@ function notSupportedYet(feature) {
       renderModelDropdownList();
       updateQuotaBanner();
       updateModelPickerUsageRing();
+      appendCreditsLine();
+    }
+
+    // G1 credit balance -- separate slash command/endpoint from the
+    // weekly/5-hour model quota above (see core/usage_client.py
+    // get_credits_snapshot()). Fetched independently and appended once
+    // confirmed available, rather than baked into renderUsagePanelFromData's
+    // main render, so a slow/failed credits call never blocks the quota bars.
+    async function appendCreditsLine() {
+      const panel = document.getElementById('usage-panel');
+      if (!panel) return;
+      try {
+        const apiUrl = new URL('api/credits', window.location.href).href;
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        const remaining = data.available && data.data ? data.data.remaining_credits : undefined;
+        if (typeof remaining !== 'number') return;
+        const upgradeUri = data.data.upgrade_uri;
+        const row = document.createElement('div');
+        row.innerHTML = `<div class="usage-family-title">G1 크레딧</div>` +
+          `<div class="usage-credits-line">잔여 ${remaining}개${upgradeUri ? ` · <a href="${upgradeUri}" target="_blank" rel="noopener">업그레이드</a>` : ''}</div>`;
+        panel.appendChild(row);
+      } catch (e) {}
     }
 
     // Small ring gauge inline in the model-picker button itself, right after
@@ -1419,23 +1644,73 @@ function notSupportedYet(feature) {
       return modeBadgeFor('3');
     }
 
+    // Restored user turn -- same buildUserBubbleDOM module appendUserMessage()
+    // uses live, so a re-loaded conversation renders markdown identically to
+    // one that was just typed (previously this hand-escaped plain text instead).
     function buildUserRow(step) {
-      const row = document.createElement('div');
-      row.className = 'msg-row user';
       const timeStr = step.created_at ? new Date(step.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : '';
       const cleanText = cleanUserPromptString(step.content || '');
-      row.innerHTML = `
-        <div class="bubble-wrap">
-          <div class="bubble">${cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
-          <div class="msg-meta user"><span class="meta-time">${timeStr}</span></div>
-        </div>
-      `;
+      const row = buildUserBubbleDOM(cleanText, timeStr);
+      // Rewind is only meaningful on a restored (already-saved) turn, so the
+      // button is added here rather than inside buildUserBubbleDOM (shared
+      // with the live-typing path in appendUserMessage(), which has no
+      // step_index yet). Hidden for any turn whose source_cid isn't the
+      // conversation actually open (see get_session_history()'s source_cid
+      // tagging): a turn from an earlier, superseded segment of a Modes-1/2
+      // -> Mode-3 hand-off chain lives in a *different* physical transcript
+      // file than the one rewind_session() would truncate, so a step_index
+      // from there can't be safely applied here.
+      const isRewindableFile = !step.source_cid || step.source_cid === currentConversationId;
+      if (typeof step.step_index === 'number' && isRewindableFile) {
+        const meta = row.querySelector('.msg-meta.user');
+        if (meta) {
+          const btn = document.createElement('button');
+          btn.className = 'icon-btn-sm';
+          btn.title = '이 메시지로 되돌리기';
+          btn.innerHTML = `<span class="icon">${ICON_REWIND_SVG}</span>`;
+          btn.onclick = (e) => rewindToStep(step.step_index, e);
+          meta.appendChild(btn);
+        }
+      }
       return row;
+    }
+
+    // Truncates the conversation back to `stepIndex` (discards every step
+    // after it) and reloads the session view. See core/session_manager.py
+    // rewind_session() for what this actually does server-side -- notably,
+    // continuing the chat afterward starts agy on a fresh id rather than
+    // truly erasing agy's own memory of the discarded turns (no --rewind
+    // flag exists), which the confirm text below says plainly rather than
+    // implying a guarantee the addon can't back up.
+    async function rewindToStep(stepIndex, evt) {
+      if (evt) evt.stopPropagation();
+      if (!currentConversationId) return;
+      const ok = confirm(
+        '이 메시지부터 이후의 대화 내용이 모두 삭제됩니다.\\n' +
+        '이어서 대화하면 새 CLI 세션으로 시작되며, 남겨진 대화 내용은 맥락으로 함께 전달됩니다.\\n\\n' +
+        '되돌리시겠습니까?'
+      );
+      if (!ok) return;
+      try {
+        const apiUrl = new URL(`api/sessions/${encodeURIComponent(currentConversationId)}/rewind`, window.location.href).href;
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ step_index: stepIndex }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch (e) {
+        alert('되돌리기에 실패했습니다: ' + e.message);
+        return;
+      }
+      await openSession(currentConversationId);
+      loadSessionsList();
     }
 
     // Builds a restored bot turn using the exact same markup as a live answer
     // (buildBotBubbleDOM) -- just filled in all at once instead of
-    // progressively, and labeled "복원됨" instead of a live timer.
+    // progressively. Unlike a live answer, a restored turn never shows a
+    // latency badge (there's no real elapsed time to report).
     function buildRestoredBotRow(turn) {
       let thinkingList = [];
       let toolCalls = [];
@@ -1458,7 +1733,7 @@ function notSupportedYet(feature) {
       });
 
       const { text: modeText, cls: modeClass } = inferTurnModeBadge(turn);
-      const { row, termBody, termBadge, answerContent, rawCode, latencyEl } =
+      const { row, termBody, termBadge, answerContent, rawCode } =
         buildBotBubbleDOM(modeText, modeClass, lastTimeStr);
 
       // A restored turn is always "done" -- never actually live -- regardless
@@ -1470,16 +1745,15 @@ function notSupportedYet(feature) {
       if (thinkingList.length > 0 || toolCalls.length > 0) {
         termBody.style.display = 'block';
         let logLines = '';
+        // Same formatTermLineHTML() a live stream's addLiveLog() uses, fed the
+        // same-shaped label strings (formatToolCallLogStr mirrors the backend's
+        // tail_transcript() tool-name branching) -- a restored log looks
+        // exactly like it did while it was actually streaming.
         thinkingList.forEach(th => {
-          logLines += `<div class="term-line"><span class="term-text think">💭 [추론] ${th.replace(/</g, "&lt;")}</span></div>`;
+          logLines += formatTermLineHTML(`💭 [추론] ${th}`, '');
         });
         toolCalls.forEach(tc => {
-          const tname = tc.name || 'tool';
-          let act = '';
-          if (tc.toolAction) act = tc.toolAction;
-          else if (tc.toolSummary) act = tc.toolSummary;
-          else if (tc.args) act = JSON.stringify(tc.args);
-          logLines += `<div class="term-line"><span class="term-text tool">🔧 [도구] ${tname}: ${String(act).replace(/</g, "&lt;")}</span></div>`;
+          logLines += formatTermLineHTML(formatToolCallLogStr(tc), '');
         });
         termBody.innerHTML = logLines;
       }
@@ -1488,10 +1762,6 @@ function notSupportedYet(feature) {
       answerContent.innerHTML = formatMarkdown(displayAnswer);
       answerContent.setAttribute('data-raw', displayAnswer);
       if (rawCode) rawCode.textContent = displayAnswer;
-      if (latencyEl) {
-        latencyEl.textContent = '⚡ 복원됨';
-        latencyEl.style.display = 'inline';
-      }
       return row;
     }
 
@@ -1585,12 +1855,44 @@ function notSupportedYet(feature) {
       setInterval(prefetchUsage, 55000);
     });
 
+    // Mode 3 stop/cancel state -- set by sendMessage() while a generation is
+    // in flight, read by updateSendBtn() to swap the send button into a stop
+    // button. Modes 1/2 finish near-instantly with no cancellable backend
+    // process (see core/streamer.py), so the swap only ever applies to Mode 3.
+    let isStreamActive = false;
+    let activeStreamId = '';
+    let activeAbortController = null;
+    let activeStreamModeForStop = 0;
+
     function updateSendBtn() {
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
+      const icon = btn.querySelector('.icon');
+      if (isStreamActive && activeStreamModeForStop === 3) {
+        btn.classList.add('stopping');
+        if (icon) icon.innerHTML = ICON_STOP_SVG;
+        btn.disabled = false;
+        return;
+      }
+      btn.classList.remove('stopping');
+      if (icon) icon.innerHTML = ICON_ARROW_UP_SVG;
       const hasText = input.value.trim().length > 0;
       btn.classList.toggle('has-text', hasText);
       btn.disabled = !hasText;
+    }
+
+    // Stops an in-flight Mode 3 generation: tells the backend to kill the
+    // agy process (see core/streamer.py stop_stream / POST /api/chat/stop)
+    // and aborts the client-side fetch for immediate UI feedback.
+    function stopGeneration() {
+      if (activeStreamId) {
+        fetch(new URL('api/chat/stop', window.location.href).href, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stream_id: activeStreamId }),
+        }).catch(() => {});
+      }
+      if (activeAbortController) activeAbortController.abort();
     }
 
     // Voice input (Web Speech API) -- client-side only, no backend involved.
@@ -1693,12 +1995,10 @@ function notSupportedYet(feature) {
     // Files are only staged (local preview, no network call) on selection --
     // the actual upload happens in sendMessage(), bundled with the message
     // send itself, so "attach + type + send" reads as one action instead of
-    // two separate steps.
-    async function handleFilesSelected(event) {
-      const files = Array.from(event.target.files || []);
-      event.target.value = ''; // allow re-selecting the same file later
-      if (files.length === 0) return;
-
+    // two separate steps. Shared by the file-picker (handleFilesSelected)
+    // and clipboard image paste (see the 'paste' listener below).
+    async function stageFiles(files) {
+      if (!files || files.length === 0) return;
       const entries = [];
       for (const file of files) {
         const id = ++attachmentSeq;
@@ -1711,6 +2011,49 @@ function notSupportedYet(feature) {
       pendingAttachments = pendingAttachments.concat(entries);
       renderAttachPreviewRow();
     }
+
+    async function handleFilesSelected(event) {
+      const files = Array.from(event.target.files || []);
+      event.target.value = ''; // allow re-selecting the same file later
+      await stageFiles(files);
+    }
+
+    // Ctrl+V an image straight into the composer to attach it -- same
+    // staging path as the file-picker button (stageFiles()), same Mode 3
+    // restriction (see triggerFileAttach()). Only intercepts when the
+    // clipboard actually carries image data; a plain text paste falls
+    // through untouched so normal typing keeps working.
+    (function setupImagePaste() {
+      const input = document.getElementById('user-input');
+      if (!input) return;
+      input.addEventListener('paste', async (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        const imageFiles = [];
+        for (const item of items) {
+          if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) imageFiles.push(file);
+          }
+        }
+        if (imageFiles.length === 0) return; // no image in clipboard -- let normal text paste proceed
+
+        e.preventDefault();
+        if (currentStreamMode !== '3') {
+          notSupportedYet('파일 첨부는 CLI 추론 모드에서만');
+          return;
+        }
+        // Clipboard images usually have no real filename (or the browser's
+        // generic "image.png" for every single paste) -- synthesize a unique
+        // one so the preview chip and upload payload aren't blank/ambiguous.
+        const named = imageFiles.map((f, i) => {
+          if (f.name && f.name !== 'image.png') return f;
+          const ext = (f.type.split('/')[1] || 'png').split('+')[0];
+          return new File([f], `클립보드_이미지_${Date.now()}_${i + 1}.${ext}`, { type: f.type });
+        });
+        await stageFiles(named);
+      });
+    })();
 
     async function uploadAttachment(entry) {
       entry.uploading = true;
@@ -1782,7 +2125,106 @@ function notSupportedYet(feature) {
       sendMessage();
     }
 
+    // "/" slash-command autocomplete -- placeholder text ("/ for actions")
+    // implied this was always meant to exist, never actually wired up.
+    // Scope kept to commands genuinely confirmed to work through this chat
+    // (not agy's full TUI slash-command list -- most of those are
+    // interactive-only and untested in headless -p mode):
+    //   /codesearch -- client-side only (core/codesearch.py), never touches agy
+    //   /usage, /credits -- confirmed live: agy -p "/usage"|"/credits" both
+    //     return real data in headless print mode (see core/usage_client.py)
+    const SLASH_COMMANDS = [
+      { cmd: '/codesearch', usage: '/codesearch <검색어>', desc: '워크스페이스 코드 검색 (agy 연동 없는 자체 grep)', insertSuffix: ' ' },
+      { cmd: '/usage', usage: '/usage', desc: '모델 사용량/쿼터 조회 (CLI 추론 모드)', insertSuffix: '' },
+      { cmd: '/credits', usage: '/credits', desc: 'G1 크레딧 잔량 조회 (CLI 추론 모드)', insertSuffix: '' },
+    ];
+    let slashMenuVisibleCommands = [];
+    let slashMenuActiveIndex = -1;
+
+    function isSlashMenuOpen() {
+      const menu = document.getElementById('slash-command-menu');
+      return !!menu && menu.classList.contains('open');
+    }
+
+    // Only triggers when "/" starts the WHOLE message and no space has been
+    // typed yet (i.e. still composing the command name itself) -- matches
+    // Slack/Discord-style slash-command UX, and doesn't hijack a literal "/"
+    // typed mid-sentence.
+    function updateSlashCommandMenu() {
+      const input = document.getElementById('user-input');
+      if (!input) return;
+      const match = /^\/([a-zA-Z가-힣]*)$/.exec(input.value);
+      if (!match) {
+        closeSlashCommandMenu();
+        return;
+      }
+      const typed = match[1].toLowerCase();
+      slashMenuVisibleCommands = SLASH_COMMANDS.filter(c => c.cmd.slice(1).toLowerCase().startsWith(typed));
+      if (slashMenuVisibleCommands.length === 0) {
+        closeSlashCommandMenu();
+        return;
+      }
+      slashMenuActiveIndex = 0;
+      renderSlashCommandMenu();
+      const menu = document.getElementById('slash-command-menu');
+      if (menu) menu.classList.add('open');
+    }
+
+    function renderSlashCommandMenu() {
+      const menu = document.getElementById('slash-command-menu');
+      if (!menu) return;
+      menu.innerHTML = slashMenuVisibleCommands.map((c, i) => `
+        <div class="slash-command-row ${i === slashMenuActiveIndex ? 'active' : ''}" onmousedown="event.preventDefault(); selectSlashCommand(${i})">
+          <span class="cmd">${c.usage}</span>
+          <span class="desc">${c.desc}</span>
+        </div>
+      `).join('');
+    }
+
+    function closeSlashCommandMenu() {
+      const menu = document.getElementById('slash-command-menu');
+      if (menu) menu.classList.remove('open');
+      slashMenuVisibleCommands = [];
+      slashMenuActiveIndex = -1;
+    }
+
+    function selectSlashCommand(index) {
+      const c = slashMenuVisibleCommands[index];
+      const input = document.getElementById('user-input');
+      if (!c || !input) return;
+      input.value = c.cmd + (c.insertSuffix || '');
+      closeSlashCommandMenu();
+      updateSendBtn();
+      autoResizeTextarea();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
     function handleKey(e) {
+      if (isSlashMenuOpen()) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          slashMenuActiveIndex = (slashMenuActiveIndex + 1) % slashMenuVisibleCommands.length;
+          renderSlashCommandMenu();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          slashMenuActiveIndex = (slashMenuActiveIndex - 1 + slashMenuVisibleCommands.length) % slashMenuVisibleCommands.length;
+          renderSlashCommandMenu();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          selectSlashCommand(slashMenuActiveIndex);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeSlashCommandMenu();
+          return;
+        }
+      }
       updateSendBtn();
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -1790,13 +2232,76 @@ function notSupportedYet(feature) {
       }
     }
 
+    // Self-implemented /codesearch (see core/codesearch.py) -- a plain
+    // workspace grep, rendered through the same bot-bubble skeleton as a
+    // real answer (createBotStreamMessage/.setText()/.finish()) so it looks
+    // native in the chat instead of needing a separate results panel.
+    async function runCodeSearch(query, streamMode) {
+      const input = document.getElementById('user-input');
+      appendUserMessage(`/codesearch ${query}`);
+      input.value = '';
+      closeSlashCommandMenu();
+      autoResizeTextarea();
+
+      const streamUI = createBotStreamMessage(streamMode);
+      try {
+        const apiUrl = new URL('api/codesearch', window.location.href).href;
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+        const matches = data.matches || [];
+        const root = data.root || '';
+        if (matches.length === 0) {
+          streamUI.setText(`\`${query}\`에 대한 검색 결과가 없습니다. (검색 루트: \`${root}\`)`);
+        } else {
+          const lines = matches.map(m => `**${m.file}:${m.line}**\\n\`\`\`\\n${m.text}\\n\`\`\``).join('\\n\\n');
+          const suffix = data.truncated ? `\\n\\n_(결과가 많아 상위 ${matches.length}개만 표시했습니다)_` : '';
+          streamUI.setText(`검색어 \`${query}\` — ${matches.length}개 결과 (검색 루트: \`${root}\`)\\n\\n${lines}${suffix}`);
+        }
+      } catch (e) {
+        streamUI.setText(`[오류] 코드 검색 실패: ${e.message || e}`);
+      } finally {
+        streamUI.finish();
+        input.focus();
+      }
+    }
+
     async function sendMessage() {
+      // While a Mode 3 generation is in flight, the send button doubles as a
+      // stop button (see updateSendBtn()) -- clicking it here means "stop",
+      // not "send".
+      if (isStreamActive) {
+        stopGeneration();
+        return;
+      }
+
       const input = document.getElementById('user-input');
       const btn = document.getElementById('send-btn');
       const streamMode = parseInt(currentStreamMode) || 1;
       const typedText = input.value.trim();
       if (!typedText && pendingAttachments.length === 0) return;
       if (pendingAttachments.some(a => a.uploading)) return; // already sending
+
+      // Self-implemented /codesearch -- agy has no headless code-search
+      // command (see core/codesearch.py), so this bypasses the SSE chat
+      // pipeline entirely and just greps the workspace directly. Matches
+      // "/codesearch" alone (no query yet) too -- not just "/codesearch "
+      // with a trailing space -- since typedText is already .trim()'d above
+      // and would otherwise fall through and get sent to agy as a literal,
+      // meaningless chat prompt instead of a clear "type a query" nudge.
+      const codesearchMatch = /^\/codesearch(?:\s+(.*))?$/i.exec(typedText);
+      if (codesearchMatch) {
+        const query = (codesearchMatch[1] || '').trim();
+        if (!query) {
+          showToast('검색어를 입력하세요. 예: /codesearch 조명');
+          return;
+        }
+        await runCodeSearch(query, streamMode);
+        return;
+      }
 
       // Upload happens here, bundled into the send action itself, rather than
       // eagerly on file selection -- "attach + type + send" is one step.
@@ -1841,11 +2346,10 @@ function notSupportedYet(feature) {
 
       appendUserMessage(displayMarkdown);
       input.value = '';
+      closeSlashCommandMenu();
       autoResizeTextarea();
       pendingAttachments = [];
       renderAttachPreviewRow();
-      btn.disabled = true;
-      updateSendBtn();
 
       // Attachments only work under Mode 3 (agy's view_file tool) -- force it
       // even if the disabled attach button was somehow bypassed while another
@@ -1855,11 +2359,18 @@ function notSupportedYet(feature) {
       const isDirectLLM = prompt.startsWith('ai ') || prompt.startsWith('/llm');
       const isMobile = window.innerWidth < 768;
 
+      isStreamActive = true;
+      activeStreamModeForStop = effectiveStreamMode;
+      activeStreamId = '';
+      activeAbortController = new AbortController();
+      updateSendBtn();
+
       try {
         const apiUrl = new URL('api/chat', window.location.href).href;
         const res = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: activeAbortController.signal,
           body: JSON.stringify({
             prompt: prompt,
             conversation_id: currentConversationId,
@@ -1874,8 +2385,6 @@ function notSupportedYet(feature) {
 
         if (!res.ok) {
           streamUI.setText(`[오류] 서버 응답 코드 HTTP ${res.status}`);
-          btn.disabled = false;
-          updateSendBtn();
           return;
         }
 
@@ -1901,6 +2410,8 @@ function notSupportedYet(feature) {
                 currentConversationId = ev.content;
                 localStorage.setItem('antigravity_active_conv_id', currentConversationId);
                 loadSessionsList();
+              } else if (ev.type === 'stream_id') {
+                activeStreamId = ev.content;
               } else if (ev.type === 'live_log' || ev.type === 'tool') {
                 streamUI.addLiveLog(ev.content);
               } else if (ev.type === 'chunk') {
@@ -1916,11 +2427,17 @@ function notSupportedYet(feature) {
         }
         streamUI.finish();
       } catch (err) {
-        if (!streamUI.hasContent()) {
+        if (err.name === 'AbortError') {
+          if (!streamUI.hasContent()) streamUI.setText('⏹️ 중지되었습니다.');
+        } else if (!streamUI.hasContent()) {
           streamUI.setText(`[오류] 실시간 스트림 연결 실패: ${err.message}`);
         }
         streamUI.finish();
       } finally {
+        isStreamActive = false;
+        activeStreamId = '';
+        activeAbortController = null;
+        activeStreamModeForStop = 0;
         btn.disabled = false;
         updateSendBtn();
         input.focus();

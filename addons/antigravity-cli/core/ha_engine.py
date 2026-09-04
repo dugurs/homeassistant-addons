@@ -3,8 +3,10 @@
 # Re-export all sub-module functions for 100% backwards compatibility
 from core.ha_client import (
     execute_device_control_intent,
+    get_device_status_answer,
     get_ha_states,
     ha_call_service_api,
+    is_status_query,
     run_script_or_scene_intent,
     toggle_automation_intent,
 )
@@ -55,17 +57,27 @@ def handle_agent_chat(
 
     states = get_ha_states()
 
-    # 1. Direct Device / Automation / Script Control (ha_call_service)
+    # 1. Status Question vs. Direct Device / Automation / Script Control
     #
-    # Automation/script intents are tried BEFORE device control. Both only
-    # ever engage on their own explicit trigger words ("자동화"/"오토메이션",
-    # "실행"/"돌려"/...), so trying them first is safe -- but device control
-    # must NOT go first, because since Phase A it returns an explicit
-    # clarifying message (not a silent "") when a device-type word like
-    # "환풍기" matches a branch with no candidates, which would otherwise
-    # shadow an automation named e.g. "화장실 환풍기 자동" before
-    # toggle_automation_intent ever runs.
-    if any(ctrl in no_space for ctrl in ["켜", "꺼", "틀어", "시작", "정지", "닫아", "열어", "작동", "돌려", "실행", "재생"]):
+    # A status QUESTION ("안방 스탠드 등 켜져있어?") shares the same "켜"/"꺼"
+    # substring as a COMMAND ("켜줘"), so it must be told apart before any
+    # control branch runs at all -- is_status_query() is that single choke
+    # point, checked here AND again inside each control function as defense
+    # in depth. Getting this wrong is what previously turned a plain status
+    # question into every bedroom light being switched on.
+    if is_status_query(clean_prompt, no_space):
+        status_result = get_device_status_answer(clean_prompt, states)
+        if status_result:
+            return status_result
+    elif any(ctrl in no_space for ctrl in ["켜", "꺼", "틀어", "시작", "정지", "닫아", "열어", "작동", "돌려", "실행", "재생"]):
+        # Automation/script intents are tried BEFORE device control. Both only
+        # ever engage on their own explicit trigger words ("자동화"/"오토메이션",
+        # "실행"/"돌려"/...), so trying them first is safe -- but device control
+        # must NOT go first, because it returns an explicit clarifying message
+        # (not a silent "") when a device-type word like "환풍기" matches a
+        # branch with no candidates, which would otherwise shadow an
+        # automation named e.g. "화장실 환풍기 자동" before
+        # toggle_automation_intent ever runs.
         auto_result = toggle_automation_intent(clean_prompt, states)
         if auto_result:
             return auto_result

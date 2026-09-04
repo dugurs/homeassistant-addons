@@ -1,3 +1,51 @@
+## 1.1.0-beta.60
+
+### 수정 (Fix) — 화면 전체 먹통(세션 목록/모드/모델 선택 불가) 긴급수정
+- **beta.59에서 추가한 diff 표시 기능이 프론트엔드 JS 전체를 문법 오류로 깨뜨려 화면이 통째로 먹통이 되던 버그 수정**: `core/ui/scripts.py`의 `JS_SCRIPTS`는 raw 문자열이 아닌 일반 Python 삼중따옴표 문자열이라, 소스에 `'\n'`(줄바꿈 이스케이프 2글자)라고 적어도 Python이 이를 실제 개행 문자로 미리 해석해버림 — 결과적으로 `formatTermLineHTML()`/`diffLogLines()`에 있던 `split('\n')`/`join('\n')`이 작은따옴표 문자열 안에 실제 줄바꿈이 낀 채로 브라우저에 전달되어 JS 파서가 그 지점에서 전체 스크립트 파싱을 실패시킴. 이 스크립트가 페이지의 모든 초기화 로직(세션 목록 로드, 모드/모델 선택 등)을 담당하고 있어서, 이 한 군데 문법 오류로 "세션 목록 불러오는 중..."에서 멈추고 모드/모델 선택도 전혀 반응하지 않는 전면 장애로 이어졌음
+  - `node --check`로 추출한 JS를 실제 파싱해 정확한 실패 지점을 특정 후 확인 — 파일 내 같은 패턴(정규식 리터럴의 `\\`)은 이미 올바르게 이중 이스케이프되어 있었는데, 이번에 새로 추가된 5곳(`split`/`join` 3쌍)만 단일 이스케이프로 작성되어 있었음
+  - `'\n'` → `'\\n'`로 수정해 Python 해석 후에도 JS에는 리터럴 2글자 `\n`이 그대로 전달되도록 함(`core/ui/scripts.py` `formatTermLineHTML()`, `diffLogLines()`). 템플릿 리터럴(백틱) 안의 `\n` 2곳은 Python이 실제 개행으로 바꿔도 백틱 문자열은 실제 개행을 허용하므로 문법상 문제 없어 그대로 둠
+
+## 1.1.0-beta.59
+
+### 추가 (Feature) — Mode 3 파일 편집 diff 표시
+- Mode 3(`agy`)가 파일을 쓰거나 수정할 때 실시간 로그에 실제 변경 내용(diff)을 표시하도록 개선. 이전에는 `write_to_file`/`replace_file_content` 같은 파일 편집 도구 호출이 전부 "🔧 [도구 실행] write_to_file ..."처럼 일반 도구 호출과 동일하게만 표시되고 실제로 어떤 내용이 바뀌었는지는 전혀 안 보였음
+  - 실측(`_agy_diff_test.txt` 생성 → 수정 시나리오로 실제 transcript.jsonl 캡처)으로 agy의 파일 편집 도구가 `write_to_file`(신규 생성/전체 덮어쓰기, `CodeContent`에 새 전체 내용)과 `replace_file_content`(부분 수정, `TargetContent`=기존 내용 / `ReplacementContent`=새 내용을 `StartLine`/`EndLine` 범위로 모두 제공)로 나뉜다는 것을 확인
+  - **agy의 tool_call args 값이 이중 JSON 인코딩되어 있음을 실측으로 발견**: `CodeContent`/`TargetContent`/`AbsolutePath` 등 내용성 필드는 바깥쪽 JSON 파싱 후에도 `"hello world\n"`처럼 따옴표가 문자열 안에 그대로 남아있어(예: `\"CodeContent\":\"\\\"hello world\\\\n\\\"\"`), 실제 값을 얻으려면 한 번 더 파싱해야 함(반면 `Overwrite`/`StartLine` 같은 스칼라성 필드는 이렇게 감싸여 있지 않음) — 신설 `_agy_str()`(`core/streamer.py`)/`agyStr()`(`core/ui/scripts.py`)로 양쪽에서 동일하게 언랩. 기존에 이 언랩 없이 `AbsolutePath`/`toolSummary` 등을 그대로 쓰던 곳들도 전부 적용해 파일명 끝에 낀 따옴표 등 기존의 사소한 표시 오염도 같이 정리됨
+  - `replace_file_content`는 `TargetContent`/`ReplacementContent`가 이미 정확히 바뀐 범위만 담고 있어 별도 diff 알고리즘 없이 `- 기존줄` / `+ 새줄` 블록으로 바로 표시(신설 `_diff_log_lines()`/`diffLogLines()`). `write_to_file`은 이전 내용이 args에 없어 diff 자체는 불가능 — 새 파일 생성(`Overwrite:false`)이면 전체를 `+`로, 기존 파일 덮어쓰기(`Overwrite:true`)면 "파일 덮어쓰기"로 구분 표시하고 새 내용만 보여줌(추정으로 이전 내용을 지어내지 않음)
+  - 라이브 스트리밍 경로(`core/streamer.py` `tail_transcript()`)와 복원된 과거 대화 경로(`core/ui/scripts.py` `formatToolCallLogStr()`)가 동일한 로직을 각각 미러링하도록 구현 — 기존 "실시간 로그 = 복원 로그" 관례(beta.19 이전 정리) 유지. `+`/`-`로 시작하는 줄은 `formatTermLineHTML()`에서 초록/빨강으로 색칠(`core/ui/styles.py`의 `.diff-add`/`.diff-del`)
+  - 스키마 실측 없이 설계하는 대신, 사용자가 실제 Mode 3 대화로 파일 생성→수정을 실행해 받은 실제 transcript.jsonl을 근거로 구현
+
+## 1.1.0-beta.50
+
+### 수정 (Fix)
+- **되돌리기(rewind)가 기존(구버전에서 만들어진) 대화에서 400 에러로 실패하던 버그 수정**: `rewind_session()`이 항상 `get_session_transcript_path()`(캐노니컬 `logs/transcript.jsonl`) 경로만 보고 있었는데, 이 파일은 이 애드온의 "캐노니컬 트랜스크립트" 관례가 생기기 전에 만들어졌거나 agy가 아직 플러시하지 않은 대화에는 존재하지 않음(그런 대화는 agy의 레거시 첫 턴 스냅샷 `chunks/transcript_full/00000000.jsonl`만 가지고 있고, 화면에는 `get_readable_transcript_path()`로 그 파일을 읽어서 정상적으로 보여주고 있었음) — 되돌리기는 존재하지도 않는 캐노니컬 파일을 찾다가 매번 실패. `get_readable_transcript_path()`로 교체해 실제 화면에 보이는 파일을 그대로 잘라내도록 수정
+- 되돌릴 지점을 찾을 때 "파일의 N번째 줄 = step_index N"이라고 가정하던 것도 함께 제거 — 이 가정은 이 애드온 자신이 쓰는 파일(`get_next_step_index()`가 항상 줄 수+1로 매김)에서만 보장되고, agy가 직접 쓰는 Mode 3 트랜스크립트의 실제 번호 매김 방식은 문서화돼 있지 않음. 각 줄을 파싱해서 `step_index` 필드값이 실제로 일치하는 줄을 찾아 그 위치에서 자르도록 변경(`core/session_manager.py` `rewind_session()`)
+
+## 1.1.0-beta.49
+
+### 추가 (Feature) — 대화 되돌리기 (/rewind 대응)
+- 세션 히스토리의 각 사용자 메시지 옆에 "이 메시지로 되돌리기" 버튼 추가 — 클릭하면 해당 메시지부터 이후 대화가 전부 삭제되고, 되돌아간 시점에서 새 메시지를 이어보낼 수 있음(`core/ui/scripts.py` `rewindToStep()`/`buildUserRow()`, `POST /api/sessions/<cid>/rewind`, `core/session_manager.py` `rewind_session()`)
+- **agy는 헤드리스에 `--rewind` 플래그가 없고, "삭제된" 대화도 agy 자신의 내부 메모리에는 그대로 남는다는 제약을 실측이 아니라 설계로 먼저 인지하고 우회**: 되돌리기는 이 애드온이 표시/추적하는 `transcript.jsonl`만 자를 뿐이므로, 되돌린 뒤 같은 `conversation_id`로 `--conversation`을 계속 보내면 agy 입장에서는 "삭제됐던" 내용이 여전히 살아있어 사용자를 속이는 셈이 됨. 따라서:
+  - 신설 `mark_rewound()`/`is_rewound()`/`clear_rewound()`(`core/session_manager.py`)로 "되돌려짐" 상태를 마킹하고, `core/streamer.py`의 재개 판단 로직(`resume_this_session`)이 이를 확인해 되돌린 직후의 다음 Mode 3 턴에는 `--conversation`을 보내지 않도록 함 — 이미 존재하던 "모드 1/2 전용 대화 → 모드 3 최초 전환" 시 agy가 자체 id를 새로 발급하고 `link_conversation_continuation()`으로 연결하던 경로(beta.20)를 그대로 재사용
+  - 새 agy id가 과거 맥락을 전혀 모르는 상태로 시작하는 문제를 막기 위해, 신설 `build_rewind_context_preamble()`이 남겨진(잘리지 않은) 대화의 질문/답변만 텍스트로 압축해 다음 프롬프트 앞에 삽입 — 4000~6000자 캡을 두는 `/usage` raw_text 등 기존 방어적 캡핑 관례와 동일하게 6000자로 제한
+  - 되돌리기는 "클릭한 메시지 자체는 남기고 답변만 지우기"가 아니라 "클릭한 메시지부터 포함해서 전부 삭제"로 구현 — 전자는 답변 없는 질문이 히스토리 중간에 붕 뜨는 형태가 되어 후자로 결정
+- 모드 1/2 → 모드 3 핸드오프로 대화가 여러 물리 파일(체인)에 걸쳐 있는 경우, `step_index`는 파일마다 독립적으로 매겨지므로 다른 파일의 `step_index`를 잘못 적용해 엉뚱한 줄을 자르는 사고를 막기 위해 `get_session_history()`가 각 항목에 `source_cid`(실제 그 메시지가 들어있는 물리 파일의 id)를 태깅하도록 변경 — 프론트는 `source_cid`가 현재 열려있는 대화와 다른(=체인의 이전 세그먼트) 메시지에는 되돌리기 버튼을 아예 숨김
+
+## 1.1.0-beta.47
+
+### 추가 (Add) — HA 파일 안전장치
+- **파일 삭제/덮어쓰기 전 사전 승인 + HA 핵심 폴더 보호 규칙 도입** (`run.sh`): Mode 3(`agy -p ... --dangerously-skip-permissions`)는 모든 도구 호출을 자동 승인하는 헤드리스 실행이라 인터랙티브 권한 프롬프트 자체가 없다는 것을 `agy` 공식 문서/이슈 트래커로 실측 확인(`--dangerously-skip-permissions` 자체가 permissions 엔진을 완전히 우회하며, 이 플래그 없이 헤드리스로 돌리면 승인이 필요한 도구 호출에서 타임아웃도 안 먹고 영구 행(hang)하는 상위 버그가 별도로 존재 — 헤드리스 스트리밍이 동작하려면 이 플래그가 사실상 필수). 따라서 실제 강제 차단은 모드와 무관하게 항상 컨텍스트로 주입되는 always-on 규칙 파일로 구현:
+  - 신설 `/root/.gemini/config/rules/ha-file-safety.md` (기존 `ha-guidelines.md`와 동일한 주입 방식): "삭제/덮어쓰기 전 대상 파일 경로·개수·사유를 먼저 알리고 사용자의 다음 메시지에서 명시적 승인을 받기 전에는 절대 실행하지 않는다"는 절차 규칙 + `/config/.storage/`, `secrets.yaml`, `configuration.yaml`, `.uuid`, `.HA_VERSION`, `home-assistant_v2.db`, `.cloud/`, 이 애드온 자신의 `.gemini/`, `automations/scripts/scenes.yaml`, `custom_components/`, `/backup/` 등 HA 운영에 필수적인 절대 삭제·수정 금지 목록을 표로 명시(사용자가 명시적으로 요청해도 거부하고 위험성을 설명하도록 지시)
+  - `settings.json`의 `permissions.deny`에 `command(rm -rf)`/`command(sudo)` 및 위 핵심 경로들에 대한 `write_file(...)` 항목 추가(기존 `allow` 병합 로직과 동일하게 `jq`로 멱등 병합). `--dangerously-skip-permissions`가 걸린 Mode 3 헤드리스 경로에서는 이 목록이 강제되지 않지만(위 이유), `--dangerously-skip-permissions` 없이 `agy`를 직접 띄우는 웹 터미널(ttyd/tmux) 경로에서는 실제 하드 차단으로 동작 — 두 메커니즘을 함께 적용해 방어를 이중화
+
+## 1.1.0-beta.46
+
+### 수정 (Fix) — 안전 긴급수정
+- **기기 상태 질문이 기기 제어 명령으로 오작동하던 심각한 버그 수정**: "안방 스탠드 등 켜져있어?" 같은 상태 질문이 "켜"라는 글자가 포함되어 있다는 이유만으로 "켜줘" 명령과 동일하게 처리되어 실제로 안방 조명이 전부 켜지는 사고 발생 — 실사용 중 발견 및 즉시 수정
+  - 신설 `is_status_query()`(`core/ha_client.py`): "켜져있", "꺼져있", "열려있", "닫혀있", "작동중" 등 상태 표현이나, 명령 어미("줘"/"주세요"/"줄래" 등) 없이 "?"로 끝나는 문장을 감지 — `execute_device_control_intent`/`toggle_automation_intent`/`run_script_or_scene_intent` 진입 전 최우선 검사로 적용(방어적 이중 체크: `ha_engine.py` 디스패치 단계 + 각 제어 함수 내부)
+  - 신설 `get_device_status_answer()`: 상태 질문으로 판별되면 어떤 기기를 실행하지 않고, 해당 방/도메인에 속한 기기들의 현재 상태를 개별적으로 나열해서 응답(예: "안방 조명 상태 - 안방 등: 꺼짐 / 안방 화장실 등: 꺼짐 / 안방 스탠드 램프: 꺼짐") — 방 안에 이름이 비슷한 기기가 여러 개일 때 어떤 것을 뜻하는지 추측하지 않고 전부 보여주는 방식으로 안전하게 답변
+  - "커튼 열어줄래?"처럼 명령 어미가 있는 의문형 명령문은 기존대로 정상 실행됨을 회귀 테스트로 확인
+
 ## 1.1.0-beta.43
 
 ### 수정 (Fix)

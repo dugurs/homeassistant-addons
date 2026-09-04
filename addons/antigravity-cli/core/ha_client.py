@@ -150,12 +150,108 @@ SWITCH_EXCLUDE_KEYWORDS = [
 # exactly the kind of mistake this whole feature exists to prevent.
 APPLIANCE_SWITCH_KEYWORDS = ["보일러", "히터", "온열기", "전기스토브", "콘센트", "플러그"]
 
+_STATE_QUERY_PATTERNS = [
+    "켜져있", "꺼져있", "켜있", "꺼있", "켜진", "꺼진", "켜졌", "꺼졌",
+    "닫혀있", "닫힌", "닫혔", "열려있", "열린", "열렸",
+    "작동중", "작동하고있", "가동중", "가동하고있", "돌아가고있", "돌고있",
+]
+_COMMAND_MARKERS = ["줘", "줄래", "주세요", "주실래요", "주실수", "게해줘", "게해", "라"]
+
+
+def is_status_query(prompt: str, clean: str) -> bool:
+    """True when the prompt is ASKING about current device state ("켜져있어?" --
+    is it on?) rather than COMMANDING a change ("켜줘" -- turn it on).
+
+    Both share the same "켜"/"꺼" substring, so a plain keyword-in-string check
+    can never tell them apart -- this is the single choke point every control
+    function (device/automation) must check FIRST. A status question that
+    slips past this and reaches an on/off branch will actually flip the
+    device: this is exactly what happened when "안방 스탠드 등 켜져있어?" (is
+    the bedroom stand lamp on?) turned every bedroom light on.
+    """
+    if any(p in clean for p in _STATE_QUERY_PATTERNS):
+        return True
+    if prompt.rstrip().endswith("?") and not any(m in clean for m in _COMMAND_MARKERS):
+        return True
+    return False
+
+
+_DOMAIN_STATUS_TRIGGERS = [
+    (("등", "조명", "불", "전등"), "light.", "조명"),
+    (("커튼", "블라인드"), "cover.", "커튼"),
+    (("선풍기", "환풍기", "팬", "실링팬"), "fan.", "선풍기/환풍기"),
+    (("에어컨",), "climate.", "에어컨"),
+    (("가습기",), "humidifier.", "가습기"),
+    (("제습기",), "humidifier.", "제습기"),
+    (("tv", "티비"), "media_player.", "TV"),
+    (("스피커",), "media_player.", "스피커"),
+]
+
+
+def get_device_status_answer(prompt: str, states: list) -> str:
+    """Answer an on/off (or open/closed) status question by listing each
+    matching device's individual current state.
+
+    Deliberately does not try to guess which single device within a room the
+    user meant (e.g. "스탠드" among several bedroom lights) -- listing every
+    match with its own state answers the question directly and safely,
+    without the ambiguity risk of picking one entity to act on.
+    """
+    from core.sensors import get_dynamic_rooms, match_room
+
+    clean = prompt.replace(" ", "")
+    lower_clean = clean.lower()
+
+    matched = None
+    for words, domain_prefix, label in _DOMAIN_STATUS_TRIGGERS:
+        haystack = lower_clean if domain_prefix == "media_player." else clean
+        if any(w in haystack for w in words):
+            matched = (domain_prefix, label)
+            break
+    if not matched:
+        return ""
+    domain_prefix, label = matched
+
+    rooms = get_dynamic_rooms(states)
+    room = match_room(rooms, clean)
+
+    candidates = [s for s in states if s.get("entity_id", "").startswith(domain_prefix)]
+    if domain_prefix == "light.":
+        candidates = [c for c in candidates if "all" not in c.get("entity_id", "").lower()]
+    if room:
+        candidates = [
+            c for c in candidates
+            if room in (c.get("attributes", {}).get("friendly_name") or c.get("entity_id"))
+        ]
+
+    if not candidates:
+        where = f"{room}에는 " if room else ""
+        return f"{where}확인할 수 있는 {label}{_particle(label, '이', '가')} 없습니다."
+
+    on_label, off_label = ("열림", "닫힘") if domain_prefix == "cover." else ("켜짐", "꺼짐")
+    lines = []
+    for c in candidates:
+        fn = c.get("attributes", {}).get("friendly_name") or c.get("entity_id")
+        st = c.get("state")
+        if domain_prefix == "climate.":
+            is_active = st not in ("off", "unavailable", "unknown", None)
+        elif domain_prefix == "cover.":
+            is_active = st == "open"
+        else:
+            is_active = st == "on"
+        lines.append(f"• {fn}: {on_label if is_active else off_label}")
+
+    header = f"{room + ' ' if room else ''}{label} 상태"
+    return f"🔎 **{header}**\n" + "\n".join(lines)
+
 
 def execute_device_control_intent(prompt: str, states: list) -> str:
     """Execute direct device control (lights, fans, covers, switches, climate, media)."""
     from core.sensors import get_dynamic_rooms, match_room
 
     clean = prompt.replace(" ", "")
+    if is_status_query(prompt, clean):
+        return ""
     lower_clean = clean.lower()
 
     is_on = any(k in clean for k in ["켜", "틀어", "시작", "올려", "가동"])
@@ -346,6 +442,8 @@ def execute_device_control_intent(prompt: str, states: list) -> str:
 def toggle_automation_intent(prompt: str, states: list) -> str:
     """Turn a named automation on/off by partial name match."""
     clean = prompt.replace(" ", "")
+    if is_status_query(prompt, clean):
+        return ""
     if not any(k in clean for k in ["자동화", "오토메이션"]):
         return ""
     is_on = any(k in clean for k in ["켜", "틀어", "시작", "활성화", "켜줘"])
@@ -379,6 +477,8 @@ def toggle_automation_intent(prompt: str, states: list) -> str:
 def run_script_or_scene_intent(prompt: str, states: list) -> str:
     """Run a script or scene by partial name match."""
     clean = prompt.replace(" ", "")
+    if is_status_query(prompt, clean):
+        return ""
     if not any(k in clean for k in ["실행", "돌려", "작동시켜", "재생해"]):
         return ""
 

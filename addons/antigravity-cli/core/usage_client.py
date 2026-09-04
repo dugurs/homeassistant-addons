@@ -49,6 +49,16 @@ def _run_usage_print(output_format: str):
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _run_credits_print(output_format: str):
+    """Run `agy -p "/credits" --output-format <fmt>`. Separate slash command from
+    /usage (per official CLI reference, /usage covers per-model weekly/5-hour
+    quota while /credits is G1 credit balance) -- confirmed live that /usage's
+    own JSON response carries no credit field, so this needs its own call."""
+    cmd = [AGY_BIN, "-p", "/credits", "--output-format", output_format]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=_agy_env())
+    return proc.returncode, proc.stdout, proc.stderr
+
+
 def _classify_family(text: str):
     lower = text.lower()
     if "gemini" in lower:
@@ -200,4 +210,68 @@ def _refresh_usage_snapshot(now: float) -> dict:
         "fetched_at": now,
     }
     _CACHE.update(data=snapshot, ts=now)
+    return snapshot
+
+
+_CREDITS_CACHE = {"data": None, "ts": 0.0}
+_CREDITS_REFRESH_LOCK = threading.Lock()
+
+
+def get_credits_snapshot(force: bool = False) -> dict:
+    """Same caching contract as get_usage_snapshot(), for `agy -p "/credits"`.
+
+    Unlike /usage, the /credits response shape has not been confirmed against
+    a live container yet (backlog item -- see docs/... coverage report), so
+    this doesn't assume a schema: it surfaces `command.data`/`response`
+    verbatim under best-effort keys rather than parsed percentages, so the
+    caller can decide whether there's anything real to show.
+    """
+    now = time.time()
+    if not force and _CREDITS_CACHE["data"] is not None and (now - _CREDITS_CACHE["ts"]) < _CACHE_TTL_SEC:
+        return _CREDITS_CACHE["data"]
+
+    with _CREDITS_REFRESH_LOCK:
+        now = time.time()
+        if not force and _CREDITS_CACHE["data"] is not None and (now - _CREDITS_CACHE["ts"]) < _CACHE_TTL_SEC:
+            return _CREDITS_CACHE["data"]
+        return _refresh_credits_snapshot(now)
+
+
+def _refresh_credits_snapshot(now: float) -> dict:
+    if not check_agy_hardware_support().get("supported", False) or not os.path.exists(AGY_BIN):
+        snapshot = {
+            "available": False,
+            "reason": "agy가 이 호스트에서 지원되지 않거나 설치되어 있지 않습니다.",
+            "fetched_at": now,
+        }
+        _CREDITS_CACHE.update(data=snapshot, ts=now)
+        return snapshot
+
+    raw_json, err = "", ""
+    parsed = None
+    try:
+        ret, out, stderr = _run_credits_print("json")
+        raw_json = out
+        if ret == 0 and out.strip():
+            try:
+                parsed = json.loads(out)
+            except Exception:
+                parsed = None
+        else:
+            err = stderr
+    except Exception as e:
+        err = str(e)
+
+    snapshot = {
+        "available": parsed is not None,
+        "reason": None if parsed is not None else (err or "`agy -p /credits`가 파싱 가능한 응답을 반환하지 않았습니다."),
+        "raw_json": (raw_json or "")[:4000],
+        "fetched_at": now,
+    }
+    if parsed is not None:
+        command = parsed.get("command") or {}
+        snapshot["command_name"] = command.get("name")
+        snapshot["data"] = command.get("data")
+        snapshot["response_text"] = parsed.get("response")
+    _CREDITS_CACHE.update(data=snapshot, ts=now)
     return snapshot

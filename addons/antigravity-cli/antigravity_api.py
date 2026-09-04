@@ -16,7 +16,7 @@ import threading
 import time
 
 from core.ha_engine import get_resource_usage, get_supervisor_token, handle_agent_chat
-from core.streamer import stream_agent_chat
+from core.streamer import stop_stream, stream_agent_chat
 from core.web_ui import HTML_INDEX
 
 TTYD_INTERNAL_PORT = 7682
@@ -156,12 +156,17 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 return
 
             resources = get_resource_usage()
-            from core.system_info import check_agy_hardware_support
+            from core.system_info import check_agy_hardware_support, get_mcp_status
             from core.ui import UI_BUILD_VERSION
             hw_info = check_agy_hardware_support()
+            mcp_status = get_mcp_status()
             res = {
                 "status": "online",
-                "version": "1.1.0-beta.17",
+                # Was a separately-hardcoded string that kept drifting behind
+                # config.yaml/UI_BUILD_VERSION on every bump -- same source of
+                # truth as ui_build_version now, so there's only one place to
+                # remember to update.
+                "version": UI_BUILD_VERSION,
                 "ui_build_version": UI_BUILD_VERSION,
                 "uptime": int(time.time() - SERVER_START_TIME),
                 "active_sessions": 1,
@@ -175,7 +180,8 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 "used_memory_gb": resources["used_memory_gb"],
                 "memory_percent": resources["memory_percent"],
                 "system_memory_percent": resources["system_memory_percent"],
-                "mcp_enabled": True,
+                "mcp_status": mcp_status,
+                "mcp_enabled": mcp_status["configured"],
                 "agy_stream_supported": hw_info.get("supported", False),
                 "hw_info": hw_info,
             }
@@ -359,6 +365,32 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(get_usage_snapshot(force=force), ensure_ascii=False).encode("utf-8"))
             return
 
+        # Read-only /skills listing -- agy's own `/skills` is TUI-only (no
+        # headless print-mode equivalent), so this reads the markdown files
+        # directly (see core/skills_discovery.py for the two search paths,
+        # confirmed against antigravity.google/docs/cli/plugins/).
+        if clean_path.endswith("/api/skills"):
+            from core.skills_discovery import list_available_skills
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"skills": list_available_skills()}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # Read-only /hooks listing -- same rationale as /api/skills above.
+        if clean_path.endswith("/api/hooks"):
+            from core.hooks_discovery import list_active_hooks
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"hooks": list_active_hooks()}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # G1 credit balance (/credits) -- separate slash command from /usage,
+        # see core/usage_client.py's get_credits_snapshot() docstring.
+        if clean_path.endswith("/api/credits"):
+            from core.usage_client import get_credits_snapshot
+            force = "force=1" in self.path
+            self._set_headers(200)
+            self.wfile.write(json.dumps(get_credits_snapshot(force=force), ensure_ascii=False).encode("utf-8"))
+            return
+
         # Session Management REST APIs
         if clean_path.endswith("/api/sessions"):
             from core.session_manager import list_all_sessions
@@ -417,7 +449,61 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
             return
 
-        # 2. Real-Time Chat Streaming API
+        # 2. Mode 3 in-flight generation cancellation. Must be checked BEFORE
+        # the chat-streaming block below -- that block's own routing condition
+        # matches on "/api/chat" being a substring of the path, which would
+        # otherwise swallow this route too.
+        if clean_path.endswith("/api/chat/stop"):
+            body = self._read_request_body()
+            try:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                payload = {}
+            stream_id = str(payload.get("stream_id", "")).strip()
+            stopped = bool(stream_id) and stop_stream(stream_id)
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"stopped": stopped}).encode("utf-8"))
+            return
+
+        # 2b. Session rewind: POST /api/sessions/<cid>/rewind, body {"step_index": N}
+        # -- truncates the displayed transcript back to that step and flags
+        # the conversation so the next Mode 3 turn starts a fresh agy id
+        # (see core/session_manager.py rewind_session()/mark_rewound() and
+        # the resume-decision logic in core/streamer.py).
+        if clean_path.endswith("/rewind") and "/api/sessions/" in clean_path:
+            from core.session_manager import rewind_session
+            target_cid = clean_path.split("/api/sessions/")[-1].rsplit("/rewind", 1)[0].strip()
+            body = self._read_request_body()
+            try:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                payload = {}
+            try:
+                step_index = int(payload.get("step_index"))
+            except (TypeError, ValueError):
+                step_index = 0
+            ok = rewind_session(target_cid, step_index)
+            self._set_headers(200 if ok else 400)
+            self.wfile.write(json.dumps({"conversation_id": target_cid, "rewound": ok}, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 2c. Self-implemented /codesearch -- agy has no headless code-search
+        # command, so this is a plain workspace grep (see core/codesearch.py)
+        # triggered client-side as a composer slash command, bypassing the
+        # SSE chat pipeline entirely.
+        if clean_path.endswith("/api/codesearch"):
+            from core.codesearch import search_workspace
+            body = self._read_request_body()
+            try:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                payload = {}
+            query = str(payload.get("query", "")).strip()
+            self._set_headers(200)
+            self.wfile.write(json.dumps(search_workspace(query), ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 3. Real-Time Chat Streaming API
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
             body = self._read_request_body()
 

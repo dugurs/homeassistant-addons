@@ -83,7 +83,20 @@ HTML_BODY = f"""
         <ul>
           <li><span class="mono">Ctrl+K</span> — 새 대화 시작</li>
           <li><span class="mono">Enter</span> — 전송, <span class="mono">Shift+Enter</span> — 줄바꿈</li>
+          <li><span class="mono">/codesearch &lt;검색어&gt;</span> — 워크스페이스 코드 검색(agy 연동 없는 자체 grep)</li>
         </ul>
+      </div>
+      <div class="help-section">
+        <h4>MCP 연동</h4>
+        <ul id="help-mcp-list"><li>불러오는 중...</li></ul>
+      </div>
+      <div class="help-section">
+        <h4>스킬 (Skills)</h4>
+        <ul id="help-skills-list"><li>불러오는 중...</li></ul>
+      </div>
+      <div class="help-section">
+        <h4>훅 (Hooks)</h4>
+        <ul id="help-hooks-list"><li>불러오는 중...</li></ul>
       </div>
       <div class="help-section">
         <h4>버그 신고 / 기능 제안</h4>
@@ -194,7 +207,8 @@ HTML_BODY = f"""
           <div class="composer" id="composer">
             <div class="attach-preview-row" id="attach-preview-row" style="display:none;"></div>
             <input type="file" id="attach-file-input" multiple accept=".py,.js,.ts,.java,.c,.cpp,.go,.rs,.sh,.bat,.ps1,.json,.yaml,.yml,.xml,.toml,.ini,.env,.csv,.tsv,.txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style="display:none;" onchange="handleFilesSelected(event)">
-            <textarea id="user-input" placeholder="Ask anything, @ to mention, / for actions" rows="1" oninput="updateSendBtn(); autoResizeTextarea()" onkeydown="handleKey(event)"></textarea>
+            <textarea id="user-input" placeholder="Ask anything, @ to mention, / for actions" rows="1" oninput="updateSendBtn(); autoResizeTextarea(); updateSlashCommandMenu()" onkeydown="handleKey(event)" onblur="closeSlashCommandMenu()"></textarea>
+            <div class="slash-command-menu" id="slash-command-menu"></div>
             <div class="composer-toolbar">
               <div class="composer-toolbar-left">
                 <button class="attach-btn" id="attach-btn" onclick="triggerFileAttach()" title="파일 또는 이미지 추가 (CLI 추론 모드 전용)"><span class="icon">{ICON_PLUS}</span></button>
