@@ -215,15 +215,21 @@ CSS_STYLES = """
       opacity: 0.7;
     }
 
-    /* Sticky Top Resource Panel */
+    /* Sticky Top Resource Panel -- position:relative so z-index actually
+       applies (it's a no-op on a static element); kept below
+       .session-sidebar's z-index (40) as a fail-safe on top of the
+       toggleResourcePanel()/toggleSessionSidebar() mutual-exclusion on
+       mobile, so a state-sync slip can't put the graph above the fixed,
+       full-height sidebar again. */
     .top-resource-panel {
       display: none;
+      position: relative;
       background: var(--bg-card);
       border-bottom: 1px solid var(--border-color);
       box-shadow: 0 4px 16px rgba(0,0,0,0.08);
       padding: 12px 20px;
       animation: panelSlide 0.2s ease-out;
-      z-index: 50;
+      z-index: 10;
     }
     .top-resource-panel.open {
       display: block;
@@ -259,20 +265,29 @@ CSS_STYLES = """
       align-items: center;
       margin-bottom: 6px;
       font-size: 0.78rem;
+      flex-wrap: wrap;
+      row-gap: 2px;
     }
     .chart-title {
       font-weight: 700;
       color: var(--text-bold);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .chart-legend {
       display: flex;
       gap: 8px;
       font-size: 0.73rem;
     }
+    /* Each legend entry never breaks mid-word (was wrapping "애드온" itself
+       onto two lines on narrow mobile screens) -- if the pair doesn't fit,
+       .chart-top's flex-wrap above lets the whole legend drop to its own
+       line instead of any single item breaking apart. */
     .lg-item {
       display: flex;
       align-items: center;
       gap: 3px;
+      white-space: nowrap;
     }
     .lg-purple { color: #c084fc; }
     .lg-blue { color: var(--accent-blue); }
@@ -1032,135 +1047,215 @@ CSS_STYLES = """
       color: #6ee7b7;
       font-size: 0.80rem;
     }
-    /* Terminal Console Window Box (Real-time Live Operation Stream) */
+    /* Reasoning/tool-call timeline -- deliberately NOT a boxed card. It used
+       to be a dark "terminal console" panel nested inside .bubble (so the
+       reasoning log was doubly confined: the dark box, inside the bubble
+       card around it). Now it sits outside .bubble entirely (see
+       buildBotBubbleDOM()) as a plain, open-flowing block using the same
+       page background and theme-aware text colors as everything else --
+       closer to how Antigravity's own desktop app shows its action
+       timeline. */
     .term-box {
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      margin-bottom: 12px;
-      overflow: hidden;
-      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+      margin-bottom: 10px;
     }
     .term-header {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #161b22;
-      padding: 5px 10px;
-      border-bottom: 1px solid #30363d;
-      font-size: 0.70rem;
-      color: #8b949e;
-      font-family: 'Fira Code', Consolas, monospace;
-      user-select: none;
-    }
-    .term-header-left {
-      display: flex;
       align-items: center;
       gap: 8px;
-      min-width: 0;
-    }
-    .term-header-right {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      user-select: none;
     }
     .term-mode-tag {
       font-weight: 700;
       font-size: 0.68rem;
       white-space: nowrap;
+      flex-shrink: 0;
     }
-    .term-title {
+    /* The timeline's master collapse toggle -- plain text, not a pill, so it
+       reads as a line in the flow ("Worked for Ns") rather than a status
+       badge. Ticks while live (see createBotStreamMessage's liveTimer),
+       freezes to a duration on finish(), and always carries a trailing
+       chevron (kept in sync by setTermBadgeText()/toggleTermBody() in
+       core/ui/scripts.py rather than baked into textContent, since
+       textContent assignment would otherwise wipe out a nested element). */
+    .term-badge {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
       font-weight: 600;
-      color: #c9d1d9;
-      font-size: 0.72rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
-    /* Icon-only copy button for the reasoning log itself -- term-box always
-       renders in this fixed dark console palette regardless of app theme, so
-       (unlike .icon-btn-sm elsewhere) this doesn't use the themed CSS vars. */
+    .term-badge:hover { color: var(--text-main); }
+    .term-badge.live { color: var(--accent-green); }
     .term-copy-btn {
-      width: 18px;
-      height: 18px;
+      width: 20px;
+      height: 20px;
       border-radius: 5px;
-      border: 1px solid #30363d;
+      border: 1px solid var(--border-color);
       background: transparent;
-      color: #8b949e;
+      color: var(--text-dim);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       flex-shrink: 0;
+      margin-left: auto;
       transition: all 0.15s ease;
     }
     .term-copy-btn .icon { width: 11px; height: 11px; }
-    .term-copy-btn:hover { color: #c9d1d9; border-color: #8b949e; background: rgba(255, 255, 255, 0.06); }
-    .term-copy-btn.copied { color: #3fb950; border-color: #3fb950; background: rgba(35, 134, 54, 0.2); }
-    .term-badge {
-      font-size: 0.65rem;
-      font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 10px;
-      letter-spacing: 0.5px;
-    }
-    .term-badge.live {
-      background: rgba(35, 134, 54, 0.2);
-      color: #3fb950;
-      border: 1px solid rgba(63, 185, 80, 0.3);
-      animation: pulseLive 1.2s infinite ease-in-out;
-    }
-    .term-badge.done {
-      background: rgba(110, 118, 129, 0.15);
-      color: #8b949e;
-      border: 1px solid #30363d;
-    }
+    .term-copy-btn:hover { color: var(--text-main); border-color: var(--text-muted); background: var(--bg-card-hover); }
+    .term-copy-btn.copied { color: var(--accent-green); border-color: var(--accent-green); }
     .term-body {
-      padding: 8px 12px;
-      max-height: 180px;
-      overflow-y: auto;
-      overflow-x: auto;
-      font-family: 'Fira Code', Consolas, Monaco, monospace;
-      font-size: 0.72rem;
-      line-height: 1.4;
-      color: #c9d1d9;
-      background: #0d1117;
+      margin-top: 4px;
+      font-size: 0.82rem;
+      line-height: 1.5;
+      color: var(--text-muted);
     }
-    .term-body::-webkit-scrollbar {
-      width: 5px;
-      height: 5px;
-    }
-    .term-body::-webkit-scrollbar-thumb {
-      background: #30363d;
-      border-radius: 3px;
-    }
-    /* Terminal-style lines don't wrap -- long tool-call args/commands scroll
-       horizontally in .term-body instead, same as a real terminal. width:
-       max-content lets a line grow past the box so overflow-x actually
-       triggers; min-width:100% keeps short lines filling the width. */
     .term-line {
       display: flex;
       gap: 6px;
       margin-bottom: 2px;
-      width: max-content;
-      min-width: 100%;
+      flex-wrap: wrap;
     }
     .term-time {
-      color: #6e7681;
+      color: var(--text-dim);
       flex-shrink: 0;
-      font-size: 0.68rem;
+      font-size: 0.75rem;
       white-space: nowrap;
     }
-    .term-text {
-      white-space: pre;
+    .term-text { white-space: pre-wrap; }
+    .term-text.init { color: var(--accent-blue); font-weight: 600; }
+    .term-text.think { color: var(--accent-purple); font-style: italic; }
+    .term-text.tool { color: var(--accent-blue); }
+    .term-text.file { color: var(--accent-green); }
+    .term-text.cmd { color: var(--accent-yellow); }
+    .term-text.done { color: var(--accent-green); font-weight: 600; }
+    .term-text.error { color: var(--accent-red); }
+    .diff-add { color: var(--accent-green); }
+    .diff-del { color: var(--accent-red); }
+
+    /* Grouped, expandable reasoning timeline (createReasoningTimeline() in
+       core/ui/scripts.py). One .step-row per thinking block / grouped
+       explore-search streak / standalone tool call; a .step-row-header click
+       toggles its own .expanded class (see toggleStepRow()), independent of
+       every other row's state. Chevron sits at the END of the row (matches
+       the reference UI), driven purely by CSS off .expanded -- see the
+       .chevron rule below. */
+    .step-row { margin: 3px 0; }
+    .step-row-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 1px 0;
+      cursor: default;
     }
-    .term-text.init { color: #58a6ff; font-weight: 600; }
-    .term-text.think { color: #d2a8ff; font-style: italic; }
-    .term-text.tool { color: #79c0ff; }
-    .term-text.file { color: #56d364; }
-    .term-text.cmd { color: #e3b341; }
-    .term-text.done { color: #3fb950; font-weight: 600; }
-    .term-text.error { color: #f85149; }
-    .diff-add { color: #3fb950; }
-    .diff-del { color: #f85149; }
+    .step-row-header[onclick] { cursor: pointer; }
+    .step-row-header[onclick]:hover .step-verb,
+    .step-row-header[onclick]:hover .step-label { color: var(--text-main); }
+    .chevron {
+      display: inline-block;
+      width: 0.9em;
+      flex-shrink: 0;
+      color: var(--text-dim);
+      transition: transform 0.15s ease;
+      order: 99; /* always last, regardless of source order */
+    }
+    .step-row.expanded > .step-row-header > .chevron,
+    .step-child.expanded > .step-row-header > .chevron {
+      transform: rotate(90deg);
+    }
+    .step-icon { flex-shrink: 0; }
+    .step-verb { color: var(--text-muted); flex-shrink: 0; }
+    .step-target { color: var(--text-main); }
+    .step-target code, .step-target .mono {
+      font-family: 'Fira Code', Consolas, monospace;
+      font-size: 0.95em;
+    }
+    .step-stat { color: var(--text-dim); flex-shrink: 0; margin-left: 4px; }
+    .step-label { color: var(--text-main); }
+    .think-row > .step-row-header .step-label { color: var(--accent-purple); }
+    .group-row > .step-row-header .step-label { color: var(--text-muted); }
+    .group-row > .step-row-header .step-label strong { color: var(--text-main); }
+    /* Detail body (diff / command output / search or web-search result, or
+       a call_mcp_tool's Tool arguments/Tool Output -- see .tool-io-* below)
+       -- collapsed by default, wraps instead of the terse rows' inline flow
+       since this content can run long, capped so one huge command output
+       can't blow out the whole message. */
+    .step-detail {
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 4px 0 6px 1.6em;
+      padding: 8px 10px;
+      background: var(--bg-card);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 0.85em;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .step-row.expanded > .step-detail,
+    .step-child.expanded > .step-detail {
+      display: block;
+    }
+    /* MCP tool calls (call_mcp_tool) show labeled "Tool arguments"/"Tool
+       Output" JSON blocks instead of the generic .step-detail text -- see
+       toolIoDetailHTML() in core/ui/scripts.py. */
+    .tool-io-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.75em;
+      font-weight: 600;
+      color: var(--text-dim);
+      margin: 6px 0 3px;
+    }
+    .tool-io-label:first-child { margin-top: 0; }
+    /* .tool-io-copy-btn layers onto .icon-btn-sm (sizing/layout) -- shrunk to
+       fit inline in the label row instead of the 22px chat-bubble size. */
+    .tool-io-copy-btn.icon-btn-sm { width: 18px; height: 18px; }
+    .tool-io-copy-btn.icon-btn-sm .icon { width: 11px; height: 11px; }
+    .tool-io-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: 'Fira Code', Consolas, monospace;
+      font-size: 0.82em;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text-main);
+    }
+    /* JSON syntax highlighting for .tool-io-block content -- see
+       highlightJSON()/jsonOrPlainHTML() in core/ui/scripts.py. */
+    .json-key { color: var(--accent-blue); }
+    .json-string { color: var(--accent-green); }
+    .json-number { color: var(--accent-yellow); }
+    .json-boolean { color: var(--accent-purple); font-weight: 600; }
+    .json-null { color: var(--text-dim); font-style: italic; }
+    /* .step-detail's own card background/padding would double up with
+       .tool-io-block's -- strip it here and let the block(s) carry it. */
+    .step-detail.tool-io {
+      background: none;
+      padding: 0;
+    }
+    /* Group children (grouped explore/search streak) -- indented under the
+       group's own header, hidden until the group row itself is expanded. */
+    .step-children {
+      display: none;
+      margin-left: 1.6em;
+      margin-top: 2px;
+    }
+    .group-row.expanded > .step-children { display: block; }
+    .step-child { margin: 2px 0; }
+    .step-child > .step-row-header { font-size: 0.97em; }
 
     /* Tables */
     .table-wrapper {
@@ -1313,6 +1408,22 @@ CSS_STYLES = """
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+    /* Mode/model/agent pickers (composer-toolbar-left) are 3 nowrap buttons
+       with no shrink -- on a narrow phone their combined width can exceed
+       the composer, and with no wrap/scroll handling the last one (agent)
+       just overflowed past the screen edge. Scroll horizontally instead of
+       clipping or pushing mic/send off -- those stay pinned via
+       flex-shrink:0 below. */
+    @media (max-width: 768px) {
+      .composer-toolbar-left {
+        overflow-x: auto;
+        flex-shrink: 1;
+        min-width: 0;
+        scrollbar-width: none;
+      }
+      .composer-toolbar-left::-webkit-scrollbar { display: none; }
+      .composer-toolbar-right { flex-shrink: 0; }
     }
     .icon-sm { font-size: 12px; }
     .icon-dim { color: var(--text-dim); }
@@ -1947,6 +2058,8 @@ CSS_STYLES = """
       border-radius: 14px;
       padding: 22px 24px;
       width: min(420px, 90vw);
+      max-height: 82vh;
+      overflow-y: auto;
       box-shadow: 0 8px 28px rgba(0,0,0,0.4);
     }
     .help-box-top {
@@ -1984,4 +2097,44 @@ CSS_STYLES = """
       font-size: 0.85rem;
     }
     .help-section a:hover { text-decoration: underline; }
+
+    /* Skill list info button (help-skills-list) -- description is often
+       several sentences long (e.g. HA best-practices skill), too long to
+       inline in the list item, so it's shown on demand in .info-popover
+       instead of always visible. */
+    .skill-info-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      margin-left: 4px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      vertical-align: -3px;
+    }
+    .skill-info-btn svg { width: 100%; height: 100%; }
+    .skill-info-btn:hover { color: var(--accent-blue); }
+
+    .info-popover {
+      position: fixed;
+      z-index: 220;
+      max-width: 300px;
+      max-height: 260px;
+      overflow-y: auto;
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: var(--text-main);
+      white-space: pre-line;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      display: none;
+    }
+    .info-popover.open { display: block; }
 """.strip()

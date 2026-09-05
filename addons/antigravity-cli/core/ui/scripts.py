@@ -113,6 +113,12 @@ function showToast(text) {
       ).join('');
     }
 
+    // Populated by loadHelpSkillsAndHooks(), read by toggleSkillInfo() --
+    // descriptions can run several sentences (e.g. HA best-practices skill),
+    // so they're shown in a popover on click instead of inline in the list.
+    let helpSkillsData = [];
+    const ICON_INFO_SM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+
     async function loadHelpSkillsAndHooks() {
       const skillsEl = document.getElementById('help-skills-list');
       const hooksEl = document.getElementById('help-hooks-list');
@@ -120,9 +126,10 @@ function showToast(text) {
         const res = await fetch('api/skills');
         const data = await res.json();
         const skills = data.skills || [];
+        helpSkillsData = skills;
         if (skillsEl) {
           skillsEl.innerHTML = skills.length
-            ? skills.map(s => `<li><span class="mono">${s.name}</span>${s.description ? ` — ${s.description}` : ''}</li>`).join('')
+            ? skills.map((s, i) => `<li><span class="mono">${s.name}</span>${s.description ? ` <button type="button" class="skill-info-btn" data-skill-index="${i}" title="설명 보기">${ICON_INFO_SM}</button>` : ''}</li>`).join('')
             : '<li>등록된 스킬이 없습니다.</li>';
         }
       } catch (e) {
@@ -151,7 +158,49 @@ function showToast(text) {
         renderHelpMcpStatus();
         loadHelpSkillsAndHooks();
       }
+      if (!overlay.classList.contains('open')) closeSkillInfoPopover();
     }
+
+    function closeSkillInfoPopover() {
+      const popover = document.getElementById('skill-info-popover');
+      if (popover) { popover.classList.remove('open'); popover._forBtn = null; }
+    }
+
+    function toggleSkillInfo(btn) {
+      const skill = helpSkillsData[parseInt(btn.getAttribute('data-skill-index'), 10)];
+      if (!skill) return;
+      let popover = document.getElementById('skill-info-popover');
+      if (!popover) {
+        popover = document.createElement('div');
+        popover.id = 'skill-info-popover';
+        popover.className = 'info-popover';
+        document.body.appendChild(popover);
+      }
+      const wasOpenForThis = popover.classList.contains('open') && popover._forBtn === btn;
+      closeSkillInfoPopover();
+      if (wasOpenForThis) return;
+      popover.textContent = skill.description || '(설명 없음)';
+      popover._forBtn = btn;
+      popover.classList.add('open');
+      const rect = btn.getBoundingClientRect();
+      const popRect = popover.getBoundingClientRect();
+      let left = Math.min(rect.left, window.innerWidth - popRect.width - 12);
+      left = Math.max(12, left);
+      let top = rect.bottom + 6;
+      if (top + popRect.height > window.innerHeight - 12) top = Math.max(12, rect.top - popRect.height - 6);
+      popover.style.left = left + 'px';
+      popover.style.top = top + 'px';
+    }
+
+    // Delegated: works for skill-info buttons re-rendered by loadHelpSkillsAndHooks().
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.skill-info-btn');
+      if (btn) { e.stopPropagation(); toggleSkillInfo(btn); return; }
+      const popover = document.getElementById('skill-info-popover');
+      if (popover && popover.classList.contains('open') && !popover.contains(e.target)) {
+        closeSkillInfoPopover();
+      }
+    });
 
     function getCurrentTimeStr() {
       const now = new Date();
@@ -291,22 +340,20 @@ function showToast(text) {
       row.className = 'msg-row bot';
       row.innerHTML = `
         <div class="bubble-wrap">
-          <div class="bubble">
-            <!-- Reasoning/tool-call log -- header always visible (carries the
-                 mode tag), body only shown once there's an actual line to show. -->
-            <div class="term-box">
-              <div class="term-header">
-                <div class="term-header-left">
-                  <span class="term-mode-tag ${modeClass}">${modeText}</span>
-                  <span class="term-title">💻 Antigravity Terminal Live</span>
-                </div>
-                <div class="term-header-right">
-                  <button class="term-copy-btn" onclick="copyReasoningLog(this)" title="추론 로그 복사"><span class="icon">${ICON_COPY_SVG}</span></button>
-                  <span class="term-badge live">● LIVE</span>
-                </div>
-              </div>
-              <div class="term-body" style="display: none;"></div>
+          <!-- Reasoning/tool-call timeline -- a plain, open-flowing block
+               OUTSIDE .bubble on purpose (previously nested inside it, which
+               doubly boxed the log: the dark terminal panel *and* the bubble
+               card around that). header always visible (carries the mode
+               tag), body only shown once there's an actual line to show. -->
+          <div class="term-box">
+            <div class="term-header">
+              <span class="term-mode-tag ${modeClass}">${modeText}</span>
+              <button class="term-badge live">● LIVE</button>
+              <button class="term-copy-btn" onclick="copyReasoningLog(this)" title="추론 로그 복사"><span class="icon">${ICON_COPY_SVG}</span></button>
             </div>
+            <div class="term-body" style="display: none;"></div>
+          </div>
+          <div class="bubble">
             <div class="bubble-header">
               <div class="view-toggle-wrap">
                 <button class="view-tab active" onclick="switchMsgView(this, 'parsed')" title="렌더링 보기"><span class="icon">${ICON_EYE_SVG}</span></button>
@@ -406,6 +453,428 @@ function showToast(text) {
       return lines.join('\\n');
     }
 
+    // Mirrors _diff_stat() in core/streamer.py.
+    function diffStat(oldText, newText) {
+      const added = newText ? String(newText).split('\\n').length : 0;
+      const removed = oldText ? String(oldText).split('\\n').length : 0;
+      return `+${added} -${removed}`;
+    }
+
+    // Mirrors _result_stat() in core/streamer.py -- a short badge summarizing
+    // a tool's GENERIC follow-up result (see buildStepsFromResponses()).
+    function resultStat(tname, content) {
+      const text = content || '';
+      if (tname === 'find_by_name') {
+        const m = /Found (\\d+) results?/.exec(text);
+        if (m) return `${m[1]}개 결과`;
+      } else if (tname === 'grep_search') {
+        const m = /Found (\\d+) (?:matches|results?)/i.exec(text);
+        if (m) return `${m[1]}개 결과`;
+      } else if (tname === 'run_command') {
+        const lines = text.trim().split('\\n').filter(Boolean);
+        if (lines.length) return `${lines.length}줄 출력`;
+      }
+      return '';
+    }
+
+    const DETAIL_CAP = 6000; // mirrors _cap_detail() in core/streamer.py
+    function capDetail(text) {
+      if (text && text.length > DETAIL_CAP) return text.slice(0, DETAIL_CAP) + '\\n...(생략)';
+      return text || '';
+    }
+
+    // Mirrors _classify_tool_call() in core/streamer.py -- same tool name ->
+    // display shape mapping, so a restored tool_calls array (via
+    // buildStepsFromResponses()) renders through the identical reasoning-
+    // timeline UI a live SSE reasoning_step would have built.
+    function classifyToolCall(tname, args, desc) {
+      args = args || {};
+      if (tname === 'call_mcp_tool') {
+        const tcalled = agyStr(args.ToolName) || 'mcp';
+        const tcalledDisplay = (typeof tcalled === 'string' && tcalled.includes('/')) ? tcalled.replace('/', ' / ') : tcalled;
+        let targs = args.Arguments || {};
+        // agy sometimes logs Arguments as a JSON-encoded string rather than a
+        // nested object (same shape MCP wire args take) -- without this, a
+        // real tool call with actual parameters (e.g. ha_search's
+        // domain_filter) silently loses its whole "Tool arguments" block.
+        if (typeof targs === 'string') { try { targs = JSON.parse(targs); } catch (e) {} }
+        const argsJson = (targs && typeof targs === 'object' && Object.keys(targs).length) ? JSON.stringify(targs, null, 2) : '';
+        return { group: 'ha', verb: 'MCP Tool:', target: tcalledDisplay, stat: '', detail: '', args_json: argsJson, needsResult: true };
+      }
+      if (tname === 'view_file') {
+        const fpath = agyStr(args.AbsolutePath) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        return { group: 'explore', explore_kind: 'file', verb: '확인', target: fname + (desc ? ` (${desc})` : ''), stat: '', detail: '', needsResult: true };
+      }
+      if (tname === 'run_command') {
+        const cmdStr = agyStr(args.CommandLine) || '';
+        return { group: 'command', verb: '명령어', target: cmdStr, stat: '', detail: '', needsResult: true };
+      }
+      if (tname === 'search_web') {
+        const q = agyStr(args.query) || '';
+        return { group: 'web', explore_kind: 'search', verb: '웹 검색', target: q, stat: '', detail: '', needsResult: true };
+      }
+      if (tname === 'find_by_name') {
+        const pattern = agyStr(args.Pattern) || '';
+        return { group: 'explore', explore_kind: 'search', verb: '파일명 검색', target: pattern, stat: '', detail: '', needsResult: true };
+      }
+      if (tname === 'grep_search') {
+        const query = agyStr(args.Query) || desc;
+        return { group: 'explore', explore_kind: 'search', verb: '검색', target: query, stat: '', detail: '', needsResult: true };
+      }
+      if (tname === 'replace_file_content') {
+        const fpath = agyStr(args.TargetFile) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        const oldC = agyStr(args.TargetContent) || '';
+        const newC = agyStr(args.ReplacementContent) || '';
+        const instr = agyStr(args.Instruction) || desc;
+        return { group: 'edit', verb: '수정', target: fname + (instr ? ` (${instr})` : ''), stat: diffStat(oldC, newC), detail: diffLogLines(oldC, newC), needsResult: false };
+      }
+      if (tname === 'write_to_file') {
+        const fpath = agyStr(args.TargetFile) || '';
+        const fname = fpath ? fpath.split(/[\\\\/]/).pop() : 'file';
+        const newC = agyStr(args.CodeContent) || '';
+        const overwrite = agyStr(args.Overwrite) === 'true';
+        const added = newC ? String(newC).split('\\n').length : 0;
+        const stat = overwrite ? `+${added} (덮어씀)` : `+${added}`;
+        return { group: 'edit', verb: overwrite ? '덮어쓰기' : '생성', target: fname + (desc ? ` (${desc})` : ''), stat, detail: diffLogLines('', newC), needsResult: false };
+      }
+      return { group: 'other', verb: '도구 실행', target: `${tname} ${desc}`.trim(), stat: '', detail: '', needsResult: true };
+    }
+
+    // Mirrors tail_transcript()'s buffering loop in core/streamer.py -- turns
+    // a restored turn's raw response steps (thinking/tool_calls/content, in
+    // order, GENERIC result steps included) into the same reasoning-step
+    // shape a live SSE stream sends, so a restored conversation's timeline
+    // renders exactly like it did live (see createReasoningTimeline()). A
+    // GENERIC step's content right after a tool call is agy's own result for
+    // that call -- fold it in instead of showing it as a separate line.
+    function buildStepsFromResponses(responses) {
+      const steps = [];
+      let pending = null;
+      let prevCreated = null;
+
+      function flush() {
+        if (pending) { steps.push(pending); pending = null; }
+      }
+
+      responses.forEach(step => {
+        const stype = step.type || '';
+        const created = step.created_at ? new Date(step.created_at) : null;
+        let durationSec = null;
+        if (created && prevCreated) durationSec = Math.max(0, Math.round((created - prevCreated) / 1000));
+        if (created) prevCreated = created;
+
+        const tcs = Array.isArray(step.tool_calls) ? step.tool_calls : [];
+        const thinking = (step.thinking || '').trim();
+        const content = step.content || '';
+
+        if (stype === 'GENERIC' && content && tcs.length === 0 && pending) {
+          pending.detail = capDetail(content);
+          if (!pending.stat) pending.stat = resultStat(pending.tname, content);
+          flush();
+          return;
+        }
+
+        flush();
+
+        if (thinking) {
+          const clean = thinking.replace(/\\n\\n/g, ' · ').replace(/\\n/g, ' ');
+          steps.push({ kind: 'thinking', text: clean, duration_sec: durationSec });
+        }
+
+        tcs.forEach(tc => {
+          const tname = tc.name || 'tool';
+          let args = tc.args || {};
+          if (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) {} }
+          if (!args || typeof args !== 'object') args = {};
+          const summary = agyStr(tc.toolSummary || args.toolSummary || '') || '';
+          const action = agyStr(tc.toolAction || args.toolAction || '') || '';
+          const desc = summary || action || '';
+
+          const cls = classifyToolCall(tname, args, desc);
+          const needsResult = cls.needsResult;
+          delete cls.needsResult;
+          const row = Object.assign({ kind: 'tool', tname, duration_sec: durationSec }, cls);
+          if (needsResult) {
+            flush();
+            pending = row;
+          } else {
+            steps.push(row);
+          }
+        });
+      });
+
+      flush();
+      return steps;
+    }
+
+    // Turns a raw stat like "+18 -0" into HTML with the +N/-M counts
+    // colorized the same way a diff body's added/removed lines are.
+    function stepStatHTML(stat) {
+      if (!stat) return '';
+      const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      let html = esc(stat);
+      html = html.replace(/\\+(\\d+)/, '<span class="diff-add">+$1</span>');
+      html = html.replace(/-(\\d+)/, '<span class="diff-del">-$1</span>');
+      return `<span class="step-stat">${html}</span>`;
+    }
+
+    function stepDetailHTML(detail, isDiff) {
+      if (!detail) return '';
+      const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      let body;
+      if (isDiff) {
+        body = String(detail).split('\\n').map(l => {
+          const e = esc(l);
+          if (l.startsWith('+ ')) return `<span class="diff-add">${e}</span>`;
+          if (l.startsWith('- ')) return `<span class="diff-del">${e}</span>`;
+          return e;
+        }).join('\\n');
+      } else {
+        body = esc(detail);
+      }
+      return `<div class="step-detail">${body}</div>`;
+    }
+
+    // MCP tool calls (call_mcp_tool) show labeled "Tool arguments"/"Tool
+    // Output" JSON blocks instead of the generic diff/text stepDetailHTML --
+    // matches Antigravity's own reasoning-timeline UI. "Tool Output" only
+    // appears once/if a matching GENERIC result step arrives (see
+    // buildStepsFromResponses()/_classify_tool_call's needs_result) --
+    // unconfirmed whether agy's transcript actually logs one for MCP calls
+    // the way it does for its own native tools, so this degrades to just
+    // showing arguments if row.detail never gets filled in.
+    // Lightweight regex-based JSON syntax highlighter (no library -- the
+    // artifact CSP here only allows scripts from a small CDN allowlist, and
+    // this is small enough not to need one). Input must already be escaped
+    // HTML-safe text; matches keys/strings/numbers/booleans/null and wraps
+    // each in a colored span (see .json-* in core/ui/styles.py).
+    function highlightJSON(escapedJsonText) {
+      return escapedJsonText.replace(
+        /("(\\\\u[a-fA-F0-9]{4}|\\\\.|[^\\\\"])*"(\\s*:)?|\\b(?:true|false)\\b|\\bnull\\b|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)/g,
+        (match) => {
+          let cls = 'json-number';
+          if (/^"/.test(match)) {
+            cls = /:$/.test(match) ? 'json-key' : 'json-string';
+          } else if (/true|false/.test(match)) {
+            cls = 'json-boolean';
+          } else if (/null/.test(match)) {
+            cls = 'json-null';
+          }
+          return `<span class="${cls}">${match}</span>`;
+        }
+      );
+    }
+
+    // Renders a JSON string as a highlighted block if it parses as JSON,
+    // else falls back to plain escaped text -- Tool arguments is always
+    // valid JSON (built server/client-side from a real object), but Tool
+    // Output is agy's raw GENERIC result text, which for find_by_name/
+    // run_command/search_web is plain prose/stdout, not JSON. A real MCP
+    // tool's result (ha_search etc.) also isn't pure JSON -- agy prefixes it
+    // with plain "Created At: .../Completed At: ..." lines before the actual
+    // JSON payload, which fails a whole-string JSON.parse -- so past that
+    // first failure, split off everything before the first {/[ and retry
+    // parsing just the tail; the prefix still renders, just unhighlighted.
+    function jsonOrPlainHTML(text) {
+      const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const tryParse = (s) => {
+        try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return null; }
+      };
+      let pretty = tryParse(text);
+      if (pretty !== null) return highlightJSON(esc(pretty));
+      const m = /[{[]/.exec(text);
+      if (m) {
+        pretty = tryParse(text.slice(m.index));
+        if (pretty !== null) return esc(text.slice(0, m.index)) + highlightJSON(esc(pretty));
+      }
+      return esc(text);
+    }
+
+    // HTML-attribute-safe escape for stashing a block's raw text in
+    // data-raw (copyToolIoBlock reads it back) -- distinct from esc()'s
+    // element-content escaping, which doesn't touch quotes.
+    function escAttr(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function copyToolIoBlock(btn) {
+      const raw = btn.getAttribute('data-raw') || '';
+      if (!raw) return;
+      navigator.clipboard.writeText(raw).then(() => flashCopied(btn)).catch(() => {});
+    }
+
+    function toolIoLabelHTML(label, raw) {
+      return `<div class="tool-io-label">${label}<button class="icon-btn-sm tool-io-copy-btn" data-raw="${escAttr(raw)}" onclick="copyToolIoBlock(this)" title="복사"><span class="icon">${ICON_COPY_SVG}</span></button></div>`;
+    }
+
+    function toolIoDetailHTML(argsJson, detail) {
+      let html = '';
+      if (argsJson) {
+        html += toolIoLabelHTML('Tool arguments', argsJson) + `<div class="tool-io-block">${jsonOrPlainHTML(argsJson)}</div>`;
+      }
+      if (detail) {
+        html += toolIoLabelHTML('Tool Output', detail) + `<div class="tool-io-block">${jsonOrPlainHTML(detail)}</div>`;
+      }
+      return html ? `<div class="step-detail tool-io">${html}</div>` : '';
+    }
+
+    function stepIconFor(row) {
+      if (row.kind === 'thinking') return '💭';
+      if (row.group === 'web') return '🌐';
+      if (row.group === 'explore') return row.explore_kind === 'file' ? '📄' : '🔍';
+      if (row.group === 'edit') return row.verb === '생성' ? '📝' : '✏️';
+      if (row.group === 'command') return '⚙️';
+      if (row.group === 'ha') return '🔧';
+      return '🔧';
+    }
+
+    // Returns HTML (not plain text) so the counts can be bolded, matching
+    // the reference UI's "Explored **2** files, **3** searches".
+    // Filenames/paths render in monospace (matches the reference UI's
+    // "Analyzed {} ha_search.json" styling) -- anything else (a search
+    // query, a command line, an MCP tool name) stays plain text.
+    function stepTargetHTML(row) {
+      const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const isFileLike = row.group === 'edit' || (row.group === 'explore' && row.explore_kind === 'file');
+      return isFileLike ? `<code>${esc(row.target)}</code>` : esc(row.target);
+    }
+
+    function stepGroupSummaryHTML(fileCount, searchCount) {
+      const parts = [];
+      if (fileCount > 0) parts.push(`파일 <strong>${fileCount}</strong>개 탐색`);
+      if (searchCount > 0) parts.push(`검색 <strong>${searchCount}</strong>회`);
+      return parts.length ? parts.join(', ') : '탐색';
+    }
+
+    // Expand/collapse one reasoning-timeline row (thinking / group / a
+    // group's child / a standalone tool row) -- delegated onclick target for
+    // every .step-row-header createReasoningTimeline() builds.
+    function toggleStepRow(headerEl) {
+      const row = headerEl.closest('.step-row, .step-child');
+      if (row) row.classList.toggle('expanded');
+    }
+
+    // termBadge (the "Worked for Ns"/"⏳ Ns 작업 중" master collapse toggle)
+    // always carries a trailing chevron reflecting termBody's open/closed
+    // state. Kept as a plain trailing character in textContent (not a nested
+    // <span>) so setTermBadgeText() can be called freely without worrying
+    // about clobbering a child element on every re-render.
+    function setTermBadgeText(termBadge, termBody, baseText) {
+      if (!termBadge) return;
+      termBadge.dataset.baseText = baseText;
+      const isOpen = termBody && termBody.style.display !== 'none';
+      termBadge.textContent = `${baseText} ${isOpen ? '▾' : '▸'}`;
+    }
+    function toggleTermBody(termBadge, termBody) {
+      if (!termBody) return;
+      termBody.style.display = (termBody.style.display === 'none') ? 'block' : 'none';
+      setTermBadgeText(termBadge, termBody, (termBadge && termBadge.dataset.baseText) || '');
+    }
+
+    // Grouped, expandable reasoning timeline -- the Antigravity-IDE-style
+    // "Explored N files, M searches" / "Thought for Xs" / "Edited file +N -M"
+    // log. addStep() is called once per step in order, live (via the SSE
+    // reasoning_step event, see createBotStreamMessage) or all at once (a
+    // restored turn's buildStepsFromResponses() output, see
+    // buildRestoredBotRow) -- both paths produce the identical timeline.
+    // Consecutive explore/web tool steps merge into one collapsible group;
+    // anything else (thinking, edit, command, ha tool call) is its own
+    // top-level row and closes whatever group was open.
+    function createReasoningTimeline(termBody) {
+      let openGroup = null; // { el, fileCount, searchCount }
+      let seq = 0;
+      const MERGEABLE = { explore: true, web: true };
+
+      function closeGroup() { openGroup = null; }
+
+      function childRowHTML(row, key) {
+        const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const hasDetail = !!row.detail || !!row.args_json;
+        return `<div class="step-child" data-key="${key}">
+          <div class="step-row-header"${hasDetail ? ' onclick="toggleStepRow(this)"' : ''}>
+            <span class="chevron">${hasDetail ? '▸' : ''}</span>
+            <span class="step-icon">${stepIconFor(row)}</span>
+            <span class="step-verb">${esc(row.verb)}</span>
+            <span class="step-target">${stepTargetHTML(row)}</span>
+            ${stepStatHTML(row.stat)}
+          </div>
+          ${row.group === 'ha' ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
+        </div>`;
+      }
+
+      function standaloneRowHTML(row, key) {
+        const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const hasDetail = !!row.detail || !!row.args_json;
+        return `<div class="step-row tool-row" data-key="${key}">
+          <div class="step-row-header"${hasDetail ? ' onclick="toggleStepRow(this)"' : ''}>
+            <span class="chevron">${hasDetail ? '▸' : ''}</span>
+            <span class="step-icon">${stepIconFor(row)}</span>
+            <span class="step-verb">${esc(row.verb)}</span>
+            <span class="step-target">${stepTargetHTML(row)}</span>
+            ${stepStatHTML(row.stat)}
+          </div>
+          ${row.group === 'ha' ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
+        </div>`;
+      }
+
+      function thinkingRowHTML(row, key) {
+        const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const durText = (row.duration_sec != null && row.duration_sec > 0) ? `${row.duration_sec}초 동안 생각함` : '생각함';
+        return `<div class="step-row think-row" data-key="${key}">
+          <div class="step-row-header" onclick="toggleStepRow(this)">
+            <span class="chevron">▸</span>
+            <span class="step-icon">💭</span>
+            <span class="step-label">${durText}</span>
+          </div>
+          <div class="step-detail">${esc(row.text)}</div>
+        </div>`;
+      }
+
+      // Starts expanded (unlike a thinking block or an individual tool's
+      // detail, which start collapsed) -- matches the reference UI, where
+      // an "Explored N files, M searches" group shows its rows right away
+      // and only the leaf-level detail needs a click.
+      function newGroupHTML(key) {
+        return `<div class="step-row group-row expanded" data-key="${key}">
+          <div class="step-row-header" onclick="toggleStepRow(this)">
+            <span class="chevron">▸</span>
+            <span class="step-icon">📂</span>
+            <span class="step-label group-summary"></span>
+          </div>
+          <div class="step-children"></div>
+        </div>`;
+      }
+
+      return {
+        addStep: function(row) {
+          seq++;
+          const key = `s${seq}`;
+          if (row.kind === 'thinking') {
+            closeGroup();
+            termBody.insertAdjacentHTML('beforeend', thinkingRowHTML(row, key));
+            return;
+          }
+          if (MERGEABLE[row.group]) {
+            if (!openGroup) {
+              termBody.insertAdjacentHTML('beforeend', newGroupHTML(`g${seq}`));
+              openGroup = { el: termBody.lastElementChild, fileCount: 0, searchCount: 0 };
+            }
+            if (row.explore_kind === 'file') openGroup.fileCount++;
+            else openGroup.searchCount++;
+            const summaryEl = openGroup.el.querySelector('.group-summary');
+            if (summaryEl) summaryEl.innerHTML = stepGroupSummaryHTML(openGroup.fileCount, openGroup.searchCount);
+            const childrenEl = openGroup.el.querySelector('.step-children');
+            if (childrenEl) childrenEl.insertAdjacentHTML('beforeend', childRowHTML(row, key));
+          } else {
+            closeGroup();
+            termBody.insertAdjacentHTML('beforeend', standaloneRowHTML(row, key));
+          }
+        }
+      };
+    }
+
     function formatToolCallLogStr(tc) {
       const tname = tc.name || 'tool';
       let args = tc.args || {};
@@ -477,13 +946,29 @@ function showToast(text) {
       let answerText = "";
       let finished = false;
       let hasAnswerStarted = false;
+      let hasReasoningStep = false;
+      let userToggledTermBody = false;
+      const timeline = createReasoningTimeline(termBody);
+
+      // termBadge doubles as the reasoning-log's master collapse toggle --
+      // ticks while live, freezes to a duration once done (see finish()),
+      // and a manual click always wins over the auto-collapse-on-done below.
+      if (termBadge) {
+        termBadge.onclick = function() {
+          userToggledTermBody = true;
+          toggleTermBody(termBadge, termBody);
+        };
+      }
 
       const liveTimer = setInterval(() => {
         if (finished) return;
-        const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-        if (elapsed >= 0.5 && latencyEl) {
-          latencyEl.textContent = `⏳ ${elapsed}초 실시간 처리 중...`;
-          latencyEl.style.display = 'inline';
+        const elapsed = ((performance.now() - startTime) / 1000);
+        if (elapsed >= 0.5) {
+          if (latencyEl) {
+            latencyEl.textContent = `⏳ ${elapsed.toFixed(1)}초 실시간 처리 중...`;
+            latencyEl.style.display = 'inline';
+          }
+          setTermBadgeText(termBadge, termBody, `⏳ ${elapsed.toFixed(0)}초 작업 중`);
         }
       }, 100);
 
@@ -499,6 +984,14 @@ function showToast(text) {
         },
         addTool: function(toolStr) {
           this.addLiveLog(toolStr);
+        },
+        addReasoningStep: function(stepData) {
+          if (!termBody || !stepData) return;
+          hasReasoningStep = true;
+          termBody.style.display = 'block';
+          timeline.addStep(stepData);
+          termBody.scrollTop = termBody.scrollHeight;
+          box.scrollTop = box.scrollHeight;
         },
         appendChunk: function(chunk) {
           if (!hasAnswerStarted) {
@@ -524,11 +1017,19 @@ function showToast(text) {
           if (finished) return;
           finished = true;
           clearInterval(liveTimer);
+          const totalSec = Math.round((performance.now() - startTime) / 1000);
           if (termBadge) {
-            termBadge.textContent = '● COMPLETED';
             termBadge.classList.remove('live');
             termBadge.classList.add('done');
           }
+          // Auto-collapse the reasoning log once the answer is in -- same
+          // "done reasoning -> collapse to a one-line summary" behavior as
+          // Claude's/Antigravity's own thinking UI. A manual click already
+          // wins (userToggledTermBody), so this never fights the user.
+          if (termBody && hasReasoningStep && !userToggledTermBody) {
+            termBody.style.display = 'none';
+          }
+          setTermBadgeText(termBadge, termBody, `🕐 ${totalSec}초 동안 작업함`);
           const latency = ((performance.now() - startTime) / 1000).toFixed(2);
           if (latencyEl) {
             latencyEl.textContent = `⚡ ${latency}초 완료`;
@@ -571,6 +1072,18 @@ function showToast(text) {
       panel.classList.toggle('open', isResourcePanelOpen);
       if (isResourcePanelOpen) {
         renderCharts();
+        // On mobile the session sidebar is a fixed overlay spanning the full
+        // viewport height, including where this panel renders -- having both
+        // open at once looked like the graph floating on top of the menu.
+        // Only one makes sense open at a time on a screen this narrow.
+        if (window.innerWidth <= 768) {
+          const sidebar = document.getElementById('session-sidebar');
+          const overlay = document.getElementById('sidebar-overlay');
+          if (sidebar && sidebar.classList.contains('open')) {
+            sidebar.classList.remove('open');
+            if (overlay) overlay.classList.remove('open');
+          }
+        }
       }
     }
 
@@ -1321,8 +1834,16 @@ function showToast(text) {
       const sidebar = document.getElementById('session-sidebar');
       const overlay = document.getElementById('sidebar-overlay');
       if (window.innerWidth <= 768) {
-        sidebar.classList.toggle('open');
-        overlay.classList.toggle('open');
+        const opening = !sidebar.classList.contains('open');
+        sidebar.classList.toggle('open', opening);
+        overlay.classList.toggle('open', opening);
+        // Same reasoning as toggleResourcePanel()'s mobile guard -- avoid the
+        // resource panel appearing to float above the opened sidebar.
+        if (opening && isResourcePanelOpen) {
+          const panel = document.getElementById('top-resource-panel');
+          if (panel) panel.classList.remove('open');
+          isResourcePanelOpen = false;
+        }
       } else {
         sidebar.classList.toggle('collapsed');
       }
@@ -1712,53 +2233,58 @@ function showToast(text) {
     // progressively. Unlike a live answer, a restored turn never shows a
     // latency badge (there's no real elapsed time to report).
     function buildRestoredBotRow(turn) {
-      let thinkingList = [];
-      let toolCalls = [];
       let finalContent = '';
       let lastTimeStr = '';
+      let firstCreated = null;
+      let lastCreated = null;
 
       turn.responses.forEach(cur => {
         if (cur.created_at) {
           lastTimeStr = new Date(cur.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+          const d = new Date(cur.created_at);
+          if (!firstCreated) firstCreated = d;
+          lastCreated = d;
         }
-        if (cur.thinking && typeof cur.thinking === 'string' && cur.thinking.trim()) {
-          thinkingList.push(cur.thinking.trim());
-        }
-        if (cur.tool_calls && Array.isArray(cur.tool_calls)) {
-          toolCalls = toolCalls.concat(cur.tool_calls);
-        }
-        if (cur.content && typeof cur.content === 'string' && cur.content.trim()) {
+        // PLANNER_RESPONSE's own content is the model's actual final answer --
+        // a GENERIC step's content is a tool's *result* (see
+        // buildStepsFromResponses()), not the answer, so only count this one.
+        if (cur.type === 'PLANNER_RESPONSE' && cur.content && typeof cur.content === 'string' && cur.content.trim()) {
           finalContent = cur.content.trim();
         }
       });
+
+      // Mirrors tail_transcript()'s buffering in core/streamer.py -- turns
+      // the raw response steps into the same reasoning-step shape a live SSE
+      // stream sends, so a restored conversation's timeline (grouped
+      // explore/search, "Thought for Xs", diff stats, expandable tool
+      // results) looks exactly like it did while actually streaming.
+      const steps = buildStepsFromResponses(turn.responses);
 
       const { text: modeText, cls: modeClass } = inferTurnModeBadge(turn);
       const { row, termBody, termBadge, answerContent, rawCode } =
         buildBotBubbleDOM(modeText, modeClass, lastTimeStr);
 
       // A restored turn is always "done" -- never actually live -- regardless
-      // of whether it had any reasoning/tool-call steps to show.
-      termBadge.textContent = '● COMPLETED';
+      // of whether it had any reasoning/tool-call steps to show. Collapsed by
+      // default (unlike a live answer's auto-collapse-on-finish, a restored
+      // one was never expanded in the first place) -- click the badge to see it.
+      let totalSecText = '';
+      if (firstCreated && lastCreated && lastCreated > firstCreated) {
+        totalSecText = `🕐 ${Math.round((lastCreated - firstCreated) / 1000)}초 동안 작업함`;
+      }
       termBadge.classList.remove('live');
       termBadge.classList.add('done');
 
-      if (thinkingList.length > 0 || toolCalls.length > 0) {
-        termBody.style.display = 'block';
-        let logLines = '';
-        // Same formatTermLineHTML() a live stream's addLiveLog() uses, fed the
-        // same-shaped label strings (formatToolCallLogStr mirrors the backend's
-        // tail_transcript() tool-name branching) -- a restored log looks
-        // exactly like it did while it was actually streaming.
-        thinkingList.forEach(th => {
-          logLines += formatTermLineHTML(`💭 [추론] ${th}`, '');
-        });
-        toolCalls.forEach(tc => {
-          logLines += formatTermLineHTML(formatToolCallLogStr(tc), '');
-        });
-        termBody.innerHTML = logLines;
+      if (steps.length > 0) {
+        termBadge.onclick = function() { toggleTermBody(termBadge, termBody); };
+        setTermBadgeText(termBadge, termBody, totalSecText || '● COMPLETED');
+        const timeline = createReasoningTimeline(termBody);
+        steps.forEach(s => timeline.addStep(s));
+      } else {
+        termBadge.textContent = totalSecText || '● COMPLETED';
       }
 
-      const displayAnswer = finalContent || (toolCalls.length > 0 ? '작업이 완료되었습니다.' : '답변이 없습니다.');
+      const displayAnswer = finalContent || (steps.length > 0 ? '작업이 완료되었습니다.' : '답변이 없습니다.');
       answerContent.innerHTML = formatMarkdown(displayAnswer);
       answerContent.setAttribute('data-raw', displayAnswer);
       if (rawCode) rawCode.textContent = displayAnswer;
@@ -2414,6 +2940,8 @@ function showToast(text) {
                 activeStreamId = ev.content;
               } else if (ev.type === 'live_log' || ev.type === 'tool') {
                 streamUI.addLiveLog(ev.content);
+              } else if (ev.type === 'reasoning_step') {
+                streamUI.addReasoningStep(ev.data);
               } else if (ev.type === 'chunk') {
                 streamUI.appendChunk(ev.content);
               } else if (ev.type === 'text') {

@@ -51,10 +51,6 @@ HTML_BODY = f"""
         <span class="stat-dot stat-dot-blue"></span>
         <span id="header-ram">0MB</span>
       </button>
-      <button class="header-stat-pill" onclick="resetTokens()" title="클릭 시 누적 토큰 초기화">
-        <span class="icon icon-amber">{ICON_COINS}</span>
-        <strong id="session-tokens" class="amber-text">0</strong>
-      </button>
       <button class="icon-btn-lg" id="theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 테마 전환"><span class="icon" id="theme-toggle-icon">{ICON_MOON}</span></button>
       <button class="icon-btn-lg" id="help-btn" onclick="toggleHelpPanel()" title="도움말 / 피드백"><span class="icon">{ICON_INFO}</span></button>
     </div>
@@ -111,10 +107,10 @@ HTML_BODY = f"""
       <div class="panel-grid">
         <div class="chart-box">
           <div class="chart-top">
-            <span class="chart-title">⚙️ CPU 사용률 추이 (듀얼)</span>
+            <span class="chart-title">⚙️ CPU</span>
             <div class="chart-legend">
-              <span class="lg-item lg-purple">● 애드온: <strong id="val-addon-cpu">0.0%</strong></span>
-              <span class="lg-item lg-blue">● 시스템 전체: <strong id="val-sys-cpu">0.0%</strong></span>
+              <span class="lg-item lg-purple">● 애드온 <strong id="val-addon-cpu">0.0%</strong></span>
+              <span class="lg-item lg-blue">● 전체 <strong id="val-sys-cpu">0.0%</strong></span>
             </div>
           </div>
           <div class="canvas-holder">
@@ -123,10 +119,10 @@ HTML_BODY = f"""
         </div>
         <div class="chart-box">
           <div class="chart-top">
-            <span class="chart-title">💾 RAM 점유율 추이 (듀얼)</span>
+            <span class="chart-title">💾 RAM</span>
             <div class="chart-legend">
-              <span class="lg-item lg-green">● 애드온: <strong id="val-addon-ram">0MB (0%)</strong></span>
-              <span class="lg-item lg-cyan">● 시스템 전체: <strong id="val-sys-ram">0GB (0%)</strong></span>
+              <span class="lg-item lg-green">● 애드온 <strong id="val-addon-ram">0MB (0%)</strong></span>
+              <span class="lg-item lg-cyan">● 전체 <strong id="val-sys-ram">0GB (0%)</strong></span>
             </div>
           </div>
           <div class="canvas-holder">

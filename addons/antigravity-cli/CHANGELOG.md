@@ -1,3 +1,160 @@
+## 1.1.0-beta.82
+
+### 수정 (Fix) — 매 턴 반복되던 "세션 시작 (N개 도구 로드됨)" 로그 제거
+- Mode 3는 메시지 한 번마다 agy 프로세스를 새로 띄우는 구조라 이 로그가 매 턴 발생했는데, 도구 개수가 사실상 항상 동일해서 정보 가치 없이 반복만 됐음
+- 정상(도구 1개 이상 로드)이면 이 줄 자체를 표시하지 않고, 도구가 **0개**로 로드된 경우(=MCP 연결 실패)에만 "⚠️ 도구가 0개 로드됨 -- MCP 연결 확인 필요" 경고로 표시
+
+## 1.1.0-beta.81
+
+### 수정 (Fix) — CLI 모드 세션 시작 로그 문구 통일
+- 대화 시작 시 뜨는 두 줄("🚀 [Antigravity CLI] 세션 개시(대화 이어가기): '...'" / "🚀 [세션 시작] Antigravity CLI v2.0 (N개 도구 로드됨)")이 서로 다른 어휘("세션 개시" vs "세션 시작")와 다른 괄호 태그 위치로 마치 두 개의 겹치는 "세션 시작" 알림처럼 보이던 문제 수정
+- 실제로는 서로 다른 시점(요청을 넘긴 직후 vs agy가 실제로 준비 완료된 시점)이므로, 첫 줄은 "📨 [Antigravity CLI] 요청 전송..."으로 바꿔 의미를 구분하고, 두 번째 줄만 "🚀 [Antigravity CLI] 세션 시작 (v2.0, N개 도구 로드됨)"으로 남겨 하나의 자연스러운 흐름으로 읽히도록 정리
+
+## 1.1.0-beta.80
+
+### 수정 (Fix) — CLI 모드 추론 로그가 간헐적으로 아예 안 나오던 문제
+- **원인**: `core/streamer.py`의 `tail_transcript()`가 추론 로그의 원본인 `transcript.jsonl`을 디스크에서 찾는 재시도 루프가 `for _ in range(80)`(0.08초 간격, 총 6.4초)로 고정 상한이 걸려 있었음 — 그런데 이 애드온 README에 이미 문서화돼 있듯 `uvx`의 `ha-mcp` 최초 실행(콜드 스타트)은 10~20초가 걸릴 수 있어, agy/MCP가 느리게 뜬 턴에서는 파일이 아직 없을 때 이 루프가 조용히 포기(`return`)했음. 최종 답변 자체는 별도 경로(`step_update`/`content_block_delta`)로 정상 스트리밍되지만, 그 턴의 추론 단계(`reasoning_step`)는 단 하나도 큐에 쌓이지 못해 프런트엔드(`core/ui/scripts.py`의 `addReasoningStep`)가 추론 로그 박스 자체를 띄우지 않았음 — "가끔"으로 보였던 건 그 순간 agy/MCP 콜드 스타트 여부에 좌우되는 경합(race) 문제였을 뿐, 재현 가능한 패턴이 아니었음
+- 고정 6.4초 상한을 제거하고, agy 프로세스가 살아있는 동안(`done_event`가 설정되기 전까지) 계속 파일을 찾도록 변경 — 턴이 아직 진행 중인데 미리 포기할 이유가 없음
+
+## 1.1.0-beta.79
+
+### 추가 (Feature) — 폴더 삭제 시 항상 경고+승인 규칙 명시
+- `bundled/rules/ha-file-safety.md` 1절에 7번 항목 추가: 폴더(디렉터리) 삭제는 2절의 보호 목록에 없는 폴더여도, 안에 든 파일이 적어 보여도 예외 없이 항상 경고(전체 경로 + 포함된 파일/하위폴더 목록·개수)하고 명확한 승인을 받은 뒤에만 진행하도록 명시
+- beta.77의 3-way 병합 배포 메커니즘이 실제로 적용된 첫 콘텐츠 업데이트 — 로컬 편집 이력이 없는 첫 배포 이후의 클린 업그레이드 경로를 실제 운영 환경에서 검증
+
+## 1.1.0-beta.78
+
+### 수정 (Fix) — MCP 설정 파일이 매 부팅마다 통째로 덮어써지던 문제
+- `run.sh`가 `mcp_config.json`을 매 부팅마다 heredoc으로 통째로 새로 써서, 사용자가 agy의 `/mcp add` 등으로 `home-assistant` 외에 다른 MCP 서버를 직접 추가했다면 재시작할 때마다 사라졌음
+- `home-assistant` 항목은 `$SUPERVISOR_TOKEN`/`ha_sse_url` 옵션처럼 매번 새로 읽는 값에 의존하므로 규칙/훅처럼 고정된 번들 파일로 만들 수는 없지만, `settings.json`/`hooks.json`에 이미 쓰고 있던 것과 같은 jq 부분 병합으로 전환 — `mcpServers["home-assistant"]` 키만 갱신하고 다른 서버 항목은 그대로 보존
+
+## 1.1.0-beta.77
+
+### 리팩터 — 규칙/훅/에이전트/스킬을 파일로 분리하고 3-way 병합 배포로 전환
+- `run.sh`에 인라인 heredoc으로 박혀 있던 `ha-guidelines.md`, `ha-file-safety.md`, `ha_file_guard.py`, deny 규칙, 훅 등록 JSON을 전부 `bundled/{rules,hooks,agents,skills}/` 아래 독립 파일로 분리(Python은 Python 문법 강조, Markdown은 Markdown으로 정상 표시/리뷰 가능). `Dockerfile`이 이 `bundled/` 트리 전체를 이미지의 `/usr/local/share/antigravity-cli-bundled/`에 구움
+- **`if [ ! -f ... ]`(최초 1회만 생성) 방식을 `deploy_managed_file`/`deploy_managed_dir` 3-way 병합 배포로 교체**: `/config`(addon_config)는 재시작/리빌드에도 지워지지 않는 영구 볼륨이라, 예전 방식은 파일이 한 번 생성된 이후로는 코드를 고쳐도 절대 반영되지 않았음(beta.76에서 겪은 `/homeassistant` 경로 수정이 리빌드해도 반영 안 되던 문제의 근본 원인). 그렇다고 매번 무조건 덮어쓰면 사용자나 에이전트가 그 파일에 직접 추가한 규칙/훅이 통째로 사라짐 — 그래서 배포될 때마다의 번들 내용을 `/config/.antigravity_cli_bundled_base`에 그림자 복사로 보관해두고, `git merge-file`(TARGET=배포된 파일, BASE=그림자 사본, THEIRS=새 번들 내용)로 3-way 병합: 애드온 쪽 수정과 로컬 추가분이 서로 다른 줄이면 둘 다 살아남고, 같은 줄을 건드린 경우에만 `<<<<<<<` 충돌 마커를 남기고 병합을 보류(다음 부팅에 재시도)
+- 로컬에서 격리된 시나리오 9가지(최초 배포/무변경/충돌 없는 버그 수정/로컬 추가 보존/동일 줄 충돌 시 마커 유지 등)로 병합 로직 자체를 실제 파일 하나 건드리지 않고 검증 완료(전부 통과)
+- **커스텀 에이전트도 같은 방식으로 기본 탑재**: 지금까지는 `agy --agent`용 에이전트를 사용자가 직접 만들어야만 했음 — 이제 `bundled/agents/`의 4개 전문 에이전트(자동화/대시보드/진단/실시간 제어)와 총괄 에이전트를 부팅 시 `~/.gemini/config/agents/`에 동일한 병합 배포로 설치
+- **스킬(`home-assistant-best-practices`) GitHub 가져오기 실패 시 폴백 추가**: 지금까지는 Dockerfile 빌드 중 GitHub fetch가 실패하면 빌드 자체가 실패했음 — `bundled/skills/home-assistant-best-practices/`에 스냅샷을 함께 커밋해두고, GitHub fetch가 실패하면 이 벤더링된 사본으로 대체(빌드는 항상 성공, 실제 배포는 여전히 최신 GitHub 버전을 우선 시도)
+- `sync_files.py`에 디렉터리 전체를 통째로 Samba에 동기화하는 `SYNC_DIRS`를 추가(`bundled/`용) — 파일 하나하나 `SYNC_PAIRS`에 추가하지 않아도 새로 추가되는 규칙/훅/에이전트/스킬 파일이 자동으로 동기화됨
+
+## 1.1.0-beta.76
+
+### 수정 (Fix) — HA 핵심 설정 삭제 방지 안전장치가 실제로는 아무것도 막지 못하던 문제
+- `run.sh`가 생성하는 세 가지 안전장치(`settings.json`의 `HA_DENY_RULES`, `ha-file-safety.md` 규칙 문서, `ha_file_guard.py` PreToolUse 훅의 `PROTECTED` 목록)가 전부 `configuration.yaml`/`automations.yaml`/`.storage/` 등 실제 HA 설정 파일 경로를 `/config/...`로 검사하고 있었음 — 이 애드온은 `addon_config:rw`(→ `/config`, 애드온 자신의 전용 저장소)와 `homeassistant_config:rw`(→ `/homeassistant`, 진짜 HA 설정 디렉터리)를 별도로 마운트하므로, 실제 `configuration.yaml` 등은 `/homeassistant`에 있고 `/config`에는 존재하지 않음 — 즉 세 안전장치 모두 "삭제 방지"라는 목적을 전혀 달성하지 못하고 있었음
+- 세 곳 모두 HA 설정 관련 경로를 `/homeassistant/...`로 수정. 이 애드온 자신의 인증/설정 저장소인 `/config/.gemini/` 항목만 원래대로 `/config` 경로 유지
+- 이 훅/규칙 파일들은 최초 1회만 생성되고 이미 있으면 덮어쓰지 않으므로(`if [ ! -f ... ]`), 기존에 이미 부팅했던 설치는 컨테이너 내부의 기존 `/root/.gemini/config/rules/ha-file-safety.md`, `/root/.gemini/hooks/ha_file_guard.py`, `/root/.gemini/antigravity-cli/settings.json`을 삭제한 뒤 애드온을 재시작해야 새 경로로 재생성됨
+
+## 1.1.0-beta.75
+
+### 수정 (Fix) — 히스토리 복원에도 대용량 MCP 결과 병합 적용
+- **[beta.74](#)에서 라이브 스트리밍에만 적용했던 "saved to: file://..." 병합/중복 확인행 제거를 히스토리 복원(대화 다시 불러오기) 경로에도 동일하게 적용**: `core/session_manager.py`에 `_merge_large_tool_outputs()` 신설 — `get_session_history()`가 `_parse_transcript_file()`로 읽은 항목 목록에 대해, `call_mcp_tool` 스텝 바로 다음이 "saved to: file://..." 포인터뿐인 GENERIC 결과면 그 파일을 직접 읽어 내용으로 치환하고, 뒤이은 agy 자신의 `view_file` 재확인 스텝(+그 결과)은 통째로 건너뜀
+- `core/streamer.py`의 라이브 버전(`tail_transcript()`, 줄 단위 버퍼링)과 달리 이쪽은 전체 목록을 한 번에 갖고 있어 인덱스 앞뒤로 미리보기(lookahead)만으로 처리 — `_read_saved_output_file()`/`saved to` 정규식 등은 순환 import를 피하려 `session_manager.py`에 그대로 복제(주석에 명시)
+- 실제 transcript.jsonl 파일은 건드리지 않고 클라이언트에 내려주는 목록만 병합하므로, rewind 등 `step_index` 기반 기능에는 영향 없음
+
+## 1.1.0-beta.74
+
+### 수정 (Fix) — 결과가 커서 파일로 저장된 MCP 도구 호출의 Tool Output이 안 보이던 문제
+- **`ha_search`처럼 결과가 커서 agy가 인라인 대신 `.system_generated/steps/N/output.txt`에 저장한 MCP 도구 호출은 Tool Output에 "The output was large and was saved to: file://..." 포인터 문장만 보이고, 실제 내용은 그 다음에 별개의 "📄 확인 output.txt" 행(번호 붙은 파일 덤프)으로 따로 떨어져 나오던 문제 수정**(`core/streamer.py`의 `tail_transcript()`): "saved to: file://..." 패턴을 감지하면 그 경로를 addon 컨테이너에서 직접 읽어(`_read_saved_output_file()` — `/root/`↔`/config/` 마운트 경로 차이도 흡수) 원래의 "MCP Tool: ha_search" 카드 Tool Output으로 바로 채워 넣음
+- agy가 저장 직후 스스로 같은 파일을 다시 읽어보는 뒤따르는 `view_file` 호출은 이미 위에서 실제 내용을 넣었으니 중복이라 판단해 그 행 자체를 표시하지 않음(`suppress_file_path`) — 카드 하나에 실제 JSON이 바로 보임
+- 히스토리 복원(대화 다시 불러오기)은 아직 이 처리를 안 타므로, 지나간 대화를 다시 열면 여전히 "saved to" 포인터 문장 + 별도 확인 행으로 보일 수 있음(라이브 스트리밍 경로에만 적용됨) — 필요하면 별도로 손볼 예정
+
+## 1.1.0-beta.73
+
+### 수정 (Fix) — CLI 모드 실제 MCP 도구 호출의 "Tool arguments" 누락, Tool Output JSON 하이라이팅 누락
+- **실제 파라미터가 있는 MCP 도구 호출(예: `ha_search`의 `domain_filter` 등)인데도 "Tool arguments" 블록이 통째로 사라지던 문제 수정**: agy가 `Arguments`를 이미 파싱된 객체가 아니라 JSON 인코딩된 **문자열**로 로그에 남기는 경우가 있는데, `isinstance(targs, dict)`(서버, `core/streamer.py`의 `_classify_tool_call()`) / `typeof targs === 'object'`(클라이언트, `core/ui/scripts.py`의 `classifyToolCall()`) 체크가 문자열을 그냥 걸러버려서 인자가 있어도 빈 블록으로 처리됐음 — 문자열이면 `json.loads`/`JSON.parse`로 한 번 더 파싱하도록 양쪽에 동일하게 추가
+- **Tool Output이 agy의 "Created At: .../Completed At: ..." 같은 평문 메타데이터 줄로 시작해 JSON 본문이 전혀 하이라이팅되지 않던 문제 수정**: `jsonOrPlainHTML()`(`core/ui/scripts.py`)이 전체 문자열 `JSON.parse`에 실패하면 첫 `{`/`[` 위치를 찾아 그 앞은 평문으로, 그 뒤만 다시 JSON 파싱을 시도하도록 개선 — 메타데이터 줄은 그대로, JSON 본문만 구문 강조됨
+- **"Tool arguments"/"Tool Output" 라벨 옆에 개별 복사 버튼 추가**(`toolIoLabelHTML()`/`copyToolIoBlock()`, `core/ui/scripts.py` + `.tool-io-copy-btn`, `core/ui/styles.py`): 라벨 행에 원본(pretty-print된) JSON 텍스트를 `data-raw` 속성으로 들고 있다가 클릭 시 그대로 클립보드에 복사 — 기존 추론 로그 전체 복사(`copyReasoningLog`)와 별개로 블록 단위 복사 제공
+
+## 1.1.0-beta.72
+
+### 추가 (Feature) — 복합모드에도 MCP Tool 카드(Tool arguments/Output) 노출
+- **복합모드(Mode 1, `stream_ai_deep_brain`)의 "환경 분석 세션 초기화"/"[1단계] 센서 수집"/"[2단계] 밸런스 추론" 3개 고정 안내 문구를 제거하고, 고속모드([beta.71](#))와 동일한 "MCP Tool: ha_get_state" 카드로 교체**(`core/streamer.py`): `Tool arguments`에 질의(`query`)와 `category: environment_sensors`를, `Tool Output`에 최종 응답(`result`)과 수집된 센서 개수(`sensor_count`)를 JSON으로 노출 — `record_mode1_interaction()`이 저장하는 `ha_get_state` 히스토리 기록과 동일한 `ToolName`을 사용해 라이브/기록 표시가 어긋나지 않도록 함
+- 고속모드와 마찬가지로 실제 MCP 왕복은 아니며(센서 수집은 `get_ha_states()` 직접 호출), 라이브 스트림에서만 Tool Output까지 보이고 history restore는 여전히 Tool arguments만 보임(agy 전사 포맷 전용 GENERIC 결과 병합 로직 미연결)
+
+## 1.1.0-beta.71
+
+### 추가 (Feature) — 고속모드에도 MCP Tool 카드(Tool arguments/Output) 노출
+- **고속모드(Mode 2, `stream_fast_dashboard`)가 지금까지 "⚡ [모드 1: 고속 모드] 실시간 기기 및 엔티티 상태 고속 탐색"이라는 고정 안내 문구만 보여주던 것을, 복합모드/에이전트 모드와 동일한 "MCP Tool: ha_get_state" 카드(펼치면 Tool arguments/Tool Output JSON)로 교체**(`core/streamer.py`): 실제로는 `handle_agent_chat()`이 이미 캐시된 HA 상태에 로컬 휴리스틱으로 즉답하는 구조라 진짜 MCP 왕복은 없지만, 사용자에게 "무엇을 물었고(Tool arguments의 query) 무엇이 나왔는지(Tool Output의 result)"를 동일한 UI로 보여주는 편이 유용해 `reasoning_step` SSE로 두 값을 한 번에 채워 내보냄 — 프런트엔드 렌더링은 [beta.69](#) 수정분(`row.group === 'ha'` 분기)을 그대로 재사용하므로 별도 UI 변경 없음
+- 참고: 이 카드는 라이브 스트림에서만 나타남 — 과거 대화를 다시 불러올 때(history restore)의 고속모드 턴은 여전히 `record_mode2_interaction()`이 저장한 `Tool arguments`만 보이고 `Tool Output`은 비어 있음(agy의 실제 전사 포맷에만 있는 GENERIC 결과 스텝 병합 로직이 이 합성 기록에는 연결되어 있지 않음 — 별도 작업 필요)
+
+## 1.1.0-beta.70
+
+### 추가 (Feature)
+- 고속모드/복합모드가 방 이름을 대화 맥락으로 기억해서, "안방 온도는?" 다음에 방 이름 없이 "습도는?"이라고 물어도 "안방 습도"로 이해하도록 개선
+  - `core/session_manager.py`에 `set_last_room_context`/`get_last_room_context` 추가 — 대화 폴더에 다른 마커 파일들(`rewound.marker`, `custom_title.txt`)과 같은 방식으로 `last_room.txt` 저장
+  - `core/ha_engine.py`의 방별 센서 질의(Section 2)가 방 이름이 없을 때, 온도/습도/CO2/TVOC/미세먼지/조도/기압/공기질처럼 **구체적인 측정 항목 단어**가 있으면 직전에 언급한 방을 재사용 — "상태/상황/어때" 같은 일반 질문은 이미 방 없이도 "우리집 전체 상태"라는 뜻이 분명하므로 의도적으로 제외(잔여 방 맥락이 그 의미를 덮어쓰지 않도록)
+  - `core/streamer.py`의 `stream_fast_dashboard`/`stream_ai_deep_brain`이 `handle_agent_chat()`에 빈 문자열 대신 실제 `conversation_id`를 넘기도록 수정 — 이 값이 없어서 대화 맥락 자체가 애초에 연결되지 않고 있었음
+  - 방을 새로 명시한 질문(예: "거실 온도는?")은 그 즉시 맥락을 갱신하므로 방을 바꿔가며 대화해도 계속 올바르게 따라감
+
+## 1.1.0-beta.69
+
+### 수정 (Fix) — 인수 없는 MCP(ha-mcp) 도구 호출도 Tool arguments/Output 뷰어로 표시
+- **`Arguments`가 비어있는 MCP 도구 호출(예: 파라미터 없이 조회하는 ha-mcp 툴)이 "Tool arguments"/"Tool Output" 라벨과 JSON 구문 강조 없이 평문으로만 표시되던 문제 수정**: 렌더 분기가 `row.args_json`의 진위(truthy) 여부로 `toolIoDetailHTML()` vs `stepDetailHTML()`을 선택하고 있었는데, `classifyToolCall()`이 인수가 없으면 `args_json = ''`(falsy)를 반환해 일반 경로로 빠졌음 — `childRowHTML()`/`standaloneRowHTML()`(`core/ui/scripts.py`)의 분기 조건을 `row.args_json` 대신 `row.group === 'ha'`로 변경, MCP 도구 호출은 인수 유무와 무관하게 항상 `toolIoDetailHTML()` 경로(Tool Output도 JSON이면 하이라이트)를 타도록 함
+
+## 1.1.0-beta.68
+
+### 추가 (Feature) — Tool arguments/Output JSON 프리티뷰(구문 강조)
+- **MCP 도구 호출 펼치기의 "Tool arguments"/"Tool Output"이 평문으로만 보이던 것을 JSON 구문 강조(syntax highlight)로 개선**: 라이브러리 없이(HA ingress 웹뷰 CSP 제약상 CDN 의존 최소화) 정규식 기반 경량 하이라이터 신설(`highlightJSON()`, `core/ui/scripts.py`) — 키/문자열/숫자/불리언/null을 각각 다른 색으로 구분(`.json-key`/`.json-string`/`.json-number`/`.json-boolean`/`.json-null`, `core/ui/styles.py`)
+- `Tool Output`은 agy의 원문 텍스트라 항상 JSON이 아닐 수 있어(`find_by_name`/`run_command`/`search_web`는 평문·stdout), 신설 `jsonOrPlainHTML()`이 먼저 `JSON.parse` 시도 후 성공하면 예쁘게(2-space indent) 재포맷+강조, 실패하면 기존처럼 평문으로 표시 — `Tool arguments`는 항상 유효한 JSON이라 바로 강조
+- 이스케이프된 따옴표/백슬래시, 한글 문자열, 소수점 숫자 등 실제 JSON에 나올 수 있는 케이스를 Node로 직접 검증(라운드트립 비교로 하이라이팅이 원본 텍스트를 훼손하지 않는지 확인)
+
+## 1.1.0-beta.67
+
+### 수정 (Fix) — 추론/도구 로그 UI를 Antigravity 데스크톱 앱 스타일로 개편
+- **추론 로그가 응답 말풍선(`.bubble`) 안에 다시 한 번 박스로 갇혀 있던 문제 수정**: `.term-box`(추론/도구 타임라인)를 `.bubble` 내부에서 꺼내 `.bubble-wrap`의 형제 요소로 이동(`buildBotBubbleDOM()`, `core/ui/scripts.py`) — 기존엔 어두운 터미널 패널(`.term-box`)이 다시 카드 스타일 말풍선(`.bubble`) 안에 중첩되어 이중으로 갇혀 보였음
+- **어두운 "터미널 콘솔" 룩 제거, 페이지와 같은 배경에 자연스럽게 흐르는 스타일로 전환**(`core/ui/styles.py`): `.term-box`/`.term-header`/`.term-body`의 고정 다크 배경(#0d1117 등)·테두리·모노스페이스 폰트·가로 스크롤을 제거하고 앱 테마 변수(`var(--text-muted)` 등)로 교체 — 라이트 모드에서도 자연스럽게 보임(기존엔 "터미널은 항상 다크"라는 전제였는데, 더 이상 독립된 박스가 아니라 페이지에 녹아드는 요소가 되면서 그 전제가 깨짐)
+- 상단 요약 뱃지("● LIVE"/"🕐 N초 동안 작업함")를 알약(pill) 모양에서 일반 텍스트 토글로 변경, 끝에 항상 접기/펼치기 화살표(▾/▸)가 따라붙도록 신설 `setTermBadgeText()`/`toggleTermBody()`로 통일(3곳에 흩어져 있던 중복 로직 정리)
+- **MCP 도구 호출("HA 도구") 표시를 Antigravity 참고화면과 동일하게 "MCP Tool: {서버} / {도구}" + 펼치면 "Tool arguments"/"Tool Output" JSON 블록**으로 변경(`_classify_tool_call()`의 `call_mcp_tool` 분기, `core/streamer.py`/`core/ui/scripts.py` 양쪽 미러 + 신설 `toolIoDetailHTML()`) — 이전엔 인자를 한 줄에 다 욱여넣었음. "Tool Output"은 `find_by_name`/`run_command`/`search_web`와 동일한 GENERIC 결과 버퍼링에 의존하는데, agy가 MCP 호출에도 동일하게 결과 스텝을 남기는지는 아직 실측 전 — 없으면 "Tool arguments"만 보임(정상 동작, 추정으로 지어내지 않음)
+- 그룹 요약 "파일 N개 탐색, 검색 M회"의 숫자를 굵게 표시, 파일 경로류 텍스트(`view_file`/`write_to_file`/`replace_file_content`의 대상)를 코드체(모노스페이스)로 표시 — 참고 화면의 "Analyzed {} ha_search.json" 스타일과 동일
+- 접기/펼치기 화살표를 항상 줄 끝에 오도록 변경(CSS `order` 사용, 마크업 순서는 그대로 두고 시각적 위치만 이동) — 참고 화면과 동일하게 왼쪽이 아니라 오른쪽에 표시
+- "Explored N files, M searches" 그룹은 기본적으로 펼쳐진 채로 시작(개별 도구 결과/추론 블록은 여전히 기본 접힘) — 참고 화면과 동일한 기본 상태
+
+## 1.1.0-beta.66
+
+### 수정 (Fix) — 모바일 UI 정리
+- **CPU/RAM 그래프 패널 제목/범례 텍스트가 좁은 화면에서 단어 중간(예: "애드\n온")까지 줄바꿈되던 문제 수정**: 제목을 "CPU 사용률 추이 (듀얼)"/"RAM 점유율 추이 (듀얼)" → "CPU"/"RAM"으로, 범례를 "애드온:"/"시스템 전체:" → "애드온"/"전체"로 축약(`core/ui/templates.py`), `.lg-item`/`.chart-title`에 `white-space: nowrap` 추가하고 안 맞으면 개별 항목이 아니라 범례 전체가 다음 줄로 내려가도록 `.chart-top`에 `flex-wrap` 적용(`core/ui/styles.py`)
+- **모바일에서 좌측 세션 사이드바를 열면 CPU/RAM 그래프 패널이 그 위에 떠 있는 것처럼 보이던 문제 수정**: `.top-resource-panel`이 `position` 없이 `z-index: 50`만 있어 사실상 아무 효과가 없었던 것(포지션 없는 요소의 z-index는 무시됨 -- 반면 모바일의 `.session-sidebar`는 `position: fixed`라 항상 위에 그려짐)이 근본 원인은 아니었지만, 상태 동기화가 어긋나 두 패널이 동시에 열려 있는 경우 자체가 혼란의 원인이었음 — `toggleResourcePanel()`/`toggleSessionSidebar()`가 모바일(`window.innerWidth <= 768`)에서 서로를 상호 배타적으로 닫도록 수정(`core/ui/scripts.py`), `.top-resource-panel`에도 `position: relative`와 사이드바(z-index 40)보다 낮은 `z-index: 10`을 명시해 상태가 어긋나도 항상 사이드바가 위에 그려지도록 이중 방어(`core/ui/styles.py`)
+- **헤더의 누적 토큰 표시(🪙) 제거**: `resetTokens()`/`session-tokens` 갱신 로직은 이미 전부 `if (element)` 가드가 있어 요소를 지워도 안전 — 턴별 토큰 수치는 각 답변 말풍선 하단(`⚡ N초 완료` 옆 토큰 배지)에 여전히 표시됨(`core/ui/templates.py`)
+- **모바일에서 실행모드/모델/에이전트 선택 버튼 3개가 한 줄에 다 안 들어가 마지막(에이전트) 버튼이 화면 밖으로 잘려 나가던 문제 수정**: `.composer-toolbar-left`에 가로 스크롤(`overflow-x: auto`, 스크롤바 숨김) 적용, `.composer-toolbar-right`(마이크/전송 버튼)는 `flex-shrink: 0`으로 항상 고정(`core/ui/styles.py`) — 에이전트 선택을 모델 선택 드롭다운 안으로 합치는 대신 이 방법을 택함(아래 참고)
+
+## 1.1.0-beta.65
+
+### 추가 (Add) — HA 파일 보호를 실제 강제 차단으로 승격 (PreToolUse 훅)
+- beta.47의 HA 파일 보호는 (a) `ha-file-safety.md` 규칙 주입(모델이 원칙적으로 따르길 기대하는 지시일 뿐)과 (b) `settings.json`의 `permissions.deny`(Mode 3가 항상 쓰는 `--dangerously-skip-permissions`가 permissions 엔진 자체를 우회해버려서 실제로는 강제되지 않음) 두 가지뿐이었음 — 이번에 공식 문서(antigravity.google/docs/hooks/)를 확인해 **PreToolUse 훅**을 추가로 도입: 훅은 사람의 승인 프롬프트가 전혀 필요 없는 "스크립트를 동기 실행하고 그 결과(JSON)로 허용/차단을 결정"하는 별개의 메커니즘이라, `--dangerously-skip-permissions`가 우회하는 permissions 엔진과도, 헤드리스에서 영구 행(hang)하는 상위 버그가 있는 인터랙티브 승인 UI와도 무관하게 동작할 것으로 판단(문서상 인터랙티브 CLI에서는 매 도구 호출마다 실제로 발동해 차단이 동작한다는 실사용자 확인까지는 찾았으나, 헤드리스(`-p`) 모드에서도 그런지는 아직 실측 전 — 배포 후 실제 삭제 시도로 반드시 확인 필요)
+  - 신설 `run.sh` → `/root/.gemini/hooks/ha_file_guard.py`: `run_command`(쉘 명령어에 `rm`/`unlink`/`shred`/`truncate`/`mv`/`>`(단순 리다이렉트, `>>`는 제외) 같은 파괴적 동작 + 보호 대상 경로 문자열이 함께 있을 때만 차단 — `cat`/`ls`/`grep` 같은 단순 조회는 걸리지 않음)와 `write_to_file`/`replace_file_content`(대상 경로가 보호 목록과 일치/그 하위일 때 차단)를 매처로 지정. beta.59에서 발견된 "일부 도구 인자 문자열이 이중 JSON 인코딩되어 있다"는 특성을 이 훅의 자체 stdin 페이로드에도 방어적으로 동일 적용(`_unwrap()`)
+  - 차단 대상 목록은 `ha-file-safety.md`와 동일(`.storage`/`secrets.yaml`/`configuration.yaml`/`.uuid`/`.HA_VERSION`/`home-assistant_v2.db`/`.cloud`/이 애드온 자신의 `.gemini`/`automations·scripts·scenes.yaml`/`custom_components`/`/backup`) — 로컬에서 13개 케이스(보호 경로+파괴적 동작 조합 차단, 무관한 rm/조회/mv/append 허용, mcp 도구 통과, 이중 인코딩 경로 차단 등)로 훅 스크립트 자체의 판정 로직만 별도 검증 완료(agy가 실제로 이 훅을 호출하는지는 별개로 미검증)
+  - 훅 등록 위치가 문서상 명확하지 않아(워크스페이스 `.agents/hooks.json` vs `settings.json`의 `hooks` 키, 기존 `core/hooks_discovery.py`는 후자를 전제로 작성돼 있었음) 두 곳 모두에 동일하게 등록(중복 실행은 되어도 무해함) — 실제로 어느 쪽이 유효한지는 라이브 테스트로 확인 예정
+
+## 1.1.0-beta.64
+
+### 추가 (Feature) — Mode 3 추론/도구 로그 전면 개편 (그룹핑 + 접기/펼치기 + 실제 결과 표시)
+- 기존엔 추론(💭)/도구 호출(🔧)이 전부 완성된 문자열 한 줄씩으로 쌓이기만 하고, 접기/펼치기도 없이 180px 고정 높이 박스에 계속 쌓여 답답했던 것을 Antigravity IDE 자체의 액션 타임라인(연속 탐색/검색 묶기 + "Thought for Xs" + "Edited +N -M") 형태로 개편
+- **`transcript.jsonl`에 `write_to_file`/`replace_file_content` 외의 도구(`find_by_name`/`grep_search`/`run_command`/`search_web`)는 호출 인자만 있고 실제 결과(검색 결과 개수, 커맨드 출력, 웹검색 요약)가 안 보이던 문제를 실측으로 해결**: agy가 도구 호출 바로 다음 줄에 `type:"GENERIC"`인 결과 스텝을 별도로 남긴다는 것을 실제 대화로 확인(예: `find_by_name` 다음 줄에 `"Found 2 results\nautomations.yaml\n..."`) — 신설 버퍼링 로직(`core/streamer.py` `tail_transcript()`)이 결과가 필요한 도구 호출을 한 줄 보류했다가, 바로 다음 줄이 매칭되는 GENERIC 결과면 접어서 하나의 항목으로 합침(결과가 없으면 한 줄 지연 후 그대로 흘려보냄, 무한 대기 없음)
+- 신설 `_classify_tool_call()`이 도구별로 그룹(탐색/웹검색/편집/명령어/HA 도구)·동사·대상·통계·펼치기용 상세내용을 한 곳에서 결정 — `write_to_file`/`replace_file_content`는 beta.59에서 만든 diff에서 바로 `+N -M` 통계를 계산하고, `find_by_name`/`grep_search`/`run_command`는 GENERIC 결과에서 "N개 결과"/"N줄 출력" 요약을 정규식으로 뽑아냄(`_result_stat()`)
+- SSE에 신설 `reasoning_step` 이벤트 타입 추가(`make_sse()`에 구조화 `data` 페이로드 지원 추가) — 기존 `live_log`(세션 시작/오류 배너 등 일회성 메시지)는 그대로 두고, 추론/도구 로그만 구조화 데이터로 분리 전송
+- 프론트(`core/ui/scripts.py` 신설 `createReasoningTimeline()`): 연속된 파일 확인/파일명 검색/grep/웹검색은 자동으로 "파일 N개 탐색, 검색 M회" 하나의 접힌 그룹으로 묶이고, 편집/명령어/HA 도구 호출은 각각 독립된 줄로 표시. 각 줄(추론/그룹/개별 항목)은 클릭으로 개별 펼치기 가능 — 펼치면 diff, 커맨드 출력, 검색 결과 요약 등 실제 내용이 보임(6000자 캡, `_cap_detail()`)
+- 말풍선 상단 뱃지(`.term-badge`, 기존 "● LIVE"/"● COMPLETED")를 전체 접기/펼치기 토글로 재활용 — 스트리밍 중엔 "⏳ N초 작업 중"으로 틱, 답변이 끝나면 "🕐 N초 동안 작업함"으로 고정되며 자동으로 접힘(사용자가 이미 수동으로 펼쳤다면 그 상태 유지)
+- 복원된(과거) 대화도 동일하게 보이도록 신설 `buildStepsFromResponses()`가 `core/streamer.py`의 버퍼링 로직을 JS로 그대로 미러링 — `get_session_history()`가 이미 GENERIC 결과 스텝을 포함해서 반환하고 있었다는 것을 확인했기 때문에(rewind가 의존하는 `transcript.jsonl`/`step_index` 체계는 전혀 건드리지 않음) 서버 쪽 변경 없이 프론트만으로 라이브와 동일한 타임라인을 재구성. 다만 복원된 대화는 처음부터 접힌 상태로 시작(라이브는 완료 시점에 자동으로 접힘)
+- `core/ui/styles.py`에 `.step-row`/`.step-child`/`.step-detail`/`.step-children` 등 신설 — 기존 `.term-box`와 동일한 고정 다크 콘솔 팔레트 사용
+
+## 1.1.0-beta.63
+
+### 개선 (Improve) — 도움말 패널 스크롤 + 스킬 설명 팝오버
+- **도움말/피드백 패널(`.help-box`)에 `max-height`/`overflow-y:auto`가 없어 스킬·훅이 많아지면 화면 밖으로 넘칠 수 있던 문제 수정**: MCP/스킬/훅 목록이 전부 늘어나는 패널인데 세로 크기 제한이 없었음 (`core/ui/styles.py`)
+- **스킬 목록에서 긴 `description`을 줄에 그대로 늘어놓지 않고, 이름 옆 (i) 아이콘 클릭 시 팝오버로 보여주도록 변경** (`core/ui/scripts.py` `toggleSkillInfo()`/`closeSkillInfoPopover()`, `core/ui/styles.py` `.skill-info-btn`/`.info-popover`): 특히 이번에 기본 탑재한 `home-assistant-best-practices` skill처럼 설명이 여러 문장인 경우 목록이 옆으로 한참 길어지던 문제 해결. 아이콘 클릭 시 버튼 위치 기준으로 팝오버를 띄우고(화면 밖으로 나가면 반대쪽으로 뒤집음), 같은 버튼 재클릭·바깥 클릭·패널 닫기 시 닫힘 — 이미지 라이트박스(beta.19 이전)와 동일하게 delegated click 리스너로 구현해 목록이 새로고침돼도 계속 동작
+
+## 1.1.0-beta.62
+
+### 추가 (Feature) — Home Assistant 모범사례 Agent Skill 기본 탑재
+- `homeassistant-ai/skills` 저장소의 `home-assistant-best-practices` skill(SKILL.md + `references/` 참고파일 14개, 총 15개 파일)을 이미지 빌드 시 구워서 기본 탑재(`Dockerfile`). Agent Skills 표준의 progressive-disclosure 구조 그대로 유지 — SKILL.md만 컨텍스트에 상시 로드되고 나머지 참고파일은 에이전트가 필요할 때만 읽음
+- **`/skills` 목록 기능(`core/skills_discovery.py`)이 애초에 실제 skill을 하나도 못 찾던 버그를 이번에 발견해 같이 수정**: 이 모듈은 공식 웹 문서(antigravity.google/docs/cli/plugins/)를 근거로 "skill은 `{skill}.md` 형태의 flat 파일이고 글로벌 경로는 `~/.gemini/antigravity-cli/skills/`"라고 가정하고 있었는데, 실제 설치된 Antigravity 제품 자체의 내장 문서(`agy-customizations` skill의 `docs/skills.md`)와 실제 파일시스템(`~/.gemini/config/skills/<name>/SKILL.md`에 이미 존재하던 사용자 생성 skill 2개, 그리고 `antigravity_guide`/`agy-customizations` 등 내장 skill들이 전부 `references/`·`docs/` 하위 폴더를 쓰는 디렉토리 구조)을 직접 확인한 결과 공식 웹 문서가 stale함을 실측으로 확인:
+  - 진짜 글로벌 경로는 `~/.gemini/antigravity-cli/skills/`가 아니라 `~/.gemini/config/skills/`(`~/.gemini/antigravity-cli/`는 `settings.json`이 있는 곳이지 skill이 있는 곳이 아니었음)
+  - 진짜 포맷은 skill 하나당 flat `.md` 파일이 아니라 `<skill>/SKILL.md` 디렉토리(+선택적 `scripts/`/`examples/`/`resources/`/`references/`)
+  - `_skill_search_dirs()`의 global 경로와 `list_available_skills()`의 스캔 로직(디렉토리 목록 → 각 하위 디렉토리의 `SKILL.md` 탐색)을 이 실측 결과에 맞게 수정
+- 새로 구운 skill은 `run.sh`가 `/root/.gemini/config/skills/`(=`/config/.gemini/config/skills/`, addon_config에 영구 보존)에 최초 1회만 복사 — `ha-guidelines.md`/`ha-file-safety.md`와 동일하게 이미 존재하면 건드리지 않아 사용자가 삭제/수정해도 다음 재시작에 되살아나지 않음. `Dockerfile`에서 바로 `~/.gemini/`에 굽지 않은 이유: `run.sh`가 매 시작마다 `/root/.gemini`를 통째로 지우고 `/config/.gemini`로 심볼릭 링크하기 때문에, 이미지에 구운 파일은 그 시점에 사라짐
+- **실제 addon을 재빌드해 `/api/skills`로 실측하는 과정에서 두 번째 버그를 발견해 같이 수정**: 위 경로/포맷 수정 후 skill 자체는 잡혔지만 `description`이 `">"` 한 글자만 나옴 — `home-assistant-best-practices/SKILL.md`가 `description: >`(YAML 접힘 블록 스칼라)로 여러 줄에 걸쳐 설명을 적어두는데(같은 이유로 antigravity 자체 내장 예시 `agy-customizations/docs/skills.md`도 `description: >-`를 씀 — skill 설명은 에이전트가 언제 이 skill을 쓸지 판단하는 핵심 필드라 길게 쓰는 게 일반적인 관례), `_parse_frontmatter()`가 한 줄짜리 `key: value`만 읽던 기존 로직(`agent_discovery.py`와 공유하던 접근)이 `>` 마커 자체만 값으로 잘라먹고 있었음. 블록 스칼라(`>`/`|`, 폴딩 여부 구분)를 뒤따르는 들여쓰기 줄까지 이어붙이도록 `_parse_frontmatter()`를 확장(`core/skills_discovery.py`) — `agent_discovery.py`의 동일 파서는 지금까지 실제로 여러 줄 description을 만난 적이 없어 그대로 둠(범위 밖)
+
 ## 1.1.0-beta.60
 
 ### 수정 (Fix) — 화면 전체 먹통(세션 목록/모드/모델 선택 불가) 긴급수정

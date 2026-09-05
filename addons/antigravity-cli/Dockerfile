@@ -64,6 +64,32 @@ RUN if [ "${BUILD_ARCH}" = "amd64" ] || [ "${BUILD_ARCH}" = "x86_64" ]; then ARC
 # 5. Install Google Antigravity CLI
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 
+# 5a. Bake in this repo's bundled/ tree (rules, hooks, custom agents, and a
+# vendored fallback snapshot of the HA best-practices skill) so run.sh has a
+# single, versioned source of truth to deploy from at boot -- see run.sh's
+# deploy_managed_file/deploy_managed_dir for how these reach the persistent
+# /config volume without clobbering local edits on every rebuild.
+COPY bundled/ /usr/local/share/antigravity-cli-bundled/
+
+# 5b. Bake in the homeassistant-ai/skills "home-assistant-best-practices" Agent
+# Skill (SKILL.md + references/) so it's available out of the box. Placed
+# outside ~/.gemini here because run.sh symlinks /root/.gemini -> the
+# persistent /config/.gemini addon_config volume on every start (see run.sh);
+# run.sh copies this baked copy into ~/.gemini/config/skills/ on first boot.
+# Prefer the live GitHub fetch (freshest content); if the network call fails
+# during image build (rate limit, transient outage, offline build), fall
+# back to the vendored snapshot checked into bundled/skills/ above instead of
+# failing the whole build.
+RUN mkdir -p /usr/local/share/antigravity-cli-skills \
+    && ( curl -fsSL https://github.com/homeassistant-ai/skills/archive/refs/heads/main.tar.gz -o /tmp/ha-skills.tar.gz \
+         && mkdir -p /tmp/ha-skills-extract \
+         && tar -xzf /tmp/ha-skills.tar.gz -C /tmp/ha-skills-extract \
+         && cp -r /tmp/ha-skills-extract/skills-main/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ \
+         && rm -rf /tmp/ha-skills.tar.gz /tmp/ha-skills-extract \
+       ) || ( echo "[WARN] GitHub fetch for home-assistant-best-practices skill failed -- using vendored bundled/skills fallback" \
+         && rm -rf /usr/local/share/antigravity-cli-skills/home-assistant-best-practices \
+         && cp -r /usr/local/share/antigravity-cli-bundled/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ )
+
 # 6. Automatically install CLI packages (HA CLI, Python AI tools)
 RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli || true
 

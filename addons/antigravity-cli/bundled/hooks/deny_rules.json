@@ -1,0 +1,13 @@
+[
+  "command(rm -rf)",
+  "command(sudo)",
+  "write_file(/homeassistant/.storage/)",
+  "write_file(/homeassistant/secrets.yaml)",
+  "write_file(/homeassistant/configuration.yaml)",
+  "write_file(/homeassistant/.uuid)",
+  "write_file(/homeassistant/.HA_VERSION)",
+  "write_file(/homeassistant/home-assistant_v2.db)",
+  "write_file(/homeassistant/.cloud/)",
+  "write_file(/config/.gemini/)",
+  "write_file(/backup/)"
+]

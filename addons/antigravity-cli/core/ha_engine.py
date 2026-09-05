@@ -35,12 +35,23 @@ from core.sensors import (
     get_todo_summary,
     match_room,
 )
+from core.session_manager import get_last_room_context, set_last_room_context
 from core.system_info import (
     get_all_addons_memory,
     get_ha_error_logs,
     get_resource_usage,
     get_supervisor_token,
 )
+
+# Words that make a room-less follow-up ("습도는?") resolvable via the
+# previous turn's room -- deliberately narrower than the generic "상태/상황/
+# 어때" words handled later, which already have a sensible room-less meaning
+# (whole-home status) that stale room context must not override.
+_METRIC_FOLLOWUP_WORDS = [
+    "온도", "기온", "습도", "co2", "이산화탄소", "tvoc", "voc", "유기화합물",
+    "초미세", "pm25", "pm2.5", "미세먼지", "pm10", "조도", "밝기", "lux", "lx",
+    "기압", "압력", "hpa", "공기질", "공기상태", "공기", "환기",
+]
 
 
 def handle_agent_chat(
@@ -91,7 +102,21 @@ def handle_agent_chat(
     # 2. Specific Room Query (ha_list_floors_areas & sensors)
     rooms = get_dynamic_rooms(states)
     matched_room = match_room(rooms, no_space)
+    lower_no_space = no_space.lower()
+
+    if not matched_room and conversation_id:
+        # A bare follow-up like "습도는?" with no room named -- reuse the room
+        # from the previous turn ("안방 온도는?") instead of falling through
+        # to a room-less answer. Only for metric-specific wording; see
+        # _METRIC_FOLLOWUP_WORDS.
+        if any(w in lower_no_space for w in _METRIC_FOLLOWUP_WORDS):
+            remembered_room = get_last_room_context(conversation_id)
+            if remembered_room and remembered_room in rooms:
+                matched_room = remembered_room
+
     if matched_room and states:
+        if conversation_id:
+            set_last_room_context(conversation_id, matched_room)
         env_data = get_room_env_matrix(states)
         r_matrix = env_data["matrix"].get(matched_room, {})
 

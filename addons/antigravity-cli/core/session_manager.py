@@ -304,6 +304,46 @@ def clear_rewound(conversation_id: str):
         pass
 
 
+def _last_room_context_path(conversation_id: str) -> str:
+    """Path to a conversation's last-mentioned-room marker (see set_last_room_context)."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "last_room.txt")
+
+
+def set_last_room_context(conversation_id: str, room: str):
+    """Remember the room a Mode 1/2 turn was about, so a bare follow-up like
+    "습도는?" (no room named) can be understood as "<room> 습도는?" on the next
+    turn -- see get_last_room_context(). Best-effort: failures are swallowed
+    since this is a conversational convenience, not data anything else here
+    depends on.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return
+    if not room:
+        return
+    path = _last_room_context_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(room)
+    except Exception:
+        pass
+
+
+def get_last_room_context(conversation_id: str) -> str | None:
+    """Last room mentioned in this conversation's Mode 1/2 turns, if any (see set_last_room_context)."""
+    if not conversation_id:
+        return None
+    path = _last_room_context_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                room = f.read().strip()
+                return room or None
+    except Exception:
+        pass
+    return None
+
+
 def rewind_session(conversation_id: str, step_index: int) -> bool:
     """Truncate a conversation's canonical transcript to discard the
     USER_INPUT step at `step_index` and everything after it -- i.e. roll the
@@ -602,6 +642,134 @@ def append_session_interaction_async(
     t.start()
 
 
+_SAVED_TO_FILE_RE = re.compile(r"saved to:\s*(file://\S+)")
+_HISTORY_DETAIL_CAP = 6000  # mirrors core/streamer.py's _DETAIL_CAP
+
+
+def _read_saved_output_file(file_uri: str) -> str:
+    """Reads back a step's output.txt referenced by a "saved to: file://..."
+    pointer -- mirrors core/streamer.py's _read_saved_output_file() (kept as
+    a separate copy here, not a shared import, to avoid a session_manager <->
+    streamer circular import; streamer.py already imports from this module).
+    Tries the literal path first, then swaps /root/<->/config/ (the same
+    ambiguity _candidate_paths-style lookups elsewhere account for).
+    """
+    path = file_uri[len("file://"):] if file_uri.startswith("file://") else file_uri
+    candidates = [path]
+    if path.startswith("/root/"):
+        candidates.append("/config/" + path[len("/root/"):])
+    elif path.startswith("/config/"):
+        candidates.append("/root/" + path[len("/config/"):])
+    for p in candidates:
+        try:
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception:
+            continue
+    return ""
+
+
+def _unwrap_agy_str(v):
+    """Mirrors core/streamer.py's _agy_str() -- unwraps a JSON-string-literal
+    tool-call arg value (e.g. AbsolutePath arrives as '"/path"', quotes and
+    all) down to the real string."""
+    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        try:
+            return json.loads(v)
+        except Exception:
+            pass
+    return v
+
+
+def _merge_large_tool_outputs(items: list) -> list:
+    """Post-process one conversation's parsed transcript items so a
+    call_mcp_tool step whose result was too big to inline (agy's GENERIC
+    follow-up is just a "saved to: file://..." pointer) shows the file's
+    real content as its Tool Output, instead of the bare pointer sentence --
+    and drops agy's own follow-up view_file read-back of that same file
+    (a separate "확인 output.txt" step right after, whose own GENERIC result
+    is a numbered-line dump) since it's now redundant plumbing.
+
+    Mirrors core/streamer.py's tail_transcript() live-streaming version of
+    this exact fix, but as a whole-list post-pass instead of a line-by-line
+    buffering loop -- get_session_history() has the complete items list
+    up front, so simple index lookahead is simpler than the pending-step
+    state machine the live streamer needs.
+    """
+    out = []
+    i = 0
+    n = len(items)
+    while i < n:
+        item = items[i]
+        tcs = item.get("tool_calls") or []
+        has_mcp_call = isinstance(tcs, list) and any(
+            isinstance(tc, dict) and tc.get("name") == "call_mcp_tool" for tc in tcs
+        )
+
+        if not has_mcp_call or i + 1 >= n:
+            out.append(item)
+            i += 1
+            continue
+
+        nxt = items[i + 1]
+        nxt_tcs = nxt.get("tool_calls") or []
+        nxt_content = nxt.get("content", "")
+        saved_to = None
+        if nxt.get("type") == "GENERIC" and nxt_content and not nxt_tcs:
+            saved_to = _SAVED_TO_FILE_RE.search(nxt_content)
+
+        if not saved_to:
+            out.append(item)
+            i += 1
+            continue
+
+        file_content = _read_saved_output_file(saved_to.group(1))
+        out.append(item)
+        if not file_content:
+            out.append(nxt)
+            i += 2
+            continue
+
+        merged = dict(nxt)
+        if len(file_content) > _HISTORY_DETAIL_CAP:
+            file_content = file_content[:_HISTORY_DETAIL_CAP] + "\n...(생략)"
+        merged["content"] = file_content
+        out.append(merged)
+        i += 2
+
+        suppress_path = saved_to.group(1)
+        suppress_path = suppress_path[len("file://"):] if suppress_path.startswith("file://") else suppress_path
+        if i < n:
+            view_step = items[i]
+            view_tcs = view_step.get("tool_calls") or []
+            matched = False
+            if isinstance(view_tcs, list):
+                for tc in view_tcs:
+                    if not isinstance(tc, dict) or tc.get("name") != "view_file":
+                        continue
+                    a = tc.get("args") or {}
+                    if isinstance(a, str):
+                        try:
+                            a = json.loads(a)
+                        except Exception:
+                            a = {}
+                    if not isinstance(a, dict):
+                        a = {}
+                    fpath = _unwrap_agy_str(a.get("AbsolutePath", "")) or ""
+                    fpath = fpath[len("file://"):] if fpath.startswith("file://") else fpath
+                    if fpath == suppress_path or os.path.basename(fpath) == os.path.basename(suppress_path):
+                        matched = True
+                        break
+            if matched:
+                i += 1  # drop the view_file step entirely
+                if i < n:
+                    after = items[i]
+                    after_tcs = after.get("tool_calls") or []
+                    if after.get("type") == "GENERIC" and not after_tcs:
+                        i += 1  # drop its GENERIC result too
+    return out
+
+
 def _parse_transcript_file(fpath: str) -> list:
     """Parse one transcript.jsonl file into a list of cleaned history items."""
     items = []
@@ -642,6 +810,7 @@ def get_session_history(conversation_id: str) -> list:
         fpath = get_readable_transcript_path(cid)
         if fpath:
             items = _parse_transcript_file(fpath)
+            items = _merge_large_tool_outputs(items)
             # Tag each item with the physical conversation_id/file it actually
             # lives in -- distinct from `conversation_id` (the id this whole
             # merged view was requested under, i.e. the chain's terminal id).
