@@ -121,37 +121,36 @@ if [ -f /data/options.json ]; then
     SSE_URL=$(jq -r '.ha_sse_url // empty' /data/options.json 2>/dev/null || true)
 fi
 
+# The "home-assistant" entry below is regenerated every boot (the token and
+# the user's ha_sse_url option can both change between boots), but it's
+# merged into mcp_config.json via jq rather than overwriting the whole file
+# -- same reasoning as the settings.json/hooks.json merges elsewhere in this
+# script: a user can register other MCP servers of their own (agy's own
+# `/mcp add`, or by hand-editing this file), and a blind overwrite here
+# would silently erase those on every single restart.
+MCP_CONFIG_FILE="/root/.gemini/config/mcp_config.json"
+
 if [ -n "$SSE_URL" ] && [ "$SSE_URL" != "null" ]; then
     # User supplied an external SSE/Streamable-HTTP URL (e.g. ha-mcp Custom Component webhook URL)
     echo "[INFO] Using user-supplied HA MCP URL: $SSE_URL"
-    cat <<MCP_EOF > /root/.gemini/config/mcp_config.json
-{
-  "mcpServers": {
-    "home-assistant": {
-      "serverUrl": "$SSE_URL"
-    }
-  }
-}
-MCP_EOF
+    HA_MCP_ENTRY=$(jq -n --arg url "$SSE_URL" '{serverUrl: $url}')
 else
     # Default: stdio transport via uvx ha-mcp@latest
     # Antigravity CLI only supports stdio MCP transport (not SSE/HTTP).
     # uvx launches ha-mcp as a subprocess; env vars allow ha-mcp to reach HA API.
     echo "[INFO] Configuring ha-mcp via stdio (uvx). SUPERVISOR_TOKEN available: $([ -n "$SUPERVISOR_TOKEN" ] && echo yes || echo no)"
-    cat <<MCP_EOF > /root/.gemini/config/mcp_config.json
-{
-  "mcpServers": {
-    "home-assistant": {
-      "command": "uvx",
-      "args": ["ha-mcp@latest"],
-      "env": {
-        "HOMEASSISTANT_URL": "http://supervisor/core",
-        "HOMEASSISTANT_TOKEN": "${SUPERVISOR_TOKEN}"
-      }
-    }
-  }
-}
-MCP_EOF
+    HA_MCP_ENTRY=$(jq -n --arg token "$SUPERVISOR_TOKEN" '{
+        command: "uvx",
+        args: ["ha-mcp@latest"],
+        env: {HOMEASSISTANT_URL: "http://supervisor/core", HOMEASSISTANT_TOKEN: $token}
+    }')
+fi
+
+if [ ! -f "$MCP_CONFIG_FILE" ]; then
+    jq -n --argjson entry "$HA_MCP_ENTRY" '{mcpServers: {"home-assistant": $entry}}' > "$MCP_CONFIG_FILE"
+else
+    jq --argjson entry "$HA_MCP_ENTRY" '.mcpServers["home-assistant"] = $entry' "$MCP_CONFIG_FILE" > "${MCP_CONFIG_FILE}.tmp" 2>/dev/null \
+        && mv "${MCP_CONFIG_FILE}.tmp" "$MCP_CONFIG_FILE"
 fi
 
 # Auto-configure Antigravity CLI settings and permissions for HA MCP

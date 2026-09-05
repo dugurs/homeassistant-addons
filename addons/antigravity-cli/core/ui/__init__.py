@@ -1,3 +1,3 @@
 """UI Components and Assets Package for Antigravity Addon."""
 
-UI_BUILD_VERSION = "1.1.0-beta.77"
+UI_BUILD_VERSION = "1.1.0-beta.78"

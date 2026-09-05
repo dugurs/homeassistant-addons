@@ -1,3 +1,9 @@
+## 1.1.0-beta.78
+
+### 수정 (Fix) — MCP 설정 파일이 매 부팅마다 통째로 덮어써지던 문제
+- `run.sh`가 `mcp_config.json`을 매 부팅마다 heredoc으로 통째로 새로 써서, 사용자가 agy의 `/mcp add` 등으로 `home-assistant` 외에 다른 MCP 서버를 직접 추가했다면 재시작할 때마다 사라졌음
+- `home-assistant` 항목은 `$SUPERVISOR_TOKEN`/`ha_sse_url` 옵션처럼 매번 새로 읽는 값에 의존하므로 규칙/훅처럼 고정된 번들 파일로 만들 수는 없지만, `settings.json`/`hooks.json`에 이미 쓰고 있던 것과 같은 jq 부분 병합으로 전환 — `mcpServers["home-assistant"]` 키만 갱신하고 다른 서버 항목은 그대로 보존
+
 ## 1.1.0-beta.77
 
 ### 리팩터 — 규칙/훅/에이전트/스킬을 파일로 분리하고 3-way 병합 배포로 전환
