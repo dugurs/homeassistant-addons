@@ -801,7 +801,15 @@ def stream_headless_cli(
                         # one back to us). This is the id future turns must
                         # pass as conversation_id to actually resume with agy.
                         event_queue.put(("session_init", cid))
-                    event_queue.put(("live_log", f"🚀 [Antigravity CLI] 세션 시작 (v2.0, {len(tools)}개 도구 로드됨)"))
+                    # This fires on literally every turn (Mode 3 launches a
+                    # fresh agy process per message), and the tool count is
+                    # essentially always the same, so surfacing it every time
+                    # was pure repetition with no real signal. The one case
+                    # worth interrupting for is zero tools -- that means the
+                    # MCP server (ha-mcp) never connected, which otherwise
+                    # fails silently from the user's point of view.
+                    if not tools:
+                        event_queue.put(("live_log", "⚠️ [Antigravity CLI] 도구가 0개 로드됨 -- MCP 연결 확인 필요"))
                     if cid:
                         t_tail = threading.Thread(target=tail_transcript, args=(cid,), daemon=True)
                         t_tail.start()
