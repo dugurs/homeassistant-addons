@@ -1208,12 +1208,20 @@ CSS_STYLES = """
        Output" JSON blocks instead of the generic .step-detail text -- see
        toolIoDetailHTML() in core/ui/scripts.py. */
     .tool-io-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-size: 0.75em;
       font-weight: 600;
       color: var(--text-dim);
       margin: 6px 0 3px;
     }
     .tool-io-label:first-child { margin-top: 0; }
+    /* .tool-io-copy-btn layers onto .icon-btn-sm (sizing/layout) -- shrunk to
+       fit inline in the label row instead of the 22px chat-bubble size. */
+    .tool-io-copy-btn.icon-btn-sm { width: 18px; height: 18px; }
+    .tool-io-copy-btn.icon-btn-sm .icon { width: 11px; height: 11px; }
     .tool-io-block {
       background: var(--code-bg);
       border: 1px solid var(--border-color);

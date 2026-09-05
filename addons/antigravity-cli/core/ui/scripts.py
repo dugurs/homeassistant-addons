@@ -492,7 +492,12 @@ function showToast(text) {
       if (tname === 'call_mcp_tool') {
         const tcalled = agyStr(args.ToolName) || 'mcp';
         const tcalledDisplay = (typeof tcalled === 'string' && tcalled.includes('/')) ? tcalled.replace('/', ' / ') : tcalled;
-        const targs = args.Arguments || {};
+        let targs = args.Arguments || {};
+        // agy sometimes logs Arguments as a JSON-encoded string rather than a
+        // nested object (same shape MCP wire args take) -- without this, a
+        // real tool call with actual parameters (e.g. ha_search's
+        // domain_filter) silently loses its whole "Tool arguments" block.
+        if (typeof targs === 'string') { try { targs = JSON.parse(targs); } catch (e) {} }
         const argsJson = (targs && typeof targs === 'object' && Object.keys(targs).length) ? JSON.stringify(targs, null, 2) : '';
         return { group: 'ha', verb: 'MCP Tool:', target: tcalledDisplay, stat: '', detail: '', args_json: argsJson, needsResult: true };
       }
@@ -666,24 +671,51 @@ function showToast(text) {
     // else falls back to plain escaped text -- Tool arguments is always
     // valid JSON (built server/client-side from a real object), but Tool
     // Output is agy's raw GENERIC result text, which for find_by_name/
-    // run_command/search_web is plain prose/stdout, not JSON.
+    // run_command/search_web is plain prose/stdout, not JSON. A real MCP
+    // tool's result (ha_search etc.) also isn't pure JSON -- agy prefixes it
+    // with plain "Created At: .../Completed At: ..." lines before the actual
+    // JSON payload, which fails a whole-string JSON.parse -- so past that
+    // first failure, split off everything before the first {/[ and retry
+    // parsing just the tail; the prefix still renders, just unhighlighted.
     function jsonOrPlainHTML(text) {
       const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      try {
-        const pretty = JSON.stringify(JSON.parse(text), null, 2);
-        return highlightJSON(esc(pretty));
-      } catch (e) {
-        return esc(text);
+      const tryParse = (s) => {
+        try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return null; }
+      };
+      let pretty = tryParse(text);
+      if (pretty !== null) return highlightJSON(esc(pretty));
+      const m = /[{[]/.exec(text);
+      if (m) {
+        pretty = tryParse(text.slice(m.index));
+        if (pretty !== null) return esc(text.slice(0, m.index)) + highlightJSON(esc(pretty));
       }
+      return esc(text);
+    }
+
+    // HTML-attribute-safe escape for stashing a block's raw text in
+    // data-raw (copyToolIoBlock reads it back) -- distinct from esc()'s
+    // element-content escaping, which doesn't touch quotes.
+    function escAttr(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function copyToolIoBlock(btn) {
+      const raw = btn.getAttribute('data-raw') || '';
+      if (!raw) return;
+      navigator.clipboard.writeText(raw).then(() => flashCopied(btn)).catch(() => {});
+    }
+
+    function toolIoLabelHTML(label, raw) {
+      return `<div class="tool-io-label">${label}<button class="icon-btn-sm tool-io-copy-btn" data-raw="${escAttr(raw)}" onclick="copyToolIoBlock(this)" title="복사"><span class="icon">${ICON_COPY_SVG}</span></button></div>`;
     }
 
     function toolIoDetailHTML(argsJson, detail) {
       let html = '';
       if (argsJson) {
-        html += `<div class="tool-io-label">Tool arguments</div><div class="tool-io-block">${jsonOrPlainHTML(argsJson)}</div>`;
+        html += toolIoLabelHTML('Tool arguments', argsJson) + `<div class="tool-io-block">${jsonOrPlainHTML(argsJson)}</div>`;
       }
       if (detail) {
-        html += `<div class="tool-io-label">Tool Output</div><div class="tool-io-block">${jsonOrPlainHTML(detail)}</div>`;
+        html += toolIoLabelHTML('Tool Output', detail) + `<div class="tool-io-block">${jsonOrPlainHTML(detail)}</div>`;
       }
       return html ? `<div class="step-detail tool-io">${html}</div>` : '';
     }
@@ -768,7 +800,7 @@ function showToast(text) {
             <span class="step-target">${stepTargetHTML(row)}</span>
             ${stepStatHTML(row.stat)}
           </div>
-          ${row.args_json ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
+          ${row.group === 'ha' ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
         </div>`;
       }
 
@@ -783,7 +815,7 @@ function showToast(text) {
             <span class="step-target">${stepTargetHTML(row)}</span>
             ${stepStatHTML(row.stat)}
           </div>
-          ${row.args_json ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
+          ${row.group === 'ha' ? toolIoDetailHTML(row.args_json, row.detail) : stepDetailHTML(row.detail, row.group === 'edit')}
         </div>`;
       }
 

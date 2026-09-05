@@ -17,6 +17,74 @@ else
 fi
 cd "${WORKDIR}" 2>/dev/null || cd /root
 
+# ---------------------------------------------------------------------------
+# Bundled asset deployment (rules, hooks, agents, skills)
+#
+# /config (addon_config) is a persistent volume that survives restarts AND
+# rebuilds, so a plain "if [ ! -f target ]; then generate; fi" can only ever
+# create a file once -- fixing a bug in one of these bundled files and
+# rebuilding the image does NOT get the fix onto an already-running install,
+# since the stale copy from before the fix still exists at that path forever.
+#
+# A blind unconditional overwrite on every boot fixes that but destroys any
+# local addition (e.g. the user, or the agent itself, appending a custom
+# rule to ha-file-safety.md, or a custom hook alongside ha_file_guard.py).
+#
+# Instead we keep a persistent shadow copy of the bundled content as it
+# looked the last time it was deployed (BASE), and do a real 3-way text
+# merge (`git merge-file`: TARGET as "ours", BASE as the common ancestor,
+# the current bundled file as "theirs") so an addon-side fix and a local
+# addition both survive unless they edit the exact same lines, in which case
+# standard <<<<<<< conflict markers are left for a human/agent to resolve
+# instead of silently guessing which side wins.
+BASE_SHADOW_ROOT="/config/.antigravity_cli_bundled_base"
+
+deploy_managed_file() {
+    # $1 = bundled source file (absolute path, already resolved in the image)
+    # $2 = absolute deployment target path (under the persistent .gemini tree)
+    local bundled="$1" target="$2"
+    local base="${BASE_SHADOW_ROOT}${target}"
+    [ -f "$bundled" ] || return 0
+    mkdir -p "$(dirname "$target")" "$(dirname "$base")"
+
+    if [ ! -f "$target" ]; then
+        cp "$bundled" "$target"
+        cp "$bundled" "$base"
+        return 0
+    fi
+
+    if [ ! -f "$base" ]; then
+        # No merge history yet for this target (fresh install, or upgrading
+        # from a pre-merge-logic version of this addon) -- we can't tell
+        # whether the existing file has local additions, so leave it alone
+        # this boot rather than risk clobbering something on a blind guess.
+        # Recording the bundled content as the base now means the next
+        # boot's diff starts from a known point instead of guessing forever.
+        cp "$bundled" "$base"
+        return 0
+    fi
+
+    cmp -s "$base" "$bundled" && return 0  # bundled default hasn't changed
+
+    if git merge-file -q "$target" "$base" "$bundled" >/dev/null 2>&1; then
+        cp "$bundled" "$base"
+    else
+        echo "[WARN] antigravity-cli: merge conflict updating ${target} (bundled default changed and local edits conflict) -- resolve the <<<<<<< markers manually" >&2
+        # Base intentionally left unchanged so the same 3-way merge is
+        # retried against the same inputs on the next boot until resolved.
+    fi
+}
+
+deploy_managed_dir() {
+    # $1 = bundled source dir, $2 = absolute deployment target dir
+    local bundled_dir="$1" target_dir="$2"
+    [ -d "$bundled_dir" ] || return 0
+    while IFS= read -r -d '' f; do
+        local sub="${f#"$bundled_dir"/}"
+        deploy_managed_file "$f" "${target_dir}/${sub}"
+    done < <(find "$bundled_dir" -type f -print0)
+}
+
 # Ensure persistent directories for Antigravity credentials in addon_config (/config = /addon_configs/antigravity)
 mkdir -p /config/.gemini
 mkdir -p /config/.config
@@ -104,19 +172,10 @@ fi
 # context regardless of --dangerously-skip-permissions.
 mkdir -p /root/.gemini/antigravity-cli
 SETTINGS_FILE="/root/.gemini/antigravity-cli/settings.json"
-HA_DENY_RULES='[
-  "command(rm -rf)",
-  "command(sudo)",
-  "write_file(/config/.storage/)",
-  "write_file(/config/secrets.yaml)",
-  "write_file(/config/configuration.yaml)",
-  "write_file(/config/.uuid)",
-  "write_file(/config/.HA_VERSION)",
-  "write_file(/config/home-assistant_v2.db)",
-  "write_file(/config/.cloud/)",
-  "write_file(/config/.gemini/)",
-  "write_file(/backup/)"
-]'
+# Source of truth: bundled/hooks/deny_rules.json in the addon repo (baked
+# into the image at build time) -- kept in sync with PROTECTED in
+# bundled/hooks/ha_file_guard.py and the table in bundled/rules/ha-file-safety.md.
+HA_DENY_RULES="$(cat /usr/local/share/antigravity-cli-bundled/hooks/deny_rules.json)"
 if [ ! -f "$SETTINGS_FILE" ]; then
     cat << SETTINGS_EOF > "$SETTINGS_FILE"
 {
@@ -136,70 +195,20 @@ else
     fi
 fi
 
-# Auto-configure global rules for HA MCP
+# Auto-configure global rules for HA MCP. Source of truth:
+# bundled/rules/*.md in the addon repo, deployed via the 3-way-merge helper
+# above so a bundled-content fix survives a rebuild without erasing any rule
+# text a user (or the agent) appended locally.
 mkdir -p /root/.gemini/config/rules
-if [ ! -f /root/.gemini/config/rules/ha-guidelines.md ]; then
-    cat << 'RULE_EOF' > /root/.gemini/config/rules/ha-guidelines.md
----
-name: ha-guidelines
-description: Always prioritize using ha-mcp tools over direct curl API calls when controlling or querying Home Assistant
-trigger: always_on
----
+deploy_managed_file "/usr/local/share/antigravity-cli-bundled/rules/ha-guidelines.md" "/root/.gemini/config/rules/ha-guidelines.md"
 
-# Home Assistant Guidelines
-
-## Tools & Integrations
-- Always prioritize using `ha-mcp` tools (`control_activate`, `get_entity_state`, `search_entities`, etc.) when interacting with Home Assistant entities, devices, and states.
-- Avoid using direct shell `curl` commands to the Home Assistant REST API unless explicitly requested or when MCP tools are unavailable for the specific task.
-RULE_EOF
-fi
-
-# Auto-configure global file-safety rule: require explicit approval before any
-# delete/overwrite, and hard-refuse touching HA's own critical config data.
-# Injected as an always-on rule (same mechanism as ha-guidelines.md above) so
-# it applies in every mode -- including Mode 3's headless
-# --dangerously-skip-permissions path, where the settings.json `deny` list
-# above is not enforced (see the NOTE next to HA_DENY_RULES).
-if [ ! -f /root/.gemini/config/rules/ha-file-safety.md ]; then
-    cat << 'SAFETY_EOF' > /root/.gemini/config/rules/ha-file-safety.md
----
-name: ha-file-safety
-description: Require explicit user approval before deleting or overwriting any file, and never touch Home Assistant's critical config data under any circumstance
-trigger: always_on
----
-
-# Home Assistant 파일 안전 수칙 (반드시 준수)
-
-## 1. 파일 삭제/덮어쓰기 전 사전 승인 필수
-사용자의 요청을 처리하다가 파일이나 폴더를 **삭제(rm, unlink 등)하거나 기존 내용을 되돌릴 수 없게 덮어써야 하는 경우**, 절대로 먼저 실행하지 말 것. 반드시 다음 순서를 따를 것:
-1. 삭제/변경하려는 파일의 **정확한 전체 경로 목록**을 나열한다.
-2. 대상 파일이 **총 몇 개**인지 명시한다.
-3. **왜** 삭제/변경이 필요한지 이유를 설명한다.
-4. 위 내용을 답변으로 제시하고, 실제 삭제/덮어쓰기 명령은 실행하지 않은 채 답변을 마치고 **사용자의 다음 메시지에서 명확한 승인**("네", "삭제해줘", "진행해", "확인" 등)이 올 때까지 기다린다.
-5. 사용자가 승인하기 전에는 `rm`, 파일을 덮어쓰는 이동/치환 등 되돌리기 어려운 작업을 절대 먼저 수행하지 않는다.
-6. 대상이 단 1개 파일이어도 이 규칙은 동일하게 적용된다. "간단한 작업이니 그냥 진행"하지 않는다.
-
-## 2. 절대 삭제·수정 금지 (사용자가 명시적으로 요청해도 거부하고 위험성을 설명할 것)
-아래 항목은 Home Assistant 운영에 필수적인 핵심 데이터이며, 삭제/수정 시 되돌릴 수 없는 손상(엔티티·기기·자동화 전체 소실, 로그인 불가, 클라우드 연동 끊김 등)이 발생한다. 사용자가 삭제나 "초기화"를 요청하더라도 **절대로 실행하지 말고**, 왜 위험한지 설명한 뒤 대안(HA 자체 백업/복원 기능, 공식 설정 UI를 통한 개별 삭제 등)을 제안할 것. 이름이 일부만 일치하거나 "정리해줘", "청소해줘" 같은 모호한 요청에도 아래 항목은 절대 포함시키지 말 것.
-
-| 경로 | 내용물 | 위험 |
-|---|---|---|
-| `/config/.storage/` (폴더 전체) | 엔티티·기기·영역 레지스트리, 로그인 계정, 연동된 통합구성요소(Config Entries), 대시보드 설정 등 HA의 모든 핵심 상태 | 삭제 시 모든 기기·자동화·연동이 초기화되고 로그인 계정도 사라짐 |
-| `/config/secrets.yaml` | 비밀번호·토큰 등 민감정보 | 삭제 시 이를 참조하는 모든 설정이 깨짐 |
-| `/config/configuration.yaml` | HA 메인 설정 파일 | 삭제 시 HA 부팅 불가 |
-| `/config/.uuid` | 이 HA 인스턴스의 고유 식별자 | 삭제 시 Nabu Casa Cloud/모바일 앱 연동 등이 끊김 |
-| `/config/.HA_VERSION` | 내부 버전 마커 | 삭제 시 업데이트/마이그레이션 로직 오작동 가능 |
-| `/config/home-assistant_v2.db` (`-wal`, `-shm` 포함) | 히스토리/로그북 레코더 데이터베이스 | 삭제 시 과거 이력 데이터 전부 소실 |
-| `/config/.cloud/` | Nabu Casa Cloud 인증 토큰 | 삭제 시 Cloud 연동(리모트 액세스, Google/Alexa 연동 등) 끊김 |
-| `/config/.gemini/` | 이 애드온(Antigravity CLI) 자신의 설정·인증·대화 기록 | 삭제 시 AI 에이전트 자신의 로그인/세션이 초기화됨 (자기 자신을 삭제하지 말 것) |
-| `/config/automations.yaml`, `/config/scripts.yaml`, `/config/scenes.yaml` | 사용자가 작성한 자동화/스크립트/씬 정의 | 삭제 시 해당 자동화가 전부 소실 |
-| `/config/custom_components/` | 사용자가 설치한 커스텀 통합(HACS 등) | 삭제 시 관련 통합이 전부 작동 중지 |
-| `/backup/` (폴더 전체) | Home Assistant 백업 아카이브 | 삭제 시 재해 복구 수단 자체가 사라짐 |
-
-## 3. 그 외 파일
-위 목록에 없는 일반 파일(예: `www/`의 이미지, 로그 파일 등)이라도 규칙 1(사전 승인)은 동일하게 적용된다.
-SAFETY_EOF
-fi
+# File-safety rule: require explicit approval before any delete/overwrite,
+# and hard-refuse touching HA's own critical config data. Injected as an
+# always-on rule (same mechanism as ha-guidelines.md above) so it applies in
+# every mode -- including Mode 3's headless --dangerously-skip-permissions
+# path, where the settings.json `deny` list above is not enforced (see the
+# NOTE next to HA_DENY_RULES).
+deploy_managed_file "/usr/local/share/antigravity-cli-bundled/rules/ha-file-safety.md" "/root/.gemini/config/rules/ha-file-safety.md"
 
 # Hard-block HA-critical file deletion/overwrite via a PreToolUse hook.
 #
@@ -215,150 +224,24 @@ fi
 # above) but that has NOT been live-verified against this container's agy
 # build yet; treat it as the enforced backstop only after confirming a real
 # denied attempt in chat.
+#
+# Source of truth: bundled/hooks/ha_file_guard.py in the addon repo,
+# deployed via the same 3-way-merge helper as the rules above.
 mkdir -p /root/.gemini/hooks
-HOOK_SCRIPT="/root/.gemini/hooks/ha_file_guard.py"
-if [ ! -f "$HOOK_SCRIPT" ]; then
-    cat << 'HOOK_PY_EOF' > "$HOOK_SCRIPT"
-#!/usr/bin/env python3
-"""PreToolUse hook: hard-block deletion/overwrite of Home Assistant's
-critical config data (see run.sh's ha-file-safety.md for the same list in
-rule-instruction form -- this is the enforced counterpart, matched on
-run_command's shell command line and on write_to_file/replace_file_content's
-target path).
+deploy_managed_file "/usr/local/share/antigravity-cli-bundled/hooks/ha_file_guard.py" "/root/.gemini/hooks/ha_file_guard.py"
+chmod +x /root/.gemini/hooks/ha_file_guard.py
 
-Payload shape and decision contract per antigravity.google/docs/hooks/:
-    stdin:  {"toolCall": {"name": ..., "args": {...}}, ...}
-    stdout: {"decision": "allow"} | {"decision": "deny", "reason": "..."}
-"""
-import json
-import re
-import sys
-
-PROTECTED = [
-    ("/config/.storage", ".storage 레지스트리(엔티티/기기/로그인 계정 등 HA 핵심 상태)"),
-    ("/config/secrets.yaml", "민감정보(비밀번호/토큰) 파일"),
-    ("/config/configuration.yaml", "HA 메인 설정 파일"),
-    ("/config/.uuid", "이 HA 인스턴스의 고유 식별자"),
-    ("/config/.HA_VERSION", "내부 버전 마커"),
-    ("/config/home-assistant_v2.db", "히스토리/로그북 레코더 데이터베이스"),
-    ("/config/.cloud", "Nabu Casa Cloud 인증 토큰"),
-    ("/config/.gemini", "이 애드온(Antigravity CLI) 자신의 설정/인증/대화 기록"),
-    ("/config/automations.yaml", "사용자 자동화 정의"),
-    ("/config/scripts.yaml", "사용자 스크립트 정의"),
-    ("/config/scenes.yaml", "사용자 씬 정의"),
-    ("/config/custom_components", "설치된 커스텀 통합(HACS 등)"),
-    ("/backup", "Home Assistant 백업 아카이브"),
-]
-
-# A protected path substring alone isn't enough (plain `cat`/`ls`/`grep` must
-# stay unblocked) -- only deny when a destructive verb/redirect is also
-# present. `>` (but not `>>`, which only appends) covers truncate-by-redirect.
-_DESTRUCTIVE_RE = re.compile(r"(?:^|[\s;&|])(rm|unlink|shred|truncate|mv)\b|(?<!>)>(?!>)")
-
-
-def _unwrap(value):
-    """agy has been observed double-JSON-encoding string tool-call args for
-    some fields (confirmed for AbsolutePath/CodeContent/TargetContent in
-    transcript.jsonl -- see core/streamer.py _agy_str()). This hook gets its
-    payload from a separate, first-class stdin contract that may or may not
-    share the quirk, so unwrap defensively either way -- a plain unquoted
-    path string just fails json.loads and falls through unchanged."""
-    if not isinstance(value, str):
-        return value
-    try:
-        unwrapped = json.loads(value)
-        if isinstance(unwrapped, str):
-            return unwrapped
-    except Exception:
-        pass
-    return value
-
-
-def _deny(path, why):
-    print(json.dumps({
-        "decision": "deny",
-        "reason": (
-            f"[HA 파일 보호] '{path}' 는 Home Assistant 운영에 필수적인 핵심 데이터({why})로, "
-            "이 애드온의 안전 정책상 어떤 요청에도 삭제/덮어쓰기가 차단됩니다. "
-            "사용자에게 이 사실과 위험성을 알리고, 정말 필요하다면 HA 자체 백업/복원 기능이나 "
-            "공식 설정 화면을 통한 개별 작업을 안내하세요."
-        ),
-    }, ensure_ascii=False))
-
-
-def _allow():
-    print(json.dumps({"decision": "allow"}))
-
-
-def main():
-    try:
-        payload = json.load(sys.stdin)
-    except Exception:
-        _allow()
-        return
-
-    tool_call = payload.get("toolCall") or {}
-    name = tool_call.get("name", "")
-    args = tool_call.get("args")
-    if isinstance(args, str):
-        args = _unwrap(args)
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except Exception:
-                args = {}
-    if not isinstance(args, dict):
-        args = {}
-
-    if name == "run_command":
-        cmd = _unwrap(args.get("CommandLine", "")) or ""
-        if _DESTRUCTIVE_RE.search(cmd):
-            for path, why in PROTECTED:
-                if path in cmd:
-                    _deny(path, why)
-                    return
-        _allow()
-        return
-
-    if name in ("write_to_file", "replace_file_content"):
-        target = _unwrap(args.get("AbsolutePath", "")) or ""
-        for path, why in PROTECTED:
-            if target == path or target.startswith(path.rstrip("/") + "/"):
-                _deny(path, why)
-                return
-        _allow()
-        return
-
-    _allow()
-
-
-if __name__ == "__main__":
-    main()
-HOOK_PY_EOF
-fi
-
-HOOK_DEF='{
-  "enabled": true,
-  "PreToolUse": [
-    {
-      "matcher": "run_command|write_to_file|replace_file_content",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 /root/.gemini/hooks/ha_file_guard.py",
-          "timeout": 10
-        }
-      ]
-    }
-  ]
-}'
+HOOK_DEF="$(cat /usr/local/share/antigravity-cli-bundled/hooks/hook_registration.json)"
 
 # Register the hook two ways, since the documented registration surface is
 # ambiguous between sources (a workspace .agents/hooks.json vs a top-level
 # "hooks" key in settings.json -- core/hooks_discovery.py already expects to
 # find hooks in settings.json). Registering in both is harmless (worst case
 # the same check runs twice) and doesn't depend on picking the one right
-# answer before it's been live-tested.
+# answer before it's been live-tested. Both are structural JSON documents a
+# user could have added other entries to, so these stay jq merges (which
+# already preserve unrelated keys) rather than the file-level 3-way merge
+# used for the plain-text rule/hook files above.
 mkdir -p "${WORKDIR}/.agents"
 AGENTS_HOOKS_FILE="${WORKDIR}/.agents/hooks.json"
 if [ ! -f "$AGENTS_HOOKS_FILE" ]; then
@@ -372,14 +255,18 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 # Install the baked-in Home Assistant best-practices Agent Skill (see
-# Dockerfile step 5b) into the persistent global skills dir, once. Skipped
-# if the user has already removed/replaced it, same guard style as the
-# rules above -- this only seeds it on first boot, never overwrites.
-mkdir -p /root/.gemini/config/skills
-if [ -d /usr/local/share/antigravity-cli-skills/home-assistant-best-practices ] && \
-   [ ! -d /root/.gemini/config/skills/home-assistant-best-practices ]; then
-    cp -r /usr/local/share/antigravity-cli-skills/home-assistant-best-practices /root/.gemini/config/skills/
-fi
+# Dockerfile step 5b -- GitHub fetch with a vendored bundled/skills fallback
+# on network failure) into the persistent global skills dir. Deployed
+# per-file via the merge helper, same as the rules/hook above, so a skill
+# update (new/changed reference file) reaches an existing install on the
+# next boot without wiping any local customization.
+deploy_managed_dir "/usr/local/share/antigravity-cli-skills/home-assistant-best-practices" "/root/.gemini/config/skills/home-assistant-best-practices"
+
+# Custom agents for Mode 3 (`agy --agent <id>`, core/agent_discovery.py) --
+# same bundled + merge-deploy treatment as the rules/hooks/skills above.
+# Deployed to the global agents dir (not the workspace one) so they show up
+# regardless of which HA config directory is mounted as the workspace.
+deploy_managed_dir "/usr/local/share/antigravity-cli-bundled/agents" "/root/.gemini/config/agents"
 
 # Tmux configuration
 if [ ! -f /root/.tmux.conf ]; then

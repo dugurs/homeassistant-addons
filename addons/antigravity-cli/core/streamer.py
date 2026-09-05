@@ -100,6 +100,39 @@ def _cap_detail(text: str) -> str:
     return text or ""
 
 
+# When a call_mcp_tool result is too big to inline, agy's GENERIC follow-up
+# is just this one-line pointer -- the real payload sits in a per-step
+# output.txt agy then reads back itself (a separate view_file tool_calls
+# step immediately after, whose own GENERIC result is a numbered-line dump
+# with a "File Path:/Total Lines:/..." header agy prints around it). Rather
+# than show that plumbing as its own confusing "확인 output.txt" row, read
+# the file directly (see tail_transcript's suppress_file_path) and fold its
+# real content into the original MCP Tool card as its Tool Output.
+_SAVED_TO_FILE_RE = re.compile(r"saved to:\s*(file://\S+)")
+
+
+def _read_saved_output_file(file_uri: str) -> str:
+    """Reads back a step's output.txt referenced by a "saved to: file://..."
+    pointer. Tries the literal path first, then swaps /root/<->/config/ (the
+    same ambiguity tail_transcript's candidate_paths already accounts for --
+    the addon and the agy process don't always agree on which prefix the
+    shared .gemini directory is mounted at).
+    """
+    path = file_uri[len("file://"):] if file_uri.startswith("file://") else file_uri
+    candidates = [path]
+    if path.startswith("/root/"):
+        candidates.append("/config/" + path[len("/root/"):])
+    elif path.startswith("/config/"):
+        candidates.append("/root/" + path[len("/config/"):])
+    for p in candidates:
+        try:
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception:
+            continue
+    return ""
+
+
 def _result_stat(tname: str, content: str) -> str:
     """Best-effort short summary badge for a tool's GENERIC follow-up result."""
     if tname == "find_by_name":
@@ -134,6 +167,16 @@ def _classify_tool_call(tname: str, args: dict, desc: str) -> dict:
         tcalled = _agy_str(args.get("ToolName", "mcp"))
         tcalled_display = tcalled.replace("/", " / ") if isinstance(tcalled, str) and "/" in tcalled else tcalled
         targs = args.get("Arguments", {})
+        if isinstance(targs, str):
+            # agy sometimes logs Arguments as a JSON-encoded string (the same
+            # shape MCP wire args take) rather than an already-nested dict --
+            # without this, a real tool call with actual parameters (e.g.
+            # ha_search's domain_filter) silently lost its whole "Tool
+            # arguments" block (only Tool Output ever showed).
+            try:
+                targs = json.loads(targs)
+            except Exception:
+                targs = {}
         args_json = json.dumps(targs, ensure_ascii=False, indent=2) if isinstance(targs, dict) and targs else ""
         return {
             "group": "ha", "verb": "MCP Tool:", "target": tcalled_display,
@@ -233,14 +276,8 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: 
         conversation_id = generate_conversation_id()
     yield make_sse("session_init", conversation_id)
 
-    yield make_sse("tool", f"🧠 [모드 2: 복합 모드] 환경 분석 세션 초기화: '{actual_prompt}'")
-    time.sleep(0.04)
-    yield make_sse("tool", "🔍 [1단계] Home Assistant 다차원 환경 센서(CO2, TVOC, PM2.5, 조도) 수집")
-    time.sleep(0.05)
-    yield make_sse("tool", "📊 [2단계] 실내외 온습도 및 공기질 쾌적성 밸런스 추론 & AI 맞춤 조언 합성")
-    time.sleep(0.05)
-
     states = get_ha_states()
+    sensor_cnt = len(states) if states else 0
     lower = actual_prompt.lower()
     # Also route general "how's the house" queries here, not just explicit
     # weather/env words -- otherwise a prompt like "우리집 종합 상황 알려줘"
@@ -256,12 +293,25 @@ def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: 
     ):
         full_text = get_ai_deep_environment_analysis(states, actual_prompt, is_mobile=is_mobile)
     else:
-        full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
+        full_text = handle_agent_chat(actual_prompt, conversation_id, "", False, is_mobile=is_mobile)
+
+    # Same synthetic MCP Tool card as Mode 2's stream_fast_dashboard (see its
+    # comment) -- no real MCP round-trip here either (get_ha_states() above
+    # is a direct HA REST call), but showing the query/sensor-count args and
+    # the synthesized result through the identical "MCP Tool: ha_get_state"
+    # card keeps 복합모드's live view consistent with 고속모드's.
+    yield make_sse("reasoning_step", data={
+        "group": "ha",
+        "verb": "MCP Tool:",
+        "target": "ha_get_state",
+        "stat": "",
+        "args_json": json.dumps({"query": actual_prompt, "category": "environment_sensors"}, ensure_ascii=False, indent=2),
+        "detail": json.dumps({"result": full_text, "sensor_count": sensor_cnt}, ensure_ascii=False, indent=2),
+    })
 
     yield make_sse("text", full_text)
 
     if conversation_id:
-        sensor_cnt = len(states) if states else 0
         record_mode1_interaction(conversation_id, actual_prompt, full_text, sensor_cnt)
 
     elapsed = time.time() - t_start
@@ -289,10 +339,24 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id:
         conversation_id = generate_conversation_id()
     yield make_sse("session_init", conversation_id)
 
-    yield make_sse("tool", "⚡ [모드 1: 고속 모드] 실시간 기기 및 엔티티 상태 고속 탐색")
-    time.sleep(0.03)
+    full_text = handle_agent_chat(actual_prompt, conversation_id, "", False, is_mobile=is_mobile)
 
-    full_text = handle_agent_chat(actual_prompt, "", "", False, is_mobile=is_mobile)
+    # Fast mode has no real MCP round-trip (handle_agent_chat resolves the
+    # answer with local heuristics against already-cached HA state), but the
+    # reasoning-timeline card is still worth showing so a user can see what
+    # was asked and what came back -- same "MCP Tool: name" + expandable
+    # Tool arguments/Output shape _classify_tool_call() builds for a real
+    # call_mcp_tool step (core/ui/scripts.py's toolIoDetailHTML renders both
+    # the same way regardless of source).
+    yield make_sse("reasoning_step", data={
+        "group": "ha",
+        "verb": "MCP Tool:",
+        "target": "ha_get_state",
+        "stat": "",
+        "args_json": json.dumps({"query": actual_prompt}, ensure_ascii=False, indent=2),
+        "detail": json.dumps({"result": full_text}, ensure_ascii=False, indent=2),
+    })
+
     yield make_sse("text", full_text)
 
     if conversation_id:
@@ -549,6 +613,7 @@ def stream_headless_cli(
         # empty "검색했음" row with no way to see what it found.
         pending_tool = None
         prev_created_at = None  # previous step's created_at, for "Nsec" badges
+        suppress_file_path = None  # set by the "saved to" branch below -- see _read_saved_output_file
 
         def flush_pending():
             nonlocal pending_tool
@@ -582,6 +647,22 @@ def stream_headless_cli(
                     content = step_data.get("content", "")
 
                     if stype == "GENERIC" and content and not tcs and pending_tool is not None:
+                        saved_to = _SAVED_TO_FILE_RE.search(content)
+                        if saved_to and pending_tool.get("tname") == "call_mcp_tool":
+                            file_content = _read_saved_output_file(saved_to.group(1))
+                            pending_tool["detail"] = _cap_detail(file_content) if file_content else _cap_detail(content)
+                            if not pending_tool["stat"]:
+                                pending_tool["stat"] = _result_stat(pending_tool["tname"], pending_tool["detail"])
+                            flush_pending()
+                            if file_content:
+                                # agy is about to auto-issue a view_file call to
+                                # read this same file back for itself -- we
+                                # already inlined its content above, so that
+                                # call (and its own numbered-dump result) is
+                                # pure plumbing now; drop it instead of showing
+                                # a second, confusing "확인 output.txt" row.
+                                suppress_file_path = saved_to.group(1)[len("file://"):]
+                            continue
                         pending_tool["detail"] = _cap_detail(content)
                         if not pending_tool["stat"]:
                             pending_tool["stat"] = _result_stat(pending_tool["tname"], content)
@@ -616,6 +697,13 @@ def stream_headless_cli(
                         if not isinstance(args, dict):
                             args = {}
 
+                        if suppress_file_path and tname == "view_file":
+                            fpath = _agy_str(args.get("AbsolutePath", ""))
+                            fpath = fpath[len("file://"):] if fpath.startswith("file://") else fpath
+                            if fpath == suppress_file_path or os.path.basename(fpath) == os.path.basename(suppress_file_path):
+                                suppress_file_path = None
+                                continue  # its GENERIC result falls through as a no-op (no pending_tool set for it)
+
                         summary = _agy_str(tc.get("toolSummary") or args.get("toolSummary") or "") or ""
                         action = _agy_str(tc.get("toolAction") or args.get("toolAction") or "") or ""
                         desc = summary or action or ""
@@ -635,6 +723,13 @@ def stream_headless_cli(
                     # 3. Model Response (Final output)
                     if content and stype == "PLANNER_RESPONSE" and not tcs:
                         event_queue.put(("content", content))
+
+                    # suppress_file_path only ever describes THE step right
+                    # after a "saved to" pointer -- if it wasn't consumed by a
+                    # matching view_file call above, drop it so it can't later
+                    # misfire against some unrelated step's own output.txt
+                    # (steps reuse that same basename under different dirs).
+                    suppress_file_path = None
 
                 except Exception:
                     pass

@@ -75,6 +75,10 @@ SYNC_PAIRS = [
         r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\ha_engine.py",
     ),
     (
+        r"addons\antigravity-cli\core\session_manager.py",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\session_manager.py",
+    ),
+    (
         r"addons\antigravity-cli\core\streamer.py",
         r"\\HOMEASSISTANT\local_apps\antigravity-cli\core\streamer.py",
     ),
@@ -96,9 +100,27 @@ SYNC_PAIRS = [
     ),
 ]
 
+# Whole-directory pairs, for trees that grow file-by-file (agents/rules/hooks/
+# skills under bundled/) where hardcoding one SYNC_PAIRS entry per file would
+# silently miss anything added later.
+SYNC_DIRS = [
+    (
+        r"addons\antigravity-cli\bundled",
+        r"\\HOMEASSISTANT\local_apps\antigravity-cli\bundled",
+    ),
+]
+
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _copy_one(src, dst):
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(src, "rb") as f_src:
+        data = f_src.read()
+    with open(dst, "wb") as f_dst:
+        f_dst.write(data)
 
 
 def sync_samba():
@@ -106,15 +128,27 @@ def sync_samba():
     for src, dst in SYNC_PAIRS:
         if os.path.exists(src):
             try:
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                with open(src, "rb") as f_src:
-                    data = f_src.read()
-                with open(dst, "wb") as f_dst:
-                    f_dst.write(data)
+                _copy_one(src, dst)
                 print(f"[OK] {src} -> {dst}", flush=True)
                 count += 1
             except Exception as e:
                 print(f"[ERR] {src} -> {dst}: {e}", file=sys.stderr, flush=True)
+
+    for src_dir, dst_dir in SYNC_DIRS:
+        if not os.path.isdir(src_dir):
+            continue
+        for root, _dirs, files in os.walk(src_dir):
+            for name in files:
+                src = os.path.join(root, name)
+                rel = os.path.relpath(src, src_dir)
+                dst = os.path.join(dst_dir, rel)
+                try:
+                    _copy_one(src, dst)
+                    print(f"[OK] {src} -> {dst}", flush=True)
+                    count += 1
+                except Exception as e:
+                    print(f"[ERR] {src} -> {dst}: {e}", file=sys.stderr, flush=True)
+
     print(f"Total {count} files synchronized to Samba successfully.", flush=True)
 
 
