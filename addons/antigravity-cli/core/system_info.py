@@ -229,6 +229,6 @@ def get_all_addons_memory() -> str:
     usage = get_resource_usage()
     return (
         f"📊 시스템 리소스 현황:\n"
-        f"• Antigravity CLI 애드온: {usage['memory_usage']} MB (CPU {usage['cpu_usage']}%)\n"
-        f"• 시스템 전체 RAM: {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%)"
+        f"- Antigravity CLI 애드온: {usage['memory_usage']} MB (CPU {usage['cpu_usage']}%)\n"
+        f"- 시스템 전체 RAM: {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%)"
     )

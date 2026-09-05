@@ -352,7 +352,7 @@ def get_room_env_summary(states: list, kind: str = "temperature") -> str:
 
             if air_parts:
                 has_any = True
-                lines.append(f"• **{r}**: {' | '.join(air_parts)}")
+                lines.append(f"- **{r}**: {' | '.join(air_parts)}")
         if has_any:
             return "\n".join(lines)
         return "실내 공기질(CO2, TVOC, 미세먼지) 센서 데이터를 찾지 못했습니다."
@@ -366,7 +366,7 @@ def get_room_env_summary(states: list, kind: str = "temperature") -> str:
     for r in rooms:
         r_data = matrix.get(r, {})
         if target_metric in r_data:
-            lines.append(f"• {r}: {r_data[target_metric]['formatted']}")
+            lines.append(f"- {r}: {r_data[target_metric]['formatted']}")
             found_count += 1
 
     if found_count == 0:
@@ -386,7 +386,7 @@ def get_room_lights_summary(states: list) -> str:
             on_lights.append(fn)
 
     if on_lights:
-        return f"현재 켜져 있는 조명 목록입니다 (총 {len(on_lights)}개):\n• " + "\n• ".join(on_lights)
+        return f"현재 켜져 있는 조명 목록입니다 (총 {len(on_lights)}개):\n- " + "\n- ".join(on_lights)
     return "현재 집안의 모든 조명이 꺼져 있습니다."
 
 
@@ -416,7 +416,7 @@ def get_room_full_state(states: list, room_name: str) -> str:
         env_parts.append(f"⏱️ 기압 {r_data['pressure']['formatted']}")
 
     if env_parts:
-        lines.append(f"• 🌡️ 환경: {' | '.join(env_parts)}")
+        lines.append(f"- 🌡️ 환경: {' | '.join(env_parts)}")
 
     # Active Devices
     on_lights = [
@@ -427,9 +427,9 @@ def get_room_full_state(states: list, room_name: str) -> str:
         and s.get("state") == "on"
     ]
     if on_lights:
-        lines.append(f"• 💡 켜진 조명: {', '.join(on_lights)}")
+        lines.append(f"- 💡 켜진 조명: {', '.join(on_lights)}")
     else:
-        lines.append("• 💡 조명: 꺼짐")
+        lines.append("- 💡 조명: 꺼짐")
 
     covers = [
         f"{s.get('attributes', {}).get('friendly_name') or s.get('entity_id')} ({'열림' if s.get('state') == 'open' else '닫힘'})"
@@ -438,7 +438,7 @@ def get_room_full_state(states: list, room_name: str) -> str:
         and room_name in (s.get("attributes", {}).get("friendly_name") or "")
     ]
     if covers:
-        lines.append(f"• 🪟 커튼: {', '.join(covers)}")
+        lines.append(f"- 🪟 커튼: {', '.join(covers)}")
 
     fans = [
         s.get("attributes", {}).get("friendly_name") or s.get("entity_id")
@@ -448,7 +448,7 @@ def get_room_full_state(states: list, room_name: str) -> str:
         and s.get("state") == "on"
     ]
     if fans:
-        lines.append(f"• 🌀 가동 팬/환풍기: {', '.join(fans)}")
+        lines.append(f"- 🌀 가동 팬/환풍기: {', '.join(fans)}")
 
     return "\n".join(lines)
 
@@ -462,7 +462,7 @@ def get_automations_summary(states: list) -> str:
     on_autos = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in autos if s.get("state") == "on"]
     lines = [
         f"🤖 **Home Assistant 자동화 목록 (총 {len(autos)}개 중 {len(on_autos)}개 활성)**\n",
-        f"• 활성화된 자동화 ({len(on_autos)}개):\n  - " + "\n  - ".join(on_autos[:8]),
+        f"- 활성화된 자동화 ({len(on_autos)}개):\n  - " + "\n  - ".join(on_autos[:8]),
     ]
     if len(on_autos) > 8:
         lines.append(f"  - 외 {len(on_autos) - 8}개 자동화 상시 가동 중")
@@ -479,7 +479,7 @@ def get_todo_summary(states: list) -> str:
     for t in todos:
         fn = t.get("attributes", {}).get("friendly_name") or t.get("entity_id")
         st = t.get("state", "0")
-        lines.append(f"• **{fn}**: 미완료 항목 {st}개")
+        lines.append(f"- **{fn}**: 미완료 항목 {st}개")
     return "\n".join(lines)
 
 
@@ -509,23 +509,23 @@ def get_system_health_summary(states: list) -> str:
 
     lines = [
         "🛡️ **Home Assistant 시스템 헬스체크 진단 보고서**\n",
-        "• 🟢 시스템 상태: 정상 운영 중 (Core Online)",
-        f"• ⚙️ 리소스 점검: 호스트 RAM {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | 애드온 RAM {usage['memory_usage']} MB",
-        f"• 📊 엔티티 건전성: 전체 {len(states)}개 엔티티 중 응답 불가 {len(unavail)}개",
-        "• 🔒 MCP 서버 상태: ha-mcp (stdio) 정상 바인딩 및 통신 중",
+        "- 🟢 시스템 상태: 정상 운영 중 (Core Online)",
+        f"- ⚙️ 리소스 점검: 호스트 RAM {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%) | 애드온 RAM {usage['memory_usage']} MB",
+        f"- 📊 엔티티 건전성: 전체 {len(states)}개 엔티티 중 응답 불가 {len(unavail)}개",
+        "- 🔒 MCP 서버 상태: ha-mcp (stdio) 정상 바인딩 및 통신 중",
     ]
     if low_battery:
         shown = ", ".join(low_battery[:5])
         more = f" 외 {len(low_battery) - 5}개" if len(low_battery) > 5 else ""
-        lines.append(f"• 🔋 배터리 부족(20% 미만) {len(low_battery)}개: {shown}{more}")
+        lines.append(f"- 🔋 배터리 부족(20% 미만) {len(low_battery)}개: {shown}{more}")
     else:
-        lines.append("• 🔋 배터리 부족 기기가 없습니다.")
+        lines.append("- 🔋 배터리 부족 기기가 없습니다.")
     if pending_updates:
         shown = ", ".join(pending_updates[:5])
         more = f" 외 {len(pending_updates) - 5}개" if len(pending_updates) > 5 else ""
-        lines.append(f"• 🆕 업데이트 대기 중인 기기 {len(pending_updates)}개: {shown}{more}")
+        lines.append(f"- 🆕 업데이트 대기 중인 기기 {len(pending_updates)}개: {shown}{more}")
     else:
-        lines.append("• 🆕 모든 기기가 최신 상태입니다.")
+        lines.append("- 🆕 모든 기기가 최신 상태입니다.")
 
     lines.append(
         "\n⚠️ 배터리 부족 기기가 있어 점검이 필요합니다." if low_battery else "\n✅ 치명적인 시스템 장애가 발견되지 않았습니다."
@@ -556,10 +556,10 @@ def get_openings_summary(states: list) -> str:
 
     lines = ["🚪 **문/창문 및 카메라 상태**\n"]
     if opens:
-        lines.append(f"• 열려 있는 문/창문 {len(opens)}개: {', '.join(opens)}")
+        lines.append(f"- 열려 있는 문/창문 {len(opens)}개: {', '.join(opens)}")
     else:
-        lines.append("• 열려 있는 문/창문이 없습니다.")
-    cam_line = f"• 📷 카메라 총 {len(cameras)}대 (스트리밍 중 {len(streaming)}대)"
+        lines.append("- 열려 있는 문/창문이 없습니다.")
+    cam_line = f"- 📷 카메라 총 {len(cameras)}대 (스트리밍 중 {len(streaming)}대)"
     if streaming:
         cam_line += f": {', '.join(streaming)}"
     lines.append(cam_line)
@@ -604,9 +604,9 @@ def get_presence_summary(states: list, prompt: str = "") -> str:
 
     lines = ["👥 **가족 재실 현황**\n"]
     if persons_home:
-        lines.append(f"• 집에 있음: {', '.join(persons_home)}")
+        lines.append(f"- 집에 있음: {', '.join(persons_home)}")
     if persons_away:
-        lines.append(f"• 외출 중: {', '.join(persons_away)}")
+        lines.append(f"- 외출 중: {', '.join(persons_away)}")
     return "\n".join(lines)
 
 
@@ -651,16 +651,16 @@ def get_energy_summary(states: list) -> str:
         power_items.sort(key=lambda x: x[1], reverse=True)
         total_w = sum(v for _, v, u in power_items if "w" in u.lower())
         top = ", ".join(f"{fn} {v:.0f}{u}" for fn, v, u in power_items[:5])
-        lines.append(f"• 🔌 전력 사용 상위 기기: {top}")
+        lines.append(f"- 🔌 전력 사용 상위 기기: {top}")
         if total_w:
-            lines.append(f"• 순간 전력 합계: 약 {total_w:.0f}W")
+            lines.append(f"- 순간 전력 합계: 약 {total_w:.0f}W")
     else:
-        lines.append("• 🔌 전력 센서 데이터를 찾지 못했습니다.")
+        lines.append("- 🔌 전력 센서 데이터를 찾지 못했습니다.")
     if energy_items:
         e_top = ", ".join(f"{fn} {v:.1f}{u}" for fn, v, u in energy_items[:5])
-        lines.append(f"• 📈 누적 에너지: {e_top}")
+        lines.append(f"- 📈 누적 에너지: {e_top}")
     if gas_val is not None:
-        lines.append(f"• 🔥 가스 계량기: {gas_val}")
+        lines.append(f"- 🔥 가스 계량기: {gas_val}")
     return "\n".join(lines)
 
 
@@ -696,5 +696,5 @@ def get_anniversary_summary(states: list) -> str:
     lines = ["🎂 **다가오는 가족 기념일**\n"]
     for fn, next_date, d_day in events[:8]:
         d_label = "오늘" if d_day == 0 else f"D-{d_day}"
-        lines.append(f"• {fn}: {next_date.month}월 {next_date.day}일 ({d_label})")
+        lines.append(f"- {fn}: {next_date.month}월 {next_date.day}일 ({d_label})")
     return "\n".join(lines)

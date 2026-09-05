@@ -364,6 +364,15 @@ function showToast(text) {
             <!-- Main Final Answer Content -->
             <div class="answer-content"><span style="color: var(--text-muted); animation: pulseLive 1.5s infinite ease-in-out;">⚡ Antigravity CLI 실시간 처리 중...</span></div>
             <pre class="raw-markdown-view" style="display: none;"><code></code></pre>
+            <!-- Interactive device control card(s) -- populated only when
+                 this turn actually controlled something (see setDeviceCard()
+                 / renderDeviceCards() below); empty and hidden otherwise. -->
+            <div class="device-card-list"></div>
+            <!-- "OO에 음악 틀어줘" playlist pick-list (see setPlaylistCard()
+                 below) -- separate from device-card-list above since
+                 nothing was actually controlled yet, only offered as
+                 choices; empty and hidden otherwise. -->
+            <div class="playlist-card-list"></div>
           </div>
           <div class="msg-meta bot">
             <span class="meta-time">${timeStr}</span>
@@ -381,10 +390,414 @@ function showToast(text) {
         rawCode: row.querySelector('.raw-markdown-view code'),
         latencyEl: row.querySelector('.meta-latency'),
         tokensEl: row.querySelector('.meta-tokens'),
+        deviceCardList: row.querySelector('.device-card-list'),
+        playlistCardList: row.querySelector('.playlist-card-list'),
       };
     }
 
-    // Short "[고속]/[복합]/[CLI]" tag for the reasoning-log header, derived
+    // Interactive device control card(s) attached below a bot bubble's
+    // answer text -- one card per entity the command just controlled (see
+    // core/ha_client.py's build_device_cards(), which decides what fields
+    // each card carries based on what the entity actually reports; a
+    // missing key here means "don't show that control", not zero/default).
+    // Every control here calls POST /api/device/control DIRECTLY -- it does
+    // NOT go back through the chat pipeline, so none of the safety gates
+    // (room disambiguation, hidden-device confirmation, dangerous-appliance
+    // confirmation) apply to a card's own slider/toggle. That's intentional:
+    // a card only ever exists for an entity that already passed those once,
+    // on its way to being controlled by the command that produced the card
+    // -- see ALLOWED_CARD_SERVICES in core/ha_client.py for the narrow set
+    // of services this endpoint will actually forward.
+    function jsAttrEscape(s) {
+      return String(s).replace(/'/g, "\\\\'");
+    }
+
+    // HTML-text escaping (as opposed to jsAttrEscape's single-quote-only JS
+    // string escaping above) -- for text that's inserted as element content
+    // rather than into an onclick="..." attribute, e.g. a playlist name
+    // that happens to contain '&'/'<'/'>'/'"'.
+    function htmlEscape(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function postDeviceControl(entityId, domain, service, data) {
+      try {
+        const url = new URL('api/device/control', window.location.href).href;
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity_id: entityId, domain, service, data: data || {} }),
+        });
+      } catch (e) {}
+    }
+
+    // Keeps a visible device card's state fresh without the user touching
+    // it -- e.g. a "now playing" progress bar advancing, or a light someone
+    // else turned off from a physical switch. Deliberately scoped to
+    // cards actually ON SCREEN: every card floating in the chat history
+    // would be wasteful to keep polling, so an IntersectionObserver starts
+    // a per-entity timer only while its card is in the viewport and stops
+    // it the moment it scrolls away. Keyed by entity_id (not the DOM node
+    // itself) because refreshDeviceCard() below replaces the node's
+    // outerHTML on every tick -- a stale node reference would go silently
+    // dead, but re-querying by entity_id each tick always finds whatever
+    // node currently represents it.
+    const _liveCardIntervals = new Map();
+    let _liveCardObserver = null;
+
+    function getLiveCardObserver() {
+      if (!_liveCardObserver) {
+        _liveCardObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            const eid = entry.target.getAttribute('data-entity-id');
+            if (!eid) return;
+            if (entry.isIntersecting) {
+              startLiveCardPolling(eid);
+            } else {
+              stopLiveCardPolling(eid);
+            }
+          });
+        }, { threshold: 0.1 });
+      }
+      return _liveCardObserver;
+    }
+
+    function startLiveCardPolling(entityId) {
+      if (_liveCardIntervals.has(entityId)) return;
+      const id = setInterval(function () { refreshDeviceCard(entityId); }, 3000);
+      _liveCardIntervals.set(entityId, id);
+    }
+
+    function stopLiveCardPolling(entityId) {
+      const id = _liveCardIntervals.get(entityId);
+      if (id) {
+        clearInterval(id);
+        _liveCardIntervals.delete(entityId);
+      }
+    }
+
+    // Re-fetches ONE entity's live state and replaces its card's DOM node in
+    // place -- used both after a toggle flips on/off (that's the only card
+    // interaction that can add or remove whole rows: a light's brightness/
+    // color-temp, a media_player's volume, ... are only reported by HA once
+    // the device is actually on -- see core/ha_client.py's
+    // build_device_cards() docstring; a light card built while off has no
+    // brightness/color-temp fields at all, so its slider rows never render
+    // until the card is rebuilt from a fresh, now-on state) and by the
+    // visible-card polling loop above. Since outerHTML replacement creates
+    // a brand new DOM node, it re-registers that new node with the
+    // IntersectionObserver afterward -- otherwise the very first refresh
+    // would silently stop the card from ever being tracked again.
+    async function refreshDeviceCard(entityId) {
+      try {
+        const url = new URL('api/device/state?entity_id=' + encodeURIComponent(entityId), window.location.href).href;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const card = data && data.cards && data.cards[0];
+        if (!card) return;
+        let el = null;
+        document.querySelectorAll('.device-card').forEach(function (c) {
+          if (c.getAttribute('data-entity-id') === entityId) el = c;
+        });
+        if (!el) return;
+        el.outerHTML = renderOneDeviceCard(card);
+        let newEl = null;
+        document.querySelectorAll('.device-card').forEach(function (c) {
+          if (c.getAttribute('data-entity-id') === entityId) newEl = c;
+        });
+        if (newEl) getLiveCardObserver().observe(newEl);
+      } catch (e) {}
+    }
+
+    async function handleDeviceToggle(checkbox, entityId, domain, onService, offService) {
+      await postDeviceControl(entityId, domain, checkbox.checked ? onService : offService, {});
+      setTimeout(function () { refreshDeviceCard(entityId); }, 400);
+    }
+
+    // `divisor`, when given, converts the slider's displayed 0-100(-ish)
+    // value into what the HA service actually expects (e.g. media_player's
+    // volume_set wants a 0.0-1.0 float, not a percentage) -- the card's own
+    // display value (built server-side) always stays human-scale.
+    function handleDeviceSlider(input, entityId, domain, service, dataKey, divisor) {
+      let value = Number(input.value);
+      if (divisor) value = value / divisor;
+      const data = {};
+      data[dataKey] = value;
+      postDeviceControl(entityId, domain, service, data);
+    }
+
+    function handleDeviceColor(input, entityId) {
+      const hex = input.value; // '#rrggbb' from the native color picker
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      postDeviceControl(entityId, 'light', 'turn_on', { rgb_color: [r, g, b] });
+    }
+
+    function deviceCardToggleHTML(card) {
+      // media_player never reports state "on" -- HA uses "playing"/"paused"/
+      // "idle"/"buffering"/"standby" for a powered-on player and only
+      // "off" (or "unavailable"/"unknown") means actually off, unlike
+      // light/switch/climate's plain on/off. Missing this meant the
+      // toggle showed OFF for a media_player card no matter what it was
+      // actually doing, confirmed live right after this card started
+      // supporting speakers.
+      const isOn = card.domain === 'media_player'
+        ? !['off', 'unavailable', 'unknown'].includes(card.state)
+        : (card.state === 'on' || card.state === 'open');
+      const onService = card.domain === 'cover' ? 'open_cover' : 'turn_on';
+      const offService = card.domain === 'cover' ? 'close_cover' : 'turn_off';
+      const eid = jsAttrEscape(card.entity_id);
+      const dm = jsAttrEscape(card.domain);
+      return `
+        <label class="toggle-switch">
+          <input type="checkbox" ${isOn ? 'checked' : ''} onchange="handleDeviceToggle(this, '${eid}', '${dm}', '${onService}', '${offService}')">
+          <span class="toggle-slider"></span>
+        </label>`;
+    }
+
+    function handleDeviceSelect(select, entityId, domain, service, dataKey) {
+      const data = {};
+      data[dataKey] = select.value;
+      postDeviceControl(entityId, domain, service, data);
+    }
+
+    // Dropdown row for a fixed set of named modes (climate's hvac_mode/
+    // fan_mode) -- unlike a slider's numeric range, these are entity-
+    // reported strings (e.g. "fan_only", "focus") with no inherent order,
+    // so a <select> is the natural widget rather than a range input.
+    function deviceCardRowSelect(entityId, domain, service, dataKey, label, options, currentValue) {
+      const eid = jsAttrEscape(entityId);
+      const dm = jsAttrEscape(domain);
+      const sv = jsAttrEscape(service);
+      const dk = jsAttrEscape(dataKey);
+      const optionsHtml = options.map(opt => {
+        const safeOpt = String(opt).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return `<option value="${safeOpt}" ${opt === currentValue ? 'selected' : ''}>${safeOpt}</option>`;
+      }).join('');
+      return `
+        <div class="device-card-row">
+          <span class="device-card-row-label">${label}</span>
+          <select class="device-card-select" onchange="handleDeviceSelect(this, '${eid}', '${dm}', '${sv}', '${dk}')">
+            ${optionsHtml}
+          </select>
+        </div>`;
+    }
+
+    function deviceCardRowSlider(entityId, domain, service, dataKey, label, min, max, value, unit, divisor) {
+      const eid = jsAttrEscape(entityId);
+      const dm = jsAttrEscape(domain);
+      const sv = jsAttrEscape(service);
+      const dk = jsAttrEscape(dataKey);
+      const safeId = 'dc_' + entityId.replace(/[^a-zA-Z0-9]/g, '_') + '_' + dataKey;
+      const unitStr = unit || '';
+      return `
+        <div class="device-card-row">
+          <span class="device-card-row-label">${label}</span>
+          <input type="range" class="device-card-slider" min="${min}" max="${max}" value="${value}" id="${safeId}"
+            oninput="document.getElementById('${safeId}_val').textContent = this.value + '${unitStr}'"
+            onchange="handleDeviceSlider(this, '${eid}', '${dm}', '${sv}', '${dk}', ${divisor || 0})">
+          <span class="device-card-row-value" id="${safeId}_val">${value}${unitStr}</span>
+        </div>`;
+    }
+
+    function formatMediaSeconds(sec) {
+      sec = Math.max(0, Math.round(Number(sec) || 0));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m + ':' + String(s).padStart(2, '0');
+    }
+
+    // Shared by the prev/next/play/pause buttons and the seek bar below --
+    // posts the control, then re-fetches this one card shortly after so
+    // the title/artist/progress reflect the new track/position without
+    // waiting for the next live-poll tick (see startLiveCardPolling()).
+    async function handleMediaButton(entityId, service, data) {
+      await postDeviceControl(entityId, 'media_player', service, data || {});
+      setTimeout(function () { refreshDeviceCard(entityId); }, 500);
+    }
+
+    function mediaProgressBarHTML(card) {
+      const eid = jsAttrEscape(card.entity_id);
+      const dur = card.media_duration;
+      const pos = Math.min(card.media_position, dur);
+      const safeId = 'mp_' + card.entity_id.replace(/[^a-zA-Z0-9]/g, '_') + '_pos';
+      return `
+        <input type="range" class="media-progress-slider" min="0" max="${dur}" value="${pos}" id="${safeId}"
+          oninput="document.getElementById('${safeId}_val').textContent = formatMediaSeconds(this.value)"
+          onchange="handleMediaButton('${eid}', 'media_seek', { seek_position: Number(this.value) })">
+        <div class="media-now-playing-time">
+          <span id="${safeId}_val">${formatMediaSeconds(pos)}</span>
+          <span>${formatMediaSeconds(dur)}</span>
+        </div>`;
+    }
+
+    // "Now playing" widget -- title/artist/cover/progress/prev-next/
+    // play-pause. Only rendered when build_device_cards() actually reports
+    // a media_title (nothing loaded/idle players get no widget at all, see
+    // its docstring in core/ha_client.py).
+    function nowPlayingHTML(card) {
+      const eid = jsAttrEscape(card.entity_id);
+      const cover = card.media_image
+        ? `<img class="media-now-playing-cover" src="${htmlEscape(card.media_image)}" onerror="this.style.display='none'">`
+        : '<span class="media-now-playing-cover media-now-playing-cover-empty">🎵</span>';
+      const isPlaying = card.state === 'playing';
+      const playPauseIcon = isPlaying ? '⏸' : '▶';
+      const playPauseService = isPlaying ? 'media_pause' : 'media_play';
+      const progress = (typeof card.media_duration === 'number' && typeof card.media_position === 'number')
+        ? `<div class="media-now-playing-progress">${mediaProgressBarHTML(card)}</div>`
+        : '';
+      return `
+        <div class="media-now-playing">
+          ${cover}
+          <div class="media-now-playing-info">
+            <div class="media-now-playing-title">${htmlEscape(card.media_title)}</div>
+            ${card.media_artist ? `<div class="media-now-playing-artist">${htmlEscape(card.media_artist)}</div>` : ''}
+            ${progress}
+            <div class="media-now-playing-controls">
+              <button type="button" onclick="handleMediaButton('${eid}', 'media_previous_track')">⏮</button>
+              <button type="button" onclick="handleMediaButton('${eid}', '${playPauseService}')">${playPauseIcon}</button>
+              <button type="button" onclick="handleMediaButton('${eid}', 'media_next_track')">⏭</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function renderOneDeviceCard(card) {
+      const rows = [];
+      if (card.domain === 'light') {
+        if (typeof card.brightness_pct === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'light', 'turn_on', 'brightness_pct', '밝기', 1, 100, card.brightness_pct, '%'));
+        }
+        if (typeof card.color_temp_kelvin === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'light', 'turn_on', 'color_temp_kelvin', '색온도',
+            card.min_color_temp_kelvin || 2000, card.max_color_temp_kelvin || 6500, card.color_temp_kelvin, 'K'));
+        }
+        if (card.rgb_color) {
+          const hex = '#' + card.rgb_color.map(c => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+          const eid = jsAttrEscape(card.entity_id);
+          rows.push(`
+            <div class="device-card-row">
+              <span class="device-card-row-label">색상</span>
+              <input type="color" class="device-card-color" value="${hex}" onchange="handleDeviceColor(this, '${eid}')">
+            </div>`);
+        }
+      } else if (card.domain === 'fan') {
+        if (typeof card.percentage === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'fan', 'set_percentage', 'percentage', '풍량', 0, 100, card.percentage, '%'));
+        }
+      } else if (card.domain === 'climate') {
+        // A climate entity's own `state` IS its current hvac_mode in HA
+        // (see core/ha_client.py's build_device_cards()) -- no separate
+        // "current mode" field needed, `card.state` marks the selected
+        // <option> directly.
+        if (card.hvac_modes && card.hvac_modes.length) {
+          rows.push(deviceCardRowSelect(card.entity_id, 'climate', 'set_hvac_mode', 'hvac_mode', '모드', card.hvac_modes, card.state));
+        }
+        if (card.fan_modes && card.fan_modes.length) {
+          rows.push(deviceCardRowSelect(card.entity_id, 'climate', 'set_fan_mode', 'fan_mode', '팬 속도', card.fan_modes, card.fan_mode));
+        }
+        if (typeof card.target_temperature === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'climate', 'set_temperature', 'temperature', '목표온도',
+            card.min_temp || 16, card.max_temp || 30, card.target_temperature, '℃'));
+        }
+      } else if (card.domain === 'cover') {
+        if (typeof card.current_position === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'cover', 'set_cover_position', 'position', '위치', 0, 100, card.current_position, '%'));
+        }
+      } else if (card.domain === 'media_player') {
+        if (card.media_title) {
+          rows.push(nowPlayingHTML(card));
+        }
+        if (typeof card.volume_pct === 'number') {
+          rows.push(deviceCardRowSlider(card.entity_id, 'media_player', 'volume_set', 'volume_level', '볼륨', 0, 100, card.volume_pct, '%', 100));
+        }
+      }
+
+      return `
+        <div class="device-card" data-entity-id="${jsAttrEscape(card.entity_id)}">
+          <div class="device-card-header">
+            <span class="device-card-name">${card.name}</span>
+            ${deviceCardToggleHTML(card)}
+          </div>
+          ${rows.length ? `<div class="device-card-body">${rows.join('')}</div>` : ''}
+        </div>`;
+    }
+
+    function renderDeviceCards(container, cards) {
+      if (!container) return;
+      if (!cards || !cards.length) { container.innerHTML = ''; return; }
+      container.innerHTML = cards.map(renderOneDeviceCard).join('');
+      // Registers every card for visible-only live polling -- covers both
+      // a live turn's card and a restored-conversation card (buildRestoredBotRow
+      // calls this same function), see getLiveCardObserver() above.
+      container.querySelectorAll('.device-card').forEach(function (el) {
+        getLiveCardObserver().observe(el);
+      });
+    }
+
+    // Click handler for one playlist row in the "OO에 음악 틀어줘"
+    // pick-list (see core/music_assistant.py) -- calls music_assistant.
+    // play_media directly (allowed via ALLOWED_CARD_SERVICES in
+    // core/ha_client.py) with that playlist's library URI as media_id.
+    // Marks the clicked row so the user can see which one is now playing;
+    // clicking another swaps which one is marked, it doesn't stack. The
+    // target entity is read live from the player <select> (falling back to
+    // the card's own default) rather than being baked into each row at
+    // render time, so switching speakers and then clicking a playlist
+    // sends it to the newly chosen one.
+    function handlePlaylistSelect(button, uri) {
+      const card = button.closest('.playlist-card');
+      if (!card) return;
+      const select = card.querySelector('.playlist-card-player-select');
+      const entityId = select ? select.value : card.getAttribute('data-entity-id');
+      if (!entityId) return;
+      card.querySelectorAll('.playlist-card-item').forEach(function (el) { el.classList.remove('playing'); });
+      button.classList.add('playing');
+      postDeviceControl(entityId, 'music_assistant', 'play_media', { media_id: uri, media_type: 'playlist' });
+    }
+
+    function renderPlaylistCard(data) {
+      if (!data || !data.playlists || !data.playlists.length) return '';
+      const defaultEid = htmlEscape(data.entity_id);
+      const players = data.players || [];
+      // Only worth showing a picker when there's an actual choice --
+      // one player provider entry is just the already-resolved speaker.
+      const playerSelectHtml = players.length > 1
+        ? `<select class="playlist-card-player-select">${players.map(function (p) {
+            const selected = p.entity_id === data.entity_id ? ' selected' : '';
+            return `<option value="${htmlEscape(p.entity_id)}"${selected}>${htmlEscape(p.name)}</option>`;
+          }).join('')}</select>`
+        : '';
+      // Small, non-prominent cover art in a compact scrollable list (up to
+      // 9 items) rather than a big thumbnail grid.
+      const items = data.playlists.map(function (pl) {
+        const uri = jsAttrEscape(pl.uri);
+        const thumb = pl.image
+          ? `<img class="playlist-card-thumb" src="${htmlEscape(pl.image)}" onerror="this.style.display='none'">`
+          : '<span class="playlist-card-thumb playlist-card-thumb-empty">🎵</span>';
+        return `
+          <button type="button" class="playlist-card-item" onclick="handlePlaylistSelect(this, '${uri}')">
+            ${thumb}
+            <span class="playlist-card-item-name">${htmlEscape(pl.name)}</span>
+          </button>`;
+      }).join('');
+      return `
+        <div class="playlist-card" data-entity-id="${defaultEid}">
+          <div class="playlist-card-header">
+            <span class="playlist-card-header-label">${htmlEscape(data.entity_name)}에서 재생</span>
+            ${playerSelectHtml}
+          </div>
+          <div class="playlist-card-items">${items}</div>
+        </div>`;
+    }
+
+    function renderPlaylistCardInto(container, data) {
+      if (!container) return;
+      container.innerHTML = renderPlaylistCard(data);
+    }
+
+    // Short "[제어]/[CLI]" tag for the reasoning-log header, derived
     // from STREAM_MODES (defined further below) so the picker's mode names
     // and the bubble's mode tag can never drift apart the way the old
     // hardcoded emoji-badge text did.
@@ -938,7 +1351,7 @@ function showToast(text) {
       const startTime = performance.now();
 
       const { text: modeText, cls: modeClass } = modeBadgeFor(streamMode);
-      const { row, termBody, termBadge, answerContent, rawCode, latencyEl, tokensEl } =
+      const { row, termBody, termBadge, answerContent, rawCode, latencyEl, tokensEl, deviceCardList, playlistCardList } =
         buildBotBubbleDOM(modeText, modeClass, timeStr);
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
@@ -1012,6 +1425,14 @@ function showToast(text) {
         },
         hasContent: function() {
           return answerText && answerText.trim().length > 0;
+        },
+        setDeviceCard: function(cards) {
+          renderDeviceCards(deviceCardList, cards);
+          box.scrollTop = box.scrollHeight;
+        },
+        setPlaylistCard: function(data) {
+          renderPlaylistCardInto(playlistCardList, data);
+          box.scrollTop = box.scrollHeight;
         },
         finish: function(tokensMeta) {
           if (finished) return;
@@ -1279,13 +1700,17 @@ function showToast(text) {
     // full description per row when the dropdown is open -- same pattern as
     // the model picker.
     const ICON_ZAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
-    const ICON_BRAIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v.5A2.5 2.5 0 0 0 4.5 7.5 2.5 2.5 0 0 0 3 9.9 2.5 2.5 0 0 0 4.5 14a2.5 2.5 0 0 0 2.5 2.5V19a2.5 2.5 0 0 0 5 0V4.5A2.5 2.5 0 0 0 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 1 17 4.5v.5a2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 21 9.9 2.5 2.5 0 0 1 19.5 14a2.5 2.5 0 0 1-2.5 2.5V19a2.5 2.5 0 0 1-5 0V4.5A2.5 2.5 0 0 1 14.5 2z"/></svg>';
     const ICON_TERMINAL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
     const ICON_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
+    // value '2' (구 "AI 딥 브레인"/복합 모드) 제거됨 -- 날씨/환경 질문에 대한
+    // 딥 분석은 실제 LLM 호출도 없고 비용 차이가 없어서 별도 모드로 나눌 이유가
+    // 없었고, core/renderers.py의 get_ai_deep_environment_analysis()로 흡수돼
+    // value '1'(제어 모드)이 해당 질문에서 자동으로 더 풍부한 답을 준다. 옛
+    // localStorage에 '2'가 남아있어도 stream_agent_chat() 라우터가 fast
+    // dispatcher로 그대로 처리하므로 깨지지 않음 (core/streamer.py 참고).
     const STREAM_MODES = [
-      { value: '1', icon: ICON_ZAP_SVG, colorClass: 'mode-color-amber', shortName: '고속', name: '고속 제어 모드', desc: '0.05초 네이티브 기기 즉시 제어 & 빠른 질의' },
-      { value: '2', icon: ICON_BRAIN_SVG, colorClass: 'mode-color-purple', shortName: '복합', name: '고속 제어 & 스마트 모드', desc: '다차원 환경 분석 & 스마트 어드바이스' },
+      { value: '1', icon: ICON_ZAP_SVG, colorClass: 'mode-color-amber', shortName: '제어', name: '고속 제어 모드', desc: '0.05초 네이티브 기기 즉시 제어 & 환경 분석 & 빠른 질의' },
       { value: '3', icon: ICON_TERMINAL_SVG, colorClass: 'mode-color-sky', shortName: 'CLI', name: 'CLI 추론 모드', desc: '공식 agy 0초 실시간 스트리밍 엔진' },
     ];
     let currentStreamMode = localStorage.getItem('antigravity_stream_mode') || '3';
@@ -1325,6 +1750,31 @@ function showToast(text) {
       closeStreamModePicker();
     }
 
+    // Mode/model/agent dropdowns open ABOVE their button (CSS default:
+    // position:absolute; bottom:calc(100% + 8px)). On mobile,
+    // .composer-toolbar-left needs overflow-x:auto so the 3 buttons don't
+    // overflow the phone screen -- but per the CSS spec, setting only one of
+    // overflow-x/overflow-y forces the other to also compute to auto
+    // (documented on .model-dropdown-list below for the same reason), so
+    // that scroll container silently clips its own popped-open dropdown too.
+    // Switching the open dropdown to position:fixed with JS-computed
+    // viewport coordinates escapes that ancestor's clipping entirely --
+    // this is what actually made the pickers "unselectable" on mobile
+    // before this fix, since the dropdown was rendering but invisible.
+    function positionDropdownAboveButton(btnId, dropdownId) {
+      const btn = document.getElementById(btnId);
+      const dropdown = document.getElementById(dropdownId);
+      if (!btn || !dropdown) return;
+      const btnRect = btn.getBoundingClientRect();
+      const ddWidth = dropdown.offsetWidth;
+      let left = Math.min(btnRect.left, window.innerWidth - ddWidth - 8);
+      left = Math.max(left, 8);
+      dropdown.style.position = 'fixed';
+      dropdown.style.left = left + 'px';
+      dropdown.style.bottom = (window.innerHeight - btnRect.top + 8) + 'px';
+      dropdown.style.top = 'auto';
+    }
+
     function toggleStreamModePicker() {
       const dropdown = document.getElementById('stream-mode-dropdown');
       if (!dropdown) return;
@@ -1333,6 +1783,7 @@ function showToast(text) {
       const usagePanel = document.getElementById('usage-panel');
       if (usagePanel) usagePanel.classList.remove('open');
       dropdown.classList.toggle('open', opening);
+      if (opening) positionDropdownAboveButton('stream-mode-btn', 'stream-mode-dropdown');
     }
 
     function closeStreamModePicker() {
@@ -1508,6 +1959,7 @@ function showToast(text) {
       const usagePanel = document.getElementById('usage-panel');
       if (usagePanel) usagePanel.classList.remove('open');
       dropdown.classList.toggle('open', opening);
+      if (opening) positionDropdownAboveButton('model-picker-btn', 'model-dropdown');
     }
 
     function closeModelPicker() {
@@ -1599,6 +2051,7 @@ function showToast(text) {
       closeModelPicker();
       closeStreamModePicker();
       dropdown.classList.toggle('open', opening);
+      if (opening) positionDropdownAboveButton('agent-picker-btn', 'agent-dropdown');
     }
 
     function closeAgentPicker() {
@@ -2149,12 +2602,16 @@ function showToast(text) {
       return decodeUnicodeString(text);
     }
 
-    // Best-effort mode badge for a restored turn. record_mode1_interaction /
-    // record_mode2_interaction (core/session_manager.py) always prefix their
-    // synthetic `thinking` text this way; a turn with neither prefix ran
-    // through Mode 3 (agy), whose native transcript entries don't use this
-    // convention. No explicit "which mode" field is stored per turn, so this
-    // is inferred rather than authoritative.
+    // Best-effort mode badge for a restored turn. record_mode2_interaction
+    // (core/session_manager.py) always prefixes its synthetic `thinking`
+    // text this way; a turn with neither prefix ran through Mode 3 (agy),
+    // whose native transcript entries don't use this convention. No explicit
+    // "which mode" field is stored per turn, so this is inferred rather than
+    // authoritative. The "AI 딥 브레인" prefix is from the now-removed
+    // standalone deep-brain mode (record_mode1_interaction, deleted) --
+    // modeBadgeFor('2') no longer matches any STREAM_MODES entry and falls
+    // back to STREAM_MODES[0] ([제어]), which is fine for old history: it's
+    // just a badge label, not a functional distinction anymore.
     function inferTurnModeBadge(turn) {
       for (const r of turn.responses) {
         if (typeof r.thinking === 'string') {
@@ -2238,6 +2695,7 @@ function showToast(text) {
       let firstCreated = null;
       let lastCreated = null;
 
+      let deviceCardEntityIds = null;
       turn.responses.forEach(cur => {
         if (cur.created_at) {
           lastTimeStr = new Date(cur.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -2251,6 +2709,9 @@ function showToast(text) {
         if (cur.type === 'PLANNER_RESPONSE' && cur.content && typeof cur.content === 'string' && cur.content.trim()) {
           finalContent = cur.content.trim();
         }
+        if (cur.device_card_entity_ids && cur.device_card_entity_ids.length) {
+          deviceCardEntityIds = cur.device_card_entity_ids;
+        }
       });
 
       // Mirrors tail_transcript()'s buffering in core/streamer.py -- turns
@@ -2261,8 +2722,20 @@ function showToast(text) {
       const steps = buildStepsFromResponses(turn.responses);
 
       const { text: modeText, cls: modeClass } = inferTurnModeBadge(turn);
-      const { row, termBody, termBadge, answerContent, rawCode } =
+      const { row, termBody, termBadge, answerContent, rawCode, deviceCardList } =
         buildBotBubbleDOM(modeText, modeClass, lastTimeStr);
+
+      // Only the entity ids were persisted, never a frozen attribute
+      // snapshot (see core/session_manager.py's record_model_response()) --
+      // fetch each entity's LIVE current state so a restored card always
+      // reflects reality, not whatever it was at the time of this old turn.
+      if (deviceCardEntityIds && deviceCardEntityIds.length) {
+        const qs = deviceCardEntityIds.map(id => 'entity_id=' + encodeURIComponent(id)).join('&');
+        fetch(new URL('api/device/state?' + qs, window.location.href).href)
+          .then(r => r.json())
+          .then(data => renderDeviceCards(deviceCardList, data && data.cards))
+          .catch(() => {});
+      }
 
       // A restored turn is always "done" -- never actually live -- regardless
       // of whether it had any reasoning/tool-call steps to show. Collapsed by
@@ -2383,7 +2856,7 @@ function showToast(text) {
 
     // Mode 3 stop/cancel state -- set by sendMessage() while a generation is
     // in flight, read by updateSendBtn() to swap the send button into a stop
-    // button. Modes 1/2 finish near-instantly with no cancellable backend
+    // button. the fast control mode finish near-instantly with no cancellable backend
     // process (see core/streamer.py), so the swap only ever applies to Mode 3.
     let isStreamActive = false;
     let activeStreamId = '';
@@ -2482,7 +2955,7 @@ function showToast(text) {
     // tool reads and visually understands an image given just its absolute
     // path in a headless -p prompt (confirmed live), so there's no direct
     // multimodal API integration here -- just save the bytes and reference
-    // the returned path in the prompt text. Modes 1/2 never invoke agy, so
+    // the returned path in the prompt text. the fast control mode never invoke agy, so
     // the attach button stays disabled outside Mode 3 (see
     // updateAttachBtnState(), called from updateStreamModeButton()).
     let pendingAttachments = [];
@@ -2946,6 +3419,10 @@ function showToast(text) {
                 streamUI.appendChunk(ev.content);
               } else if (ev.type === 'text') {
                 streamUI.setText(ev.content);
+              } else if (ev.type === 'device_card') {
+                streamUI.setDeviceCard(ev.data && ev.data.cards);
+              } else if (ev.type === 'playlist_card') {
+                streamUI.setPlaylistCard(ev.data);
               } else if (ev.type === 'done') {
                 streamUI.finish(ev.tokens);
                 loadSessionsList();

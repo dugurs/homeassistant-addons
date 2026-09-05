@@ -90,8 +90,14 @@ RUN mkdir -p /usr/local/share/antigravity-cli-skills \
          && rm -rf /usr/local/share/antigravity-cli-skills/home-assistant-best-practices \
          && cp -r /usr/local/share/antigravity-cli-bundled/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ )
 
-# 6. Automatically install CLI packages (HA CLI, Python AI tools)
-RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli || true
+# 6. Automatically install CLI packages (HA CLI, Python AI tools) + a small
+# pure-Python websocket client -- entity-registry metadata (hidden_by, used
+# by core/ha_registry.py to keep a user-hidden device from being swept into
+# a room-wide control command) is WebSocket-only in stock HA, REST has no
+# equivalent. Best-effort like the rest of this line: core/ha_registry.py
+# catches ImportError/connection failures and degrades to "no hidden-device
+# filtering" rather than breaking device control if this fails to install.
+RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli websocket-client || true
 
 # 7. Copy core modules, run script and API server
 COPY core/ /usr/local/bin/core/

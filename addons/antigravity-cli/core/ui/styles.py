@@ -953,6 +953,297 @@ CSS_STYLES = """
       color: var(--text-main);
     }
 
+    /* Interactive device control card(s) -- see setDeviceCard()/
+       renderDeviceCards() in core/ui/scripts.py. Sits below .answer-content,
+       inside the same .bubble card; empty and collapsed (no margin) when no
+       card is attached to a turn. */
+    .device-card-list:empty { display: none; }
+    .device-card-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .device-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .device-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .device-card-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .device-card-body {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .device-card-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .device-card-row-label {
+      flex-shrink: 0;
+      width: 3.6em;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+    .device-card-row-value {
+      flex-shrink: 0;
+      width: 3.4em;
+      text-align: right;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+    .device-card-slider {
+      flex: 1;
+      accent-color: var(--accent-blue);
+      height: 4px;
+      cursor: pointer;
+    }
+    .device-card-color {
+      width: 28px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: none;
+      cursor: pointer;
+    }
+    /* climate's hvac_mode/fan_mode dropdowns (see deviceCardRowSelect()) --
+       entity-reported mode strings (e.g. "fan_only"), not a numeric range,
+       so a native <select> replaces the slider for these two rows. */
+    .device-card-select {
+      flex: 1;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 3px 6px;
+      font-size: 0.75rem;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    /* media_player "now playing" widget -- see nowPlayingHTML() in
+       core/ui/scripts.py. Only rendered once something is actually
+       loaded (build_device_cards() gates on media_title), so an idle/off
+       player's card just shows its plain on/off toggle + volume slider. */
+    .media-now-playing {
+      display: flex;
+      gap: 10px;
+      padding-bottom: 4px;
+    }
+    .media-now-playing-cover {
+      flex-shrink: 0;
+      width: 48px;
+      height: 48px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+    .media-now-playing-cover-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-card-hover);
+      font-size: 1.2rem;
+    }
+    .media-now-playing-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .media-now-playing-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .media-now-playing-artist {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .media-now-playing-progress { margin-top: 4px; }
+    .media-progress-slider {
+      width: 100%;
+      accent-color: var(--accent-blue);
+      height: 4px;
+      cursor: pointer;
+    }
+    .media-now-playing-time {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+    .media-now-playing-controls {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .media-now-playing-controls button {
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-main);
+      font-size: 0.8rem;
+      padding: 3px 10px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .media-now-playing-controls button:hover { border-color: var(--accent-blue); }
+
+    /* "OO에 음악 틀어줘" playlist pick-list -- see setPlaylistCard()/
+       renderPlaylistCard() in core/ui/scripts.py and core/music_assistant.py.
+       Separate block from .device-card-list above (a grid of clickable
+       choices, not a single entity's on/off+sliders card), but reuses the
+       same card surface/border tokens for visual consistency. Reverted
+       back to the original thumbnail-grid layout per explicit feedback
+       after briefly trying a compact row-list instead. */
+    .playlist-card-list:empty { display: none; }
+    .playlist-card-list { margin-top: 10px; }
+    .playlist-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .playlist-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .playlist-card-header-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-dim);
+    }
+    /* Speaker picker -- every player Music Assistant itself knows about
+       (see get_all_music_assistant_players()), not just the room-resolved
+       one, so playback can be redirected to any of them. Only rendered at
+       all when there's more than one to choose from. */
+    .playlist-card-player-select {
+      flex-shrink: 0;
+      max-width: 45%;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 3px 6px;
+      font-size: 0.72rem;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+    .playlist-card-items {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 8px;
+      max-height: 21rem;
+      overflow-y: auto;
+    }
+    .playlist-card-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 6px;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: center;
+    }
+    .playlist-card-item:hover { border-color: var(--accent-blue); }
+    .playlist-card-item.playing {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 1px var(--accent-blue) inset;
+    }
+    .playlist-card-thumb {
+      width: 56px;
+      height: 56px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+    .playlist-card-thumb-empty {
+      width: 56px;
+      height: 56px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-card);
+      font-size: 1.4rem;
+    }
+    .playlist-card-item-name {
+      font-size: 0.72rem;
+      color: var(--text-main);
+      line-height: 1.25;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* On/off toggle switch -- a checkbox visually replaced with a sliding
+       pill (the checkbox itself stays in the DOM and keyboard-accessible,
+       just visually hidden via opacity:0 rather than display:none). */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+    }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      transition: background 0.15s ease;
+      pointer-events: none;
+    }
+    .toggle-slider::before {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 2px;
+      top: 2px;
+      background: var(--text-dim);
+      border-radius: 50%;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background: var(--accent-blue);
+      border-color: var(--accent-blue);
+    }
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(16px);
+      background: #fff;
+    }
+
     .answer-content h1, .answer-content h2, .answer-content h3, .answer-content h4, .answer-content h5, .answer-content h6 {
       color: var(--text-bold);
       font-weight: 700;
@@ -1414,7 +1705,14 @@ CSS_STYLES = """
        the composer, and with no wrap/scroll handling the last one (agent)
        just overflowed past the screen edge. Scroll horizontally instead of
        clipping or pushing mic/send off -- those stay pinned via
-       flex-shrink:0 below. */
+       flex-shrink:0 below.
+       NOTE: overflow-x:auto here forces overflow-y to also compute to auto
+       (same CSS-spec gotcha noted on .model-dropdown-list below), which
+       would silently clip each button's own .model-dropdown popup (it opens
+       upward via position:absolute, escaping this row's bounds) -- that's
+       why positionDropdownAboveButton() in core/ui/scripts.py switches the
+       open dropdown to position:fixed instead of relying on the CSS
+       position:absolute default. */
     @media (max-width: 768px) {
       .composer-toolbar-left {
         overflow-x: auto;

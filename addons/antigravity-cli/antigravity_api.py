@@ -156,12 +156,22 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 return
 
             resources = get_resource_usage()
+            from core.ha_client import get_scheduled_controls
             from core.system_info import check_agy_hardware_support, get_mcp_status
             from core.ui import UI_BUILD_VERSION
             hw_info = check_agy_hardware_support()
             mcp_status = get_mcp_status()
+            scheduled = get_scheduled_controls()
             res = {
                 "status": "online",
+                # Backs the HA integration's "예약 목록" sensor
+                # (custom_components/antigravity_cli/sensor.py) -- count as
+                # the sensor's own state, full list as its extra_state_
+                # attributes, so the coordinator's existing poll-and-cache
+                # cycle (already hitting this endpoint) covers it for free
+                # instead of needing its own fetch path.
+                "scheduled_count": len(scheduled),
+                "scheduled_list": scheduled,
                 # Was a separately-hardcoded string that kept drifting behind
                 # config.yaml/UI_BUILD_VERSION on every bump -- same source of
                 # truth as ui_build_version now, so there's only one place to
@@ -431,6 +441,23 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Failed to read file"}).encode("utf-8"))
             return
 
+        # Live state for a device control card (see core/ha_client.py's
+        # build_device_cards()) -- used both right after a live SSE
+        # device_card event needs a refresh and when restoring a past
+        # conversation (core/ui/scripts.py's buildRestoredBotRow() only
+        # persists entity ids, never a frozen attribute snapshot, so a
+        # reloaded card always reflects the device's CURRENT state instead
+        # of whatever it was at the time of that old turn).
+        if clean_path.endswith("/api/device/state"):
+            import urllib.parse as _up
+            from core.ha_engine import build_device_cards, get_ha_states
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            entity_ids = _up.parse_qs(qs).get("entity_id", [])
+            cards = build_device_cards(entity_ids, get_ha_states()) if entity_ids else []
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"cards": cards}, ensure_ascii=False).encode("utf-8"))
+            return
+
         # Serve Web UI
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(HTML_INDEX.encode("utf-8"))
@@ -539,11 +566,23 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Empty prompt"}).encode("utf-8"))
                 return
 
-            # Send Server-Sent Events (SSE) Stream Headers
+            # Send Server-Sent Events (SSE) Stream Headers.
+            #
+            # "Connection: close", not "keep-alive": this response never
+            # sends Content-Length or Transfer-Encoding: chunked (an SSE
+            # body's length isn't known up front), so connection-close is
+            # the ONLY framing signal a non-browser client (aiohttp, curl,
+            # requests) has for "the body is complete". Claiming
+            # keep-alive here left the response fully sent but the
+            # connection sitting open indefinitely -- a browser's
+            # fetch()/EventSource reads it fine (it just consumes SSE
+            # chunks until the connection ends), but any client that
+            # waits for a complete response (conversation.py's aiohttp
+            # call among them) hung until its own client-side timeout.
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.send_header("X-Accel-Buffering", "no")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
@@ -589,6 +628,42 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 print(f"[Upload Error] {e}", file=sys.stderr)
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif clean_path.endswith("/api/device/control"):
+            # Direct HA service call from a device control card's toggle/
+            # slider (see core/ui/scripts.py's setDeviceCard()) -- bypasses
+            # the natural-language pipeline entirely, since the card only
+            # exists for an entity that already passed room-matching/
+            # hidden-device/dangerous-appliance gates on its way to being
+            # controlled once by the command that produced the card.
+            # ALLOWED_CARD_SERVICES is the only thing gating what this
+            # endpoint will actually call.
+            from core.ha_engine import ALLOWED_CARD_SERVICES, ha_call_service_api
+            try:
+                body = self._read_request_body()
+                payload = json.loads(body or b"{}")
+                entity_id = str(payload.get("entity_id", "")).strip()
+                domain = str(payload.get("domain", "")).strip()
+                service = str(payload.get("service", "")).strip()
+                data = payload.get("data") or {}
+                if not entity_id or service not in ALLOWED_CARD_SERVICES.get(domain, set()):
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"success": False, "error": "disallowed domain/service"}, ensure_ascii=False).encode("utf-8"))
+                else:
+                    # music_assistant.play_media's REST call doesn't return
+                    # until the actual Cast handshake finishes (several
+                    # seconds, confirmed live) -- the default 3s timeout
+                    # reported failure even on a call that then started
+                    # playback anyway a moment later. This is this one
+                    # click's own request, not the natural-language hot
+                    # path, so a longer wait here is free.
+                    call_timeout = 12 if domain == "music_assistant" else 3
+                    ok = ha_call_service_api(domain, service, {**data, "entity_id": entity_id}, timeout=call_timeout)
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({"success": ok}, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
         elif clean_path.endswith("/api/run_agy"):
             # "agy를 실행하시겠습니까?" confirmation in the terminal tab, on
