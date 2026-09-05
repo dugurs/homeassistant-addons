@@ -1,5 +1,0 @@
-{
-  "name": "addon-integration-plugin",
-  "description": "Home Assistant 애드온과 커스텀 통합구성요소(antigravity_cli) 간의 통신/연동 및 애드온 수정 작업을 전담하는 하네스 플러그인.",
-  "version": "1.0.0"
-}
