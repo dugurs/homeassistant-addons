@@ -579,10 +579,21 @@ def stream_headless_cli(
             f"/config/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/chunks/transcript_full/00000000.jsonl",
         ]
         
+        # No fixed retry cap here on purpose -- a previous version gave up
+        # after ~6.4s (80 * 0.08s), but agy's own README documents a cold
+        # ha-mcp/uvx startup taking 10-20s on its own, well past that budget.
+        # When the cap was hit first, this thread returned silently with zero
+        # reasoning_step events for the whole turn: the final answer still
+        # streamed through fine (a separate code path), just with no
+        # reasoning log ever shown for that turn -- reproducing exactly when
+        # agy/MCP happened to be slow to start, not on any pattern a user
+        # could pin down. Instead, keep looking for as long as the agy
+        # process itself is still running (done_event, set in read_stdout()'s
+        # finally block when the process exits) -- there's no reason to give
+        # up while the turn that would eventually write this file is still
+        # in flight.
         file_obj = None
-        for _ in range(80):
-            if done_event.is_set():
-                break
+        while not done_event.is_set():
             for cp in candidate_paths:
                 if os.path.exists(cp):
                     try:
