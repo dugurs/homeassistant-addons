@@ -489,8 +489,16 @@ def stream_headless_cli(
         env["GOOGLE_API_KEY"] = api_key
         env["ANTIGRAVITY_API_KEY"] = api_key
 
+    # Two log lines appear here in sequence: this one fires immediately (agy
+    # hasn't even launched yet), the "세션 시작" one below fires once agy's own
+    # init event confirms it's actually up with its tool list loaded. They
+    # used to both claim to be announcing a "session" starting ("세션
+    # 개시"/"세션 시작") in slightly different wording, which read as two
+    # redundant, out-of-sync announcements for what's really two different
+    # moments (request handed off vs. agy actually ready) -- worded distinctly
+    # now so the sequence reads as one coherent flow instead.
     resume_desc = " (대화 이어가기)" if resume_this_session else (" (되돌리기 이후 새 대화로 이어감)" if was_rewound else "")
-    yield make_sse("tool", f"🚀 [Antigravity CLI] 세션 개시{resume_desc}: '{display_prompt[:30]}...'")
+    yield make_sse("tool", f"📨 [Antigravity CLI] 요청 전송{resume_desc}: '{display_prompt[:30]}...'")
 
     # Use 'script -q -c' to run agy in a pseudo-TTY.
     # This forces the Go runtime to flush output line-by-line instead of buffering.
@@ -793,7 +801,7 @@ def stream_headless_cli(
                         # one back to us). This is the id future turns must
                         # pass as conversation_id to actually resume with agy.
                         event_queue.put(("session_init", cid))
-                    event_queue.put(("live_log", f"🚀 [세션 시작] Antigravity CLI v2.0 ({len(tools)}개 도구 로드됨)"))
+                    event_queue.put(("live_log", f"🚀 [Antigravity CLI] 세션 시작 (v2.0, {len(tools)}개 도구 로드됨)"))
                     if cid:
                         t_tail = threading.Thread(target=tail_transcript, args=(cid,), daemon=True)
                         t_tail.start()
