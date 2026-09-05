@@ -69,8 +69,7 @@ HTML_BODY = f"""
       <div class="help-section">
         <h4>실행 모드</h4>
         <ul>
-          <li><strong>고속 제어 모드</strong> — 기기 제어/상태 조회를 즉시 처리</li>
-          <li><strong>고속 제어 &amp; 스마트 모드</strong> — 센서 기반 환경 분석 및 조언</li>
+          <li><strong>고속 제어 모드</strong> — 기기 제어/상태 조회를 즉시 처리하고, 날씨·환경 질문엔 센서 기반 분석/조언도 함께 제공</li>
           <li><strong>CLI 추론 모드</strong> — Antigravity CLI(agy) 기반 심층 에이전트</li>
         </ul>
       </div>
@@ -203,7 +202,7 @@ HTML_BODY = f"""
           <div class="composer" id="composer">
             <div class="attach-preview-row" id="attach-preview-row" style="display:none;"></div>
             <input type="file" id="attach-file-input" multiple accept=".py,.js,.ts,.java,.c,.cpp,.go,.rs,.sh,.bat,.ps1,.json,.yaml,.yml,.xml,.toml,.ini,.env,.csv,.tsv,.txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style="display:none;" onchange="handleFilesSelected(event)">
-            <textarea id="user-input" placeholder="Ask anything, @ to mention, / for actions" rows="1" oninput="updateSendBtn(); autoResizeTextarea(); updateSlashCommandMenu()" onkeydown="handleKey(event)" onblur="closeSlashCommandMenu()"></textarea>
+            <textarea id="user-input" placeholder="무엇이든 물어보세요" rows="1" oninput="updateSendBtn(); autoResizeTextarea(); updateSlashCommandMenu()" onkeydown="handleKey(event)" onblur="closeSlashCommandMenu()"></textarea>
             <div class="slash-command-menu" id="slash-command-menu"></div>
             <div class="composer-toolbar">
               <div class="composer-toolbar-left">
@@ -212,7 +211,7 @@ HTML_BODY = f"""
                 <div class="model-picker" id="stream-mode-picker">
                   <button class="mode-picker-btn" id="stream-mode-btn" onclick="toggleStreamModePicker()" title="실행 모드 변경">
                     <span class="icon" id="stream-mode-icon">{ICON_ZAP}</span>
-                    <span id="stream-mode-current">고속</span>
+                    <span id="stream-mode-current">제어</span>
                     <span class="icon icon-sm">{ICON_CHEVRON_DOWN}</span>
                   </button>
                   <div class="model-dropdown" id="stream-mode-dropdown">

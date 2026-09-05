@@ -5,7 +5,7 @@ reads and visually understands image files referenced by absolute path in a
 headless `-p` prompt -- no special protocol needed, no direct multimodal API
 bypass required. So the whole feature is just: save the uploaded bytes
 somewhere agy's container filesystem can see, hand back the absolute path,
-and let the chat prompt reference it. Modes 1/2 never invoke agy, so this
+and let the chat prompt reference it. the fast control mode never invoke agy, so this
 storage (and the picker wiring in core/streamer.py's caller) is Mode-3-only.
 """
 

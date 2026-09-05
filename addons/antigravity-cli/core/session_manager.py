@@ -1,12 +1,14 @@
 """Session and Transcript Manager for Antigravity Add-on.
 Provides unified, decoupled session storage matching Antigravity Mode 3 transcript.jsonl specification.
-Allows Modes 1, 2, and 3 to share a single conversation context seamlessly.
+Allows the fast control mode and Mode 3 to share a single conversation context seamlessly.
 
 ``.system_generated/logs/transcript.jsonl`` is the one canonical, cumulative
 log for a conversation, appended to across every turn regardless of mode —
-Modes 1/2 write here directly (see record_mode1_interaction /
-record_mode2_interaction), and Mode 3 (`agy`) writes here natively on its own
-whenever it runs for this conversation_id (including across --resume calls).
+the fast control mode writes here directly (see record_mode2_interaction --
+named for a since-removed mode numbering, see core/streamer.py's
+stream_agent_chat docstring), and Mode 3 (`agy`) writes here natively on its
+own whenever it runs for this conversation_id (including across --resume
+calls).
 
 ``.system_generated/logs/chunks/transcript_full/00000000.jsonl`` is a
 *separate*, agy-internal snapshot that only reflects the conversation's first
@@ -41,7 +43,7 @@ def generate_conversation_id() -> str:
 def get_session_transcript_path(conversation_id: str) -> str:
     """Path to the canonical, cumulative transcript.jsonl for a conversation.
 
-    Written to directly by Modes 1/2 (this module) and natively by Mode 3
+    Written to directly by the fast control mode (this module) and natively by Mode 3
     (`agy`) — see the module docstring.
     """
     base = get_brain_base_dir()
@@ -78,7 +80,7 @@ def get_readable_transcript_path(conversation_id: str) -> str | None:
 
 
 def session_exists(conversation_id: str) -> bool:
-    """Whether a conversation has any recorded transcript (Mode 3 or 1/2)."""
+    """Whether a conversation has any recorded transcript (Mode 3 or the fast control mode)."""
     return get_readable_transcript_path(conversation_id) is not None
 
 
@@ -86,12 +88,12 @@ def is_agy_native_session(conversation_id: str) -> bool:
     """Whether agy itself has ever run a turn under this exact conversation_id.
 
     True only once agy's own first-turn snapshot exists on disk -- the one
-    reliable signal that agy, not just our own record_mode1_interaction /
-    record_mode2_interaction, has adopted this id. A Modes-1/2-only
-    conversation (client-generated uuid, agy never invoked) returns False,
-    which matters for stream_headless_cli(): agy has no record of a
-    Modes-1/2-only id, so it must never be handed to it via --conversation
-    (see docs/COMMUNICATION_SPEC.md constraint #6).
+    reliable signal that agy, not just our own record_mode2_interaction, has
+    adopted this id. A fast-control-mode-only conversation (client-generated
+    uuid, agy never invoked) returns False, which matters for
+    stream_headless_cli(): agy has no record of such an id, so it must never
+    be handed to it via --conversation (see docs/COMMUNICATION_SPEC.md
+    constraint #6).
     """
     return os.path.exists(get_mode3_first_turn_snapshot_path(conversation_id))
 
@@ -310,7 +312,7 @@ def _last_room_context_path(conversation_id: str) -> str:
 
 
 def set_last_room_context(conversation_id: str, room: str):
-    """Remember the room a Mode 1/2 turn was about, so a bare follow-up like
+    """Remember the room a fast-control-mode turn was about, so a bare follow-up like
     "습도는?" (no room named) can be understood as "<room> 습도는?" on the next
     turn -- see get_last_room_context(). Best-effort: failures are swallowed
     since this is a conversational convenience, not data anything else here
@@ -330,7 +332,7 @@ def set_last_room_context(conversation_id: str, room: str):
 
 
 def get_last_room_context(conversation_id: str) -> str | None:
-    """Last room mentioned in this conversation's Mode 1/2 turns, if any (see set_last_room_context)."""
+    """Last room mentioned in this conversation's fast-control-mode turns, if any (see set_last_room_context)."""
     if not conversation_id:
         return None
     path = _last_room_context_path(conversation_id)
@@ -342,6 +344,99 @@ def get_last_room_context(conversation_id: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _last_control_targets_path(conversation_id: str) -> str:
+    """Path to a conversation's last-controlled-entities marker (see set_last_control_targets)."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "last_control_targets.json")
+
+
+def set_last_control_targets(conversation_id: str, entity_ids: list):
+    """Remember which entities the last successful fast-control-mode device-
+    control command acted on, so a bare follow-up with no device word at all (e.g.
+    "안방 커튼 열어" then just "닫아" next turn) can be understood as "<same
+    entities> 닫아" -- see get_last_control_targets(). Best-effort, same as
+    set_last_room_context().
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return
+    if not entity_ids:
+        return
+    path = _last_control_targets_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(entity_ids, f)
+    except Exception:
+        pass
+
+
+def get_last_control_targets(conversation_id: str) -> list | None:
+    """Entity ids the last successful device-control command in this
+    conversation acted on, if any (see set_last_control_targets)."""
+    if not conversation_id:
+        return None
+    path = _last_control_targets_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) and data else None
+    except Exception:
+        pass
+    return None
+
+
+def _pending_confirmation_path(conversation_id: str) -> str:
+    """Path to a conversation's pending-dangerous-action marker (see set_pending_confirmation)."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "pending_confirmation.json")
+
+
+def set_pending_confirmation(conversation_id: str, data: dict):
+    """Remember a dangerous/unwanted action (e.g. turning off a boiler/
+    heater/outlet -- see core.ha_client.APPLIANCE_SWITCH_KEYWORDS) that was
+    warned about instead of executed, awaiting the user's explicit yes/no on
+    the next turn -- see get_pending_confirmation()/clear_pending_
+    confirmation() and handle_agent_chat()'s confirmation-reply check.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return
+    path = _pending_confirmation_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def get_pending_confirmation(conversation_id: str) -> dict | None:
+    """The dangerous action awaiting confirmation in this conversation, if any."""
+    if not conversation_id:
+        return None
+    path = _pending_confirmation_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) and data else None
+    except Exception:
+        pass
+    return None
+
+
+def clear_pending_confirmation(conversation_id: str):
+    """Clear a conversation's pending dangerous-action marker -- once
+    answered (confirmed or declined), or superseded by an unrelated new
+    command (see handle_agent_chat())."""
+    if not conversation_id:
+        return
+    path = _pending_confirmation_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
 
 
 def rewind_session(conversation_id: str, step_index: int) -> bool:
@@ -579,8 +674,18 @@ def record_thinking_and_tools(
 def record_model_response(
     conversation_id: str,
     content: str,
+    device_card_entity_ids: list = None,
 ) -> int:
-    """Record model's final response text."""
+    """Record model's final response text.
+
+    `device_card_entity_ids`, when given, is just the entity id list (never
+    a frozen snapshot of brightness/percentage/etc.) -- restoring a
+    conversation re-fetches each entity's LIVE state (via GET
+    /api/device/state) rather than replaying historical attribute values,
+    so a card shown after reload always reflects reality even if the device
+    changed state through some other path since this turn. See
+    core/ui/scripts.py's buildRestoredBotRow().
+    """
     if not conversation_id or not content:
         return 0
     fpath = get_session_transcript_path(conversation_id)
@@ -593,6 +698,8 @@ def record_model_response(
         "content": content,
         "created_at": get_current_iso_time(),
     }
+    if device_card_entity_ids:
+        entry["device_card_entity_ids"] = device_card_entity_ids
     _write_line_to_transcript(fpath, entry)
     return step_idx
 
@@ -606,6 +713,7 @@ def append_session_interaction(
     thinking: str = "",
     tool_calls: list = None,
     response_text: str = "",
+    device_card_entity_ids: list = None,
 ):
     """Synchronously record a full interaction cycle with sequential step ordering."""
     if not conversation_id:
@@ -615,7 +723,7 @@ def append_session_interaction(
         if thinking or tool_calls:
             record_thinking_and_tools(conversation_id, thinking, tool_calls)
         if response_text:
-            record_model_response(conversation_id, response_text)
+            record_model_response(conversation_id, response_text, device_card_entity_ids)
 
 
 def append_session_interaction_async(
@@ -624,6 +732,7 @@ def append_session_interaction_async(
     thinking: str = "",
     tool_calls: list = None,
     response_text: str = "",
+    device_card_entity_ids: list = None,
 ):
     """Non-blocking asynchronous helper to record a complete interaction cycle."""
     if not conversation_id:
@@ -636,6 +745,7 @@ def append_session_interaction_async(
             thinking,
             tool_calls,
             response_text,
+            device_card_entity_ids,
         )
 
     t = threading.Thread(target=_worker, daemon=True)
@@ -798,7 +908,7 @@ def get_session_history(conversation_id: str) -> list:
     """Parse and return full chronological history of a session (Mode 3 or 1/2).
 
     Follows the conversation's continuation chain (get_continuation_chain())
-    so a conversation that hopped ids mid-chat -- Modes 1/2 handing off to
+    so a conversation that hopped ids mid-chat -- the fast control mode handing off to
     Mode 3, which agy resumes under its own, different id (see
     stream_headless_cli() / link_conversation_continuation()) -- returns one
     merged, chronologically-ordered timeline no matter which id in the chain
@@ -829,7 +939,7 @@ def get_session_history(conversation_id: str) -> list:
 def list_all_sessions(limit: int = 50) -> list:
     """List all available conversation sessions sorted by recent activity.
 
-    A conversation that hopped ids mid-chat (Modes 1/2 -> Mode 3 hand-off,
+    A conversation that hopped ids mid-chat (the fast control mode -> Mode 3 hand-off,
     see link_conversation_continuation()) is shown as exactly one card, keyed
     by the chain's terminal (newest) id, with title/turns/last_message/
     timestamp computed across the FULL chain -- otherwise the same logical
@@ -904,6 +1014,7 @@ def record_mode2_interaction(
     response_text: str,
     target_entities: list = None,
     service_called: str = "",
+    device_card_entity_ids: list = None,
 ):
     """Record Mode 2 (Ultra-Fast Smart Home) interaction with HA service tool calls."""
     if not conversation_id:
@@ -947,37 +1058,7 @@ def record_mode2_interaction(
         thinking=thinking,
         tool_calls=tool_calls if tool_calls else None,
         response_text=response_text,
+        device_card_entity_ids=device_card_entity_ids,
     )
 
 
-def record_mode1_interaction(
-    conversation_id: str,
-    prompt: str,
-    response_text: str,
-    sensor_count: int = 0,
-):
-    """Record Mode 1 (AI Deep Brain) interaction with sensor collection and analysis steps."""
-    if not conversation_id:
-        return
-
-    thinking = f"AI 딥 브레인: 다차원 환경 센서({sensor_count}개) 수집 및 실내외 온습도/공기질 쾌적성 밸런스 추론"
-    tool_calls = [
-        {
-            "name": "call_mcp_tool",
-            "args": {
-                "ServerName": "home-assistant",
-                "ToolName": "ha_get_state",
-                "Arguments": {"category": "environment_sensors"},
-            },
-            "toolSummary": "Fetch sensor matrix",
-            "toolAction": f"Collected {sensor_count} environmental sensors (CO2, TVOC, PM2.5, Temp, Hum)",
-        }
-    ]
-
-    append_session_interaction_async(
-        conversation_id=conversation_id,
-        prompt=prompt,
-        thinking=thinking,
-        tool_calls=tool_calls,
-        response_text=response_text,
-    )

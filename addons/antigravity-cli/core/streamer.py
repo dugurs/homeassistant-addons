@@ -1,4 +1,4 @@
-"""Real-Time SSE Streaming Engine supporting Mode 1 (AI Deep Brain) and Mode 2 (Ultra-Fast Smart Home)."""
+"""Real-Time SSE Streaming Engine for the fast native-control mode and the Mode 3 (agy CLI) headless engine."""
 
 import json
 import os
@@ -12,9 +12,10 @@ import uuid
 from datetime import datetime
 
 from core.ha_engine import (
-    get_ai_deep_environment_analysis,
+    build_device_cards,
     get_ha_states,
-    get_weather_env_summary,
+    get_last_action_entities,
+    get_last_playlist_card,
     handle_agent_chat,
 )
 from core.session_manager import (
@@ -24,7 +25,6 @@ from core.session_manager import (
     is_agy_native_session,
     is_rewound,
     link_conversation_continuation,
-    record_mode1_interaction,
     record_mode2_interaction,
     session_exists,
 )
@@ -248,8 +248,31 @@ _RUNNING_STREAMS_LOCK = threading.Lock()
 _RUNNING_STREAMS = {}  # stream_id -> (subprocess.Popen, threading.Event)
 
 
+def _killpg_hard(pgid: int) -> None:
+    """Best-effort SIGKILL of a whole process group, ignoring failures."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        pass
+
+
 def stop_stream(stream_id: str) -> bool:
-    """Kill the process group backing an in-flight Mode 3 stream, if any."""
+    """Kill the process group backing an in-flight Mode 3 stream, if any.
+
+    SIGTERM alone isn't enough here: agy is a Go binary and Go's default
+    SIGTERM handling can let whatever tool call is already in flight (e.g. a
+    home-assistant MCP light.turn_on/toggle it had already dispatched to its
+    ha-mcp child) run to completion as part of a "graceful" shutdown before
+    the process actually exits -- which is exactly how a user could hit stop
+    right after asking to turn a light on and see it flip anyway a moment
+    later. Since agy's own child (ha-mcp via uvx) normally shares the same
+    process group (script -> agy -> uvx, all under start_new_session=True),
+    a hard SIGKILL of the whole group is the only way to guarantee nothing
+    further gets a chance to touch Home Assistant after the user says stop.
+    SIGTERM is still sent first (lets a well-behaved child unwind its own
+    subprocess/socket without leaving orphans), but a short grace period
+    escalates to SIGKILL on the group unconditionally.
+    """
     with _RUNNING_STREAMS_LOCK:
         entry = _RUNNING_STREAMS.get(stream_id)
     if not entry:
@@ -257,8 +280,22 @@ def stop_stream(stream_id: str) -> bool:
     proc, stop_event = entry
     stop_event.set()
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        pgid = os.getpgid(proc.pid)
     except Exception:
+        pgid = None
+
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except Exception:
+            pass
+
+        def _escalate():
+            if proc.poll() is None:
+                _killpg_hard(pgid)
+
+        threading.Timer(1.5, _escalate).start()
+    else:
         try:
             proc.kill()
         except Exception:
@@ -266,71 +303,8 @@ def stop_stream(stream_id: str) -> bool:
     return True
 
 
-def stream_ai_deep_brain(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
-    """Mode 1: AI Deep Brain Multi-Dimensional Environmental Analysis & Living Advice Streamer."""
-    t_start = time.time()
-    actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
-    input_tokens = estimate_tokens(actual_prompt) + 120  # prompt + system context
-
-    if not conversation_id:
-        conversation_id = generate_conversation_id()
-    yield make_sse("session_init", conversation_id)
-
-    states = get_ha_states()
-    sensor_cnt = len(states) if states else 0
-    lower = actual_prompt.lower()
-    # Also route general "how's the house" queries here, not just explicit
-    # weather/env words -- otherwise a prompt like "우리집 종합 상황 알려줘"
-    # matches none of the weather words, falls through to the same
-    # handle_agent_chat() Mode 2 already calls, and 복합모드 ends up returning
-    # the exact same text as 고속모드 for the single most common status query.
-    if states and any(
-        w in lower
-        for w in [
-            "날씨", "환경", "온도", "습도", "기상", "기온", "공기", "co2", "미세먼지",
-            "상태", "상황", "현황", "요약", "브리핑", "종합", "분위기", "집안", "우리집", "어때",
-        ]
-    ):
-        full_text = get_ai_deep_environment_analysis(states, actual_prompt, is_mobile=is_mobile)
-    else:
-        full_text = handle_agent_chat(actual_prompt, conversation_id, "", False, is_mobile=is_mobile)
-
-    # Same synthetic MCP Tool card as Mode 2's stream_fast_dashboard (see its
-    # comment) -- no real MCP round-trip here either (get_ha_states() above
-    # is a direct HA REST call), but showing the query/sensor-count args and
-    # the synthesized result through the identical "MCP Tool: ha_get_state"
-    # card keeps 복합모드's live view consistent with 고속모드's.
-    yield make_sse("reasoning_step", data={
-        "group": "ha",
-        "verb": "MCP Tool:",
-        "target": "ha_get_state",
-        "stat": "",
-        "args_json": json.dumps({"query": actual_prompt, "category": "environment_sensors"}, ensure_ascii=False, indent=2),
-        "detail": json.dumps({"result": full_text, "sensor_count": sensor_cnt}, ensure_ascii=False, indent=2),
-    })
-
-    yield make_sse("text", full_text)
-
-    if conversation_id:
-        record_mode1_interaction(conversation_id, actual_prompt, full_text, sensor_cnt)
-
-    elapsed = time.time() - t_start
-    output_tokens = estimate_tokens(full_text)
-    total_tokens = input_tokens + output_tokens
-    speed_tps = round(output_tokens / max(0.01, elapsed), 1)
-
-    tokens_meta = {
-        "input": input_tokens,
-        "output": output_tokens,
-        "total": total_tokens,
-        "speed_tps": speed_tps,
-        "elapsed": round(elapsed, 3),
-    }
-    yield make_sse("done", tokens=tokens_meta)
-
-
 def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id: str = ""):
-    """Mode 2: Ultra-Fast Smart Home Native Dispatcher (0.05s) + Step-by-Step Tool Visibility."""
+    """Fast native control mode: Ultra-Fast Smart Home Native Dispatcher (0.05s) + Step-by-Step Tool Visibility."""
     t_start = time.time()
     actual_prompt = re.sub(r"^(ai|/llm)\s*", "", prompt, flags=re.IGNORECASE).strip()
     input_tokens = estimate_tokens(actual_prompt) + 40
@@ -359,8 +333,32 @@ def stream_fast_dashboard(prompt: str, is_mobile: bool = False, conversation_id:
 
     yield make_sse("text", full_text)
 
+    # Interactive device control card -- only for entities THIS turn actually
+    # controlled (get_last_action_entities() is empty for a status question,
+    # an unresolved/ambiguous command, a delayed command not yet fired, or a
+    # pending confirmation not yet answered; see its docstring in
+    # core/ha_client.py). Re-fetches state rather than reusing whatever
+    # handle_agent_chat() saw internally, since the whole point is to show
+    # the value *after* the just-executed change (new brightness/percentage/
+    # position), not the pre-command snapshot.
+    card_entity_ids = get_last_action_entities()
+    device_cards = []
+    if card_entity_ids:
+        fresh_states = get_ha_states()
+        device_cards = build_device_cards(card_entity_ids, fresh_states)
+        if device_cards:
+            yield make_sse("device_card", data={"cards": device_cards})
+
+    # "OO에 음악 틀어줘" pick-list (see core/ha_client.py's _h_media() and
+    # core/music_assistant.py) -- entirely separate from the device_card
+    # above since nothing was actually controlled by name yet, only offered
+    # as choices; get_last_playlist_card() is None on every other turn.
+    playlist_card = get_last_playlist_card()
+    if playlist_card:
+        yield make_sse("playlist_card", data=playlist_card)
+
     if conversation_id:
-        record_mode2_interaction(conversation_id, actual_prompt, full_text)
+        record_mode2_interaction(conversation_id, actual_prompt, full_text, device_card_entity_ids=card_entity_ids or None)
 
     elapsed = time.time() - t_start
     output_tokens = estimate_tokens(full_text)
@@ -419,17 +417,17 @@ def stream_headless_cli(
     agy_bin = "/usr/local/bin/agy"
 
     if not hw_info.get("supported", False) or not os.path.exists(agy_bin):
-        yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [모드 2: 복합 모드]로 자동 전환합니다.")
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+        yield make_sse("tool", "ℹ️ CPU 호스트 모드(AVX) 미지원 감지 -> 안전하게 [제어] 모드로 자동 전환합니다.")
+        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
         return
 
     # Require agy's own first-turn marker, not just "a transcript.jsonl exists" --
-    # Modes 1/2 write that file themselves via record_mode1_interaction /
-    # record_mode2_interaction, for an id agy has never seen. Handing such an
+    # the fast control mode writes that file itself via record_mode2_interaction,
+    # for an id agy has never seen. Handing such an
     # id to --conversation would hit the exact failure this function's
     # docstring warns about (docs/COMMUNICATION_SPEC.md constraint #6), so a
-    # Modes-1/2-only conversation switching to Mode 3 is treated as new here
+    # fast-control-mode-only conversation switching to Mode 3 is treated as new here
     # (see the `cid != conversation_id` hand-off handling in read_stdout()
     # below, which links the two ids together once agy assigns its own).
     # A rewind (see core/session_manager.py rewind_session()/mark_rewound())
@@ -548,8 +546,8 @@ def stream_headless_cli(
             start_new_session=True,  # own process group -- lets stop_stream() kill script + its agy child together
         )
     except Exception as e:
-        yield make_sse("tool", f"⚠️ CLI 프로세스 기동 실패 ({str(e)}) -> AI 딥 브레인으로 자동 전환")
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+        yield make_sse("tool", f"⚠️ CLI 프로세스 기동 실패 ({str(e)}) -> [제어] 모드로 자동 전환")
+        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
         return
 
@@ -781,7 +779,7 @@ def stream_headless_cli(
                     tools = data.get("init", {}).get("tools", [])
                     cid = data.get("conversation_id", "")
                     if cid and conversation_id and cid != conversation_id:
-                        # Modes 1/2 -> Mode 3 hand-off: we came in with an id
+                        # the fast control mode -> Mode 3 hand-off: we came in with an id
                         # of our own (already carrying Modes-1/2 history) but
                         # withheld --conversation since agy never issued it
                         # (see is_agy_native_session() above), so agy minted
@@ -962,10 +960,10 @@ def stream_headless_cli(
         if auth_failed:
             yield make_sse("live_log", "🔑 [인증 필요] Terminal 탭에서 agy 실행 후 로그인하세요.")
             yield make_sse("chunk", "> 🔑 **[인증 필요]** Terminal 탭에서 `agy` 실행 후 Google 계정으로 1회 로그인하세요.\n\n")
-            for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+            for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
                 yield ev
         else:
-            for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+            for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
                 yield ev
     finally:
         with _RUNNING_STREAMS_LOCK:
@@ -981,30 +979,35 @@ def stream_agent_chat(
     model: str = "",
     agent: str = "",
 ):
-    """Router for the 3 Clean Streaming Modes with unified session management.
+    """Router for the 2 remaining streaming modes (fast native control, and
+    Mode 3 / agy CLI) with unified session management.
 
-    conversation_id assignment differs by mode: Modes 1/2 have no external
-    process with its own identity, so an id is generated up front (see
-    stream_ai_deep_brain / stream_fast_dashboard). Mode 3 delegates to `agy`,
-    which assigns its own conversation id — pre-generating one here and
-    telling agy to --conversation it would target an id agy has never seen,
-    so resume silently no-ops and a *second*, disconnected id gets created.
+    conversation_id assignment differs by mode: the fast dispatcher has no
+    external process with its own identity, so an id is generated up front
+    (see stream_fast_dashboard). Mode 3 delegates to `agy`, which assigns its
+    own conversation id -- pre-generating one here and telling agy to
+    --conversation it would target an id agy has never seen, so resume
+    silently no-ops and a *second*, disconnected id gets created.
     stream_headless_cli() handles id assignment itself for that reason.
 
-    model/agent only apply to Mode 3 (agy) -- Modes 1/2 never invoke agy.
+    model/agent only apply to Mode 3 (agy) -- the fast dispatcher never
+    invokes agy.
 
-    Numbering matches the recovered reference UI's own AVAILABLE_MODES ids
-    (1 = fast dashboard, 2 = deep brain, 3 = CLI) -- not the historical
-    internal order of the two functions below.
+    There used to be a third mode (id 2, "AI Deep Brain" / stream_ai_deep_
+    brain) with its own separate picker entry; its one genuinely distinct
+    behavior (a richer environmental analysis for weather-dashboard queries)
+    cost nothing extra over the plain summary -- neither ever called a real
+    LLM -- so it was folded directly into handle_agent_chat() instead of
+    being gated behind a mode selector, and the standalone mode was removed.
+    Any stream_mode other than 3 now falls through to the fast dispatcher,
+    which keeps old clients/localStorage values that still send "2" working
+    instead of erroring.
     """
     if stream_mode == 3:
         for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model, agent=agent):
             yield ev
-    elif stream_mode == 1:
-        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
-            yield ev
     else:
-        for ev in stream_ai_deep_brain(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+        for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev
 
 
