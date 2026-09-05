@@ -640,14 +640,50 @@ function showToast(text) {
     // unconfirmed whether agy's transcript actually logs one for MCP calls
     // the way it does for its own native tools, so this degrades to just
     // showing arguments if row.detail never gets filled in.
-    function toolIoDetailHTML(argsJson, detail) {
+    // Lightweight regex-based JSON syntax highlighter (no library -- the
+    // artifact CSP here only allows scripts from a small CDN allowlist, and
+    // this is small enough not to need one). Input must already be escaped
+    // HTML-safe text; matches keys/strings/numbers/booleans/null and wraps
+    // each in a colored span (see .json-* in core/ui/styles.py).
+    function highlightJSON(escapedJsonText) {
+      return escapedJsonText.replace(
+        /("(\\\\u[a-fA-F0-9]{4}|\\\\.|[^\\\\"])*"(\\s*:)?|\\b(?:true|false)\\b|\\bnull\\b|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)/g,
+        (match) => {
+          let cls = 'json-number';
+          if (/^"/.test(match)) {
+            cls = /:$/.test(match) ? 'json-key' : 'json-string';
+          } else if (/true|false/.test(match)) {
+            cls = 'json-boolean';
+          } else if (/null/.test(match)) {
+            cls = 'json-null';
+          }
+          return `<span class="${cls}">${match}</span>`;
+        }
+      );
+    }
+
+    // Renders a JSON string as a highlighted block if it parses as JSON,
+    // else falls back to plain escaped text -- Tool arguments is always
+    // valid JSON (built server/client-side from a real object), but Tool
+    // Output is agy's raw GENERIC result text, which for find_by_name/
+    // run_command/search_web is plain prose/stdout, not JSON.
+    function jsonOrPlainHTML(text) {
       const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      try {
+        const pretty = JSON.stringify(JSON.parse(text), null, 2);
+        return highlightJSON(esc(pretty));
+      } catch (e) {
+        return esc(text);
+      }
+    }
+
+    function toolIoDetailHTML(argsJson, detail) {
       let html = '';
       if (argsJson) {
-        html += `<div class="tool-io-label">Tool arguments</div><div class="tool-io-block">${esc(argsJson)}</div>`;
+        html += `<div class="tool-io-label">Tool arguments</div><div class="tool-io-block">${jsonOrPlainHTML(argsJson)}</div>`;
       }
       if (detail) {
-        html += `<div class="tool-io-label">Tool Output</div><div class="tool-io-block">${esc(detail)}</div>`;
+        html += `<div class="tool-io-label">Tool Output</div><div class="tool-io-block">${jsonOrPlainHTML(detail)}</div>`;
       }
       return html ? `<div class="step-detail tool-io">${html}</div>` : '';
     }

@@ -1225,6 +1225,13 @@ CSS_STYLES = """
       word-break: break-word;
       color: var(--text-main);
     }
+    /* JSON syntax highlighting for .tool-io-block content -- see
+       highlightJSON()/jsonOrPlainHTML() in core/ui/scripts.py. */
+    .json-key { color: var(--accent-blue); }
+    .json-string { color: var(--accent-green); }
+    .json-number { color: var(--accent-yellow); }
+    .json-boolean { color: var(--accent-purple); font-weight: 600; }
+    .json-null { color: var(--text-dim); font-style: italic; }
     /* .step-detail's own card background/padding would double up with
        .tool-io-block's -- strip it here and let the block(s) carry it. */
     .step-detail.tool-io {

@@ -1,3 +1,10 @@
+## 1.1.0-beta.68
+
+### 추가 (Feature) — Tool arguments/Output JSON 프리티뷰(구문 강조)
+- **MCP 도구 호출 펼치기의 "Tool arguments"/"Tool Output"이 평문으로만 보이던 것을 JSON 구문 강조(syntax highlight)로 개선**: 라이브러리 없이(HA ingress 웹뷰 CSP 제약상 CDN 의존 최소화) 정규식 기반 경량 하이라이터 신설(`highlightJSON()`, `core/ui/scripts.py`) — 키/문자열/숫자/불리언/null을 각각 다른 색으로 구분(`.json-key`/`.json-string`/`.json-number`/`.json-boolean`/`.json-null`, `core/ui/styles.py`)
+- `Tool Output`은 agy의 원문 텍스트라 항상 JSON이 아닐 수 있어(`find_by_name`/`run_command`/`search_web`는 평문·stdout), 신설 `jsonOrPlainHTML()`이 먼저 `JSON.parse` 시도 후 성공하면 예쁘게(2-space indent) 재포맷+강조, 실패하면 기존처럼 평문으로 표시 — `Tool arguments`는 항상 유효한 JSON이라 바로 강조
+- 이스케이프된 따옴표/백슬래시, 한글 문자열, 소수점 숫자 등 실제 JSON에 나올 수 있는 케이스를 Node로 직접 검증(라운드트립 비교로 하이라이팅이 원본 텍스트를 훼손하지 않는지 확인)
+
 ## 1.1.0-beta.67
 
 ### 수정 (Fix) — 추론/도구 로그 UI를 Antigravity 데스크톱 앱 스타일로 개편
