@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>고속 제어 모드 가이드</title>
+<meta name="description" content="Google Antigravity CLI 애드온의 고속 제어 모드에서 쓸 수 있는 자연어 명령어와 활용법을 카테고리별로 정리한 참고 문서.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #edf0ef;
+    --surface: #ffffff;
+    --surface-2: #e1e6e5;
+    --border: #cbd2d1;
+    --text: #161b1d;
+    --text-dim: #57666a;
+    --accent: #c97a1f;
+    --accent-ink: #7a4a10;
+    --accent-on: #ffffff;
+    --code-bg: #e4e1d8;
+    --code-text: #4a3b22;
+    --danger: #a4442c;
+    --danger-bg: #f3e2dc;
+    --ok: #3f6b4a;
+    --ok-bg: #e2ece3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14191a;
+      --surface: #1c2224;
+      --surface-2: #242b2d;
+      --border: #333c3e;
+      --text: #e8ecec;
+      --text-dim: #93a0a2;
+      --accent: #ffb05c;
+      --accent-ink: #ffb05c;
+      --accent-on: #23150a;
+      --code-bg: #2a2620;
+      --code-text: #e8d9b8;
+      --danger: #e18468;
+      --danger-bg: #3a241d;
+      --ok: #8fcb9c;
+      --ok-bg: #1f2e22;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans KR', 'Noto Sans', sans-serif;
+    line-height: 1.6;
+  }
+  img { max-width: 100%; }
+  h1, h2, h3 {
+    font-family: 'IBM Plex Sans KR', 'IBM Plex Sans', sans-serif;
+    text-wrap: balance;
+    color: var(--text);
+  }
+  code, .kw {
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    font-size: 0.86em;
+    white-space: nowrap;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+
+  header.hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 28px 26px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 22px;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+  header.hero h1 {
+    font-size: clamp(1.6rem, 3vw, 2.15rem);
+    font-weight: 700;
+    margin: 0;
+  }
+  header.hero p.lede {
+    max-width: 62ch;
+    color: var(--text-dim);
+    font-size: 0.98rem;
+    margin: 0;
+  }
+  .mode-chips {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .mode-chip {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    min-width: 220px;
+    flex: 1 1 220px;
+  }
+  .mode-chip.active { border-color: var(--accent); }
+  .mode-chip .name { font-weight: 600; font-size: 0.88rem; }
+  .mode-chip .name .badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-on);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .mode-chip .desc { font-size: 0.8rem; color: var(--text-dim); }
+
+  .search-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+    padding: 10px 0 14px;
+  }
+  .search-bar input {
+    width: 100%;
+    font: inherit;
+    font-family: 'Noto Sans KR', sans-serif;
+    padding: 11px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .search-bar input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .search-bar .count {
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 26px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 76px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  nav.toc a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 7px 10px;
+    border-radius: 8px;
+  }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+  nav.toc .icon { font-size: 1rem; }
+
+  section.group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px 8px;
+    margin-bottom: 20px;
+    scroll-margin-top: 76px;
+  }
+  section.group.hidden { display: none; }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .group-head .icon { font-size: 1.3rem; }
+  .group-head h2 { font-size: 1.15rem; margin: 0; }
+  .group-note {
+    color: var(--text-dim);
+    font-size: 0.86rem;
+    margin: 0 0 16px;
+    max-width: 72ch;
+  }
+
+  .entry {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    gap: 18px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  .entry.hidden { display: none; }
+  @media (max-width: 640px) {
+    .entry { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .entry-examples {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-self: start;
+  }
+  .example {
+    font-size: 0.86rem;
+    background: var(--surface-2);
+    border-left: 3px solid var(--accent);
+    padding: 6px 10px;
+    border-radius: 0 8px 8px 0;
+    width: fit-content;
+  }
+  .entry-body p {
+    margin: 0 0 6px;
+    font-size: 0.9rem;
+  }
+  .entry-body p:last-child { margin-bottom: 0; }
+  .entry-body .sub {
+    color: var(--text-dim);
+    font-size: 0.84rem;
+  }
+
+  .flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+  }
+  .flag.confirm { background: var(--danger-bg); color: var(--danger); }
+  .flag.card { background: var(--ok-bg); color: var(--ok); }
+
+  footer.note {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    text-align: center;
+    padding: 24px 0 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="hero">
+    <span class="eyebrow">Google Antigravity CLI · Home Assistant Add-on</span>
+    <h1>고속 제어 모드 명령어 가이드</h1>
+    <p class="lede">채팅창에 자연어로 말하면 방 이름, 기기 종류, 동사를 인식해서 즉시 처리합니다. 실제 LLM 호출 없이 로컬 패턴 매칭으로 답하기 때문에 <strong>토큰 비용 없이 약 0.05초</strong>로 응답하지만, 아래 문형·키워드에서 크게 벗어난 표현은 못 알아들을 수 있습니다.</p>
+    <div class="mode-chips">
+      <div class="mode-chip active">
+        <span class="name"><span class="badge">이 문서</span>고속 제어 모드</span>
+        <span class="desc">기기 제어·상태 조회·환경 분석을 즉시 처리. 정해진 키워드 기반, 토큰 소모 없음.</span>
+      </div>
+      <div class="mode-chip">
+        <span class="name">CLI 추론 모드</span>
+        <span class="desc">공식 agy 에이전트가 직접 추론하며 실시간 스트리밍. Google 계정 로그인 필요, 응답은 더 느림.</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="search-bar">
+    <input type="text" id="filterInput" placeholder="명령어 검색 (예: 커튼, 예약, 재생, 재실...)" autocomplete="off">
+    <div class="count" id="filterCount"></div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" id="toc">
+      <a href="#device"><span class="icon">💡</span>기기 제어</a>
+      <a href="#grammar"><span class="icon">🧩</span>제어 문법</a>
+      <a href="#status"><span class="icon">🔎</span>상태 조회</a>
+      <a href="#env"><span class="icon">🍃</span>환경·센서</a>
+      <a href="#manage"><span class="icon">🤖</span>자동화·할일</a>
+      <a href="#family"><span class="icon">👥</span>재실·가족</a>
+      <a href="#system"><span class="icon">⚙️</span>시스템</a>
+      <a href="#energy"><span class="icon">🔌</span>에너지</a>
+      <a href="#music"><span class="icon">🎵</span>음악 재생</a>
+      <a href="#misc"><span class="icon">💬</span>기타</a>
+    </nav>
+
+    <main>
+
+      <section class="group" id="device">
+        <div class="group-head"><span class="icon">💡</span><h2>기기 제어</h2></div>
+        <p class="group-note">방 이름 + 기기 종류 + 동사 조합으로 인식합니다. 같은 방에 같은 종류 기기가 여러 개 있으면 이름을 특정할 때까지 먼저 되묻습니다.</p>
+
+        <div class="entry" data-search="조명 등 불 전등 라이트 램프 켜 꺼 밝기 색온도 색상">
+          <div class="entry-examples">
+            <span class="example">"안방 등 켜줘"</span>
+            <span class="example">"거실 다운라이트 꺼"</span>
+            <span class="example">"책상 등 50%로 해줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>조명 · 트리거 단어: <code>등</code> <code>조명</code> <code>불</code> <code>전등</code> <code>라이트</code> <code>램프</code></p>
+            <p class="sub">켜기: 켜/틀어/시작/올려/가동 · 끄기: 꺼/끄고/정지/중지/멈춰/종료. 밝기 %는 1~100 범위로 자동 보정.</p>
+            <p class="sub">색상·색온도는 말로는 지정 불가 <span class="flag card">기기 제어 카드</span> — 실행 후 뜨는 카드의 슬라이더로 조절. 기기가 실제 지원하는 모드만 표시됩니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="커튼 블라인드 열어 닫아 창문">
+          <div class="entry-examples">
+            <span class="example">"안방 커튼 열어"</span>
+            <span class="example">"거실 블라인드 닫아줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>커튼·블라인드 · 열기: 열어/열고 · 닫기: 닫아/닫고</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="선풍기 환풍기 팬 실링팬 풍량 켜 꺼">
+          <div class="entry-examples">
+            <span class="example">"선풍기 켜줘"</span>
+            <span class="example">"안방 환풍기 50%로 해줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>선풍기·환풍기 · 풍량 %도 문장으로 바로 지정 가능</p>
+            <p class="sub">climate 도메인으로 노출된 화장실 환풍기(fan_only 모드 지원 기기)도 자동으로 함께 검색합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="가습기 제습기 켜 꺼">
+          <div class="entry-examples">
+            <span class="example">"가습기 켜줘"</span>
+            <span class="example">"제습기 꺼"</span>
+          </div>
+          <div class="entry-body">
+            <p>가습기·제습기 · 전용 humidifier 엔티티를 우선 사용하고, 없으면 지정된 스위치로 대체합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="보일러 히터 온열기 전기스토브 콘센트 플러그 위험 확인">
+          <div class="entry-examples">
+            <span class="example">"보일러 켜줘"</span>
+            <span class="example">"거실 콘센트 꺼줘" → "응"</span>
+          </div>
+          <div class="entry-body">
+            <p>보일러·히터·온열기·전기스토브·콘센트·플러그 <span class="flag confirm">끄기 확인 필요</span></p>
+            <p class="sub">켜기는 즉시 실행되지만, 끄기는 "정말 끄시겠어요?"라고 되묻고 <code>응</code>이라고 답해야 실제로 꺼집니다. 오작동으로 인한 불편(난방 정지 등)을 막기 위한 안전장치입니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="에어컨 냉방 난방 켜 꺼 모드 온도">
+          <div class="entry-examples">
+            <span class="example">"에어컨 켜줘"</span>
+            <span class="example">"거실 에어컨 꺼"</span>
+          </div>
+          <div class="entry-body">
+            <p>에어컨 · 말로는 켜기/끄기만 <span class="flag card">기기 제어 카드</span></p>
+            <p class="sub">모드(냉방/난방/제습/송풍)·팬 속도·목표 온도는 실행 후 카드에서 조절합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="tv 티비 스피커 켜 꺼 리모컨">
+          <div class="entry-examples">
+            <span class="example">"거실 TV 켜줘"</span>
+            <span class="example">"안방 스피커 꺼"</span>
+          </div>
+          <div class="entry-body">
+            <p>TV·스피커 · TV는 등록된 IR 리모컨 스크립트("리모콘 TV 전원 ON/OFF")가 있으면 그걸 우선 사용합니다.</p>
+            <p class="sub">스피커의 음악 재생 관련 명령은 아래 "🎵 음악 재생" 섹션 참고.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="grammar">
+        <div class="group-head"><span class="icon">🧩</span><h2>제어 문법 (공통 규칙)</h2></div>
+        <p class="group-note">모든 기기 제어 명령에 공통으로 적용되는 규칙입니다.</p>
+
+        <div class="entry" data-search="방 지정 여러개 되묻기 어느방 어느거">
+          <div class="entry-examples">
+            <span class="example">"등 켜줘" (방 미지정)</span>
+            <span class="example">"안방 등 켜" (동명 기기 2개+)</span>
+          </div>
+          <div class="entry-body">
+            <p>방을 생략했는데 같은 종류 기기가 여러 방에 있으면 "어느 방이요?"라고 되묻습니다. 한 방 안에 동일 종류 기기가 여럿(예: 안방 등/스탠드 등/화장대 등)이면 이름을 특정할 때까지 절대 전부 켜지 않고 되묻습니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="전체 모두 다같이 싹다 집전체 총출동">
+          <div class="entry-examples">
+            <span class="example">"불 다 꺼줘"</span>
+            <span class="example">"선풍기 모두 켜줘"</span>
+            <span class="example">"집 전체 커튼 닫아"</span>
+          </div>
+          <div class="entry-body">
+            <p>전체 제어는 <code>전체</code> <code>모두</code> <code>다같이</code> <code>싹다</code> <code>집전체</code> <code>총출동</code> 같은 단어를 명시했을 때만 동작합니다. 방을 못 찾았다고 조용히 전체를 켜는 일은 없습니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="복합 명령 여러 기기 켜고 닫고">
+          <div class="entry-examples">
+            <span class="example">"안방 등 켜고 커튼 닫아"</span>
+            <span class="example">"안방 등 모두 끄고 선풍기 끄고 커튼 닫아"</span>
+            <span class="example">"안방 등하고 선풍기 켜"</span>
+          </div>
+          <div class="entry-body">
+            <p>한 문장에 여러 동사를 이어 쓰거나("켜고"·"끄고"), 동사 하나에 기기를 여러 개 나열해도("등하고 선풍기 켜") 각각 인식해서 전부 실행합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="예약 실행 뒤에 후에 있다가 분 시간 초">
+          <div class="entry-examples">
+            <span class="example">"안방 등 10분 뒤에 꺼줘"</span>
+            <span class="example">"1시간 후에 커튼 닫아줘"</span>
+            <span class="example">"예약 실행 목록 보여줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>초·분·시간 단위 지연 실행을 지원합니다("~뒤에/후에/있다가/있으면"). 예약된 명령의 개수·목록은 "예약 몇 개야?" / "예약 목록"으로 언제든 확인할 수 있습니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="맥락 유지 후속 명령 닫아 켜">
+          <div class="entry-examples">
+            <span class="example">"안방 커튼 열어" → (다음 턴) "닫아"</span>
+            <span class="example">"안방 선풍기 꺼" → "켜" → "책상등 꺼" → "켜"</span>
+          </div>
+          <div class="entry-body">
+            <p>직전에 제어한 대상을 기억해서, 기기 이름 없이 동사만 말해도 그대로 적용됩니다. 방과 기기 종류를 따로 기억하기 때문에, 방을 생략한 다음 명령도 마지막 방을 자동으로 이어받습니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="숨김 기기 확인">
+          <div class="entry-examples">
+            <span class="example">"거실 플러그 꺼줘" → "숨김 처리된 기기입니다..." → "응"</span>
+          </div>
+          <div class="entry-body">
+            <p>HA에서 숨김 처리한 기기가 명령의 유일한 대상이면 <span class="flag confirm">확인 필요</span> 실행 전에 반드시 확인을 받습니다. 같은 이름으로 보이는(숨기지 않은) 기기가 함께 있으면 숨긴 쪽은 조용히 제외하고 보이는 것만 제어합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="상태 질문 켜져있어 꺼져있어 작동중">
+          <div class="entry-examples">
+            <span class="example">"안방 스탠드 등 켜져있어?"</span>
+            <span class="example">"선풍기 작동중이야?"</span>
+          </div>
+          <div class="entry-body">
+            <p>물음표 + 상태형 표현("~있어?", "~중이야?")은 명령이 아니라 질문으로 인식해 <strong>절대 기기를 건드리지 않고</strong> 현재 상태만 답합니다.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="목록 리스트 뭐있어 뭐가있어 보여줘">
+          <div class="entry-examples">
+            <span class="example">"안방 등 목록"</span>
+            <span class="example">"조명 뭐있어"</span>
+            <span class="example">"선풍기 보여줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>기기 목록 조회 — 방을 지정하면 그 방만, 생략하면 집 전체를 종류별로 나열합니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="status">
+        <div class="group-head"><span class="icon">🔎</span><h2>상태 조회</h2></div>
+        <div class="entry" data-search="문 창문 열려 닫혀 카메라 cctv">
+          <div class="entry-examples">
+            <span class="example">"문 열려있어?"</span>
+            <span class="example">"카메라 상태 어때?"</span>
+          </div>
+          <div class="entry-body"><p>문/창문 개폐 상태, 카메라(CCTV) 상태를 확인합니다.</p></div>
+        </div>
+        <div class="entry" data-search="상태 어때 상황 종합">
+          <div class="entry-examples">
+            <span class="example">"안방 상태 어때"</span>
+            <span class="example">"거실 상황"</span>
+          </div>
+          <div class="entry-body"><p>그 방의 기기 상태 + 환경 수치를 한 번에 종합해서 보여줍니다.</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="env">
+        <div class="group-head"><span class="icon">🍃</span><h2>환경·센서</h2></div>
+        <p class="group-note">온도·습도·CO2·TVOC·미세먼지·조도·기압을 방 단위 또는 집 전체 기준으로 조회합니다. 방 이름 없이 "습도는?"만 물으면 직전에 언급한 방을 그대로 기억해서 답합니다.</p>
+
+        <div class="entry" data-search="온도 습도 기온 co2 이산화탄소 tvoc 유기화합물 초미세먼지 미세먼지 pm2.5 pm10 조도 밝기 기압 공기질 환기">
+          <div class="entry-examples">
+            <span class="example">"안방 온도는?" → "습도는?"</span>
+            <span class="example">"거실 CO2 얼마야"</span>
+            <span class="example">"초미세먼지 어때"</span>
+            <span class="example">"안방 공기질 어때"</span>
+          </div>
+          <div class="entry-body">
+            <p>개별 지표: <code>온도</code> <code>습도</code> <code>CO2</code> <code>TVOC</code> <code>초미세먼지(PM2.5)</code> <code>미세먼지(PM10)</code> <code>조도</code> <code>기압</code> — 방 지정 시 그 방, 생략 시 집 전체 기준.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="방별 방마다 공간별 구역별 각방">
+          <div class="entry-examples">
+            <span class="example">"방별 온도 알려줘"</span>
+            <span class="example">"각 방 습도 어때"</span>
+            <span class="example">"방마다 등 상태"</span>
+          </div>
+          <div class="entry-body"><p>모든 방을 한 번에 비교해서 보여주는 요약입니다.</p></div>
+        </div>
+
+        <div class="entry" data-search="날씨 기상 일기예보 온습도 대시보드">
+          <div class="entry-examples">
+            <span class="example">"오늘 날씨 어때"</span>
+            <span class="example">"온습도 대시보드 보여줘"</span>
+          </div>
+          <div class="entry-body"><p>실내외 비교, 방별 진단, AI 환기·냉난방 조언까지 함께 나오는 종합 리포트입니다.</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="manage">
+        <div class="group-head"><span class="icon">🤖</span><h2>자동화·스크립트·할 일</h2></div>
+        <div class="entry" data-search="자동화 오토메이션 automation">
+          <div class="entry-examples"><span class="example">"자동화 목록 보여줘"</span></div>
+          <div class="entry-body"><p>등록된 자동화와 각각의 on/off 상태를 나열합니다.</p></div>
+        </div>
+        <div class="entry" data-search="할일 투두 todo 쇼핑 장보기">
+          <div class="entry-examples">
+            <span class="example">"할 일 목록 보여줘"</span>
+            <span class="example">"장보기 리스트"</span>
+          </div>
+          <div class="entry-body"><p>To-do·쇼핑 리스트를 확인합니다.</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="family">
+        <div class="group-head"><span class="icon">👥</span><h2>재실·가족</h2></div>
+        <div class="entry" data-search="재실 누가 누구 집에 있어 왔어 귀가 외출 나갔">
+          <div class="entry-examples">
+            <span class="example">"누가 집에 있어?"</span>
+            <span class="example">"집에 누구 있어?"</span>
+          </div>
+          <div class="entry-body"><p>가족 전체 재실 현황(집에 있음 / 외출 중)을 한 번에 보여줍니다.</p></div>
+        </div>
+        <div class="entry" data-search="다은 다솔 이름 어디 왔어">
+          <div class="entry-examples">
+            <span class="example">"다은이 집에 있어?"</span>
+            <span class="example">"다솔 왔어?"</span>
+            <span class="example">"엄마 어디야?"</span>
+          </div>
+          <div class="entry-body"><p>등록된 가족 구성원(person 엔티티) 이름을 직접 언급하면 그 사람의 위치만 콕 집어 답합니다.</p></div>
+        </div>
+        <div class="entry" data-search="기념일 생일 제사">
+          <div class="entry-examples"><span class="example">"다가오는 기념일 있어?"</span></div>
+          <div class="entry-body"><p>등록된 생일·기념일·제사 정보를 확인합니다.</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="system">
+        <div class="group-head"><span class="icon">⚙️</span><h2>시스템</h2></div>
+        <div class="entry" data-search="헬스 건전성 진단 health 점검 배터리 업데이트">
+          <div class="entry-examples">
+            <span class="example">"시스템 헬스 어때"</span>
+            <span class="example">"배터리 상태 확인해줘"</span>
+          </div>
+          <div class="entry-body"><p>헬스체크, 배터리 부족 기기, 업데이트 가능 여부를 점검합니다.</p></div>
+        </div>
+        <div class="entry" data-search="메모리 램 ram 리소스 cpu 사양 애드온">
+          <div class="entry-examples">
+            <span class="example">"메모리 얼마나 써"</span>
+            <span class="example">"애드온별 메모리 사용량"</span>
+          </div>
+          <div class="entry-body"><p>CPU/RAM 리소스 사용량을 애드온 단위 또는 시스템 전체로 확인합니다.</p></div>
+        </div>
+        <div class="entry" data-search="에러 로그 오류 시스템로그">
+          <div class="entry-examples"><span class="example">"최근 에러 로그 보여줘"</span></div>
+          <div class="entry-body"><p>최근 시스템 오류 로그를 조회합니다.</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="energy">
+        <div class="group-head"><span class="icon">🔌</span><h2>에너지</h2></div>
+        <div class="entry" data-search="전력 사용량 가스 검침 에너지">
+          <div class="entry-examples">
+            <span class="example">"전력 사용량 얼마야"</span>
+            <span class="example">"가스 검침 얼마나 나왔어"</span>
+          </div>
+          <div class="entry-body"><p>현재 전력·가스 사용량 센서값을 확인합니다 (장기 통계 그래프가 아닌 실시간 값).</p></div>
+        </div>
+      </section>
+
+      <section class="group" id="music">
+        <div class="group-head"><span class="icon">🎵</span><h2>음악 재생 (Music Assistant 연동)</h2></div>
+        <p class="group-note">Music Assistant로 연결된 스피커에서만 동작합니다. 곡을 특정하지 않고 "음악 틀어줘"라고만 하면 무작정 아무거나 재생하는 대신, 최근 재생한 플레이리스트를 골라 재생할 수 있는 카드를 보여줍니다.</p>
+
+        <div class="entry" data-search="음악 노래 틀어줘 플레이리스트 스피커 선택">
+          <div class="entry-examples">
+            <span class="example">"안방에 음악 틀어줘"</span>
+            <span class="example">"거실 스피커 노래 틀어줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>최근 재생한 플레이리스트 최대 9개를 선택 카드로 보여줍니다 <span class="flag card">플레이리스트 카드</span></p>
+            <p class="sub">카드 상단에서 재생할 스피커도 바로 바꿀 수 있습니다 — 집 안에 있는 모든 Music Assistant 플레이어 중에서 선택.</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="재생중 위젯 제목 아티스트 커버 탐색바 이전곡 다음곡 일시정지">
+          <div class="entry-examples">
+            <span class="example">(재생 시작 후 카드에 자동 표시)</span>
+          </div>
+          <div class="entry-body">
+            <p>재생 중인 곡의 제목·아티스트·커버 아트, 드래그로 이동 가능한 탐색바, 이전곡·재생/일시정지·다음곡 버튼이 카드에 나타납니다.</p>
+            <p class="sub">화면에 보이는 동안 3초마다 자동으로 최신 재생 상태를 반영합니다 (스크롤로 벗어난 카드는 갱신을 멈춰 불필요한 조회를 하지 않습니다).</p>
+          </div>
+        </div>
+
+        <div class="entry" data-search="중지 정지 멈춰 일시정지 재생해줘 이어서">
+          <div class="entry-examples">
+            <span class="example">"중지해줘"</span>
+            <span class="example">"재생해줘"</span>
+          </div>
+          <div class="entry-body">
+            <p><code>중지</code>/<code>정지</code>/<code>멈춰</code>/<code>일시정지</code>는 스피커 전원을 끄지 않고 그 자리에서 일시정지합니다. <code>재생</code>이라고 하면 멈췄던 정확한 지점부터 다시 이어집니다.</p>
+            <p class="sub">방 이름 없이 이 단어만 말해도 직전에 튼 스피커에 그대로 적용됩니다(맥락 유지).</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="misc">
+        <div class="group-head"><span class="icon">💬</span><h2>기타</h2></div>
+        <div class="entry" data-search="뭐 할 수 있어 사용법 도움말 기능 소개">
+          <div class="entry-examples">
+            <span class="example">"뭐 할 수 있어?"</span>
+            <span class="example">"사용법 알려줘"</span>
+          </div>
+          <div class="entry-body"><p>지원하는 기능을 카테고리별로 요약해서 안내합니다.</p></div>
+        </div>
+        <div class="entry" data-search="안녕 인사 너 누구야">
+          <div class="entry-examples">
+            <span class="example">"안녕"</span>
+            <span class="example">"너 누구야?"</span>
+          </div>
+          <div class="entry-body"><p>인사에는 인사로 답합니다.</p></div>
+        </div>
+        <div class="entry" data-search="우리집 상황 어때 브리핑 종합">
+          <div class="entry-examples">
+            <span class="example">"우리집 상황 어때"</span>
+            <span class="example">"지금 어때"</span>
+          </div>
+          <div class="entry-body"><p>기기 상태 + 재실 + 환경 + 시스템 리소스를 아우르는 전체 브리핑입니다. 완전히 무관한 말("오늘 점심 뭐 먹지" 등)에는 추측해서 답하지 않고 되묻습니다.</p></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="note">전체 규칙이 코드 변경에 따라 계속 바뀔 수 있습니다 — 최신 동작은 실제 채팅으로 확인하는 게 가장 정확합니다.</footer>
+</div>
+
+<script>
+  const input = document.getElementById('filterInput');
+  const countEl = document.getElementById('filterCount');
+  const groups = Array.from(document.querySelectorAll('section.group'));
+  const total = document.querySelectorAll('.entry').length;
+
+  function applyFilter() {
+    const q = input.value.trim().toLowerCase();
+    let visible = 0;
+    groups.forEach(function (group) {
+      let groupVisible = 0;
+      group.querySelectorAll('.entry').forEach(function (entry) {
+        const hay = (entry.getAttribute('data-search') || '') + ' ' + entry.textContent.toLowerCase();
+        const match = !q || hay.toLowerCase().includes(q);
+        entry.classList.toggle('hidden', !match);
+        if (match) { groupVisible++; visible++; }
+      });
+      group.classList.toggle('hidden', groupVisible === 0);
+    });
+    countEl.textContent = q ? `${visible} / ${total}개 항목 표시 중` : '';
+  }
+
+  input.addEventListener('input', applyFilter);
+</script>
+</body>
+</html>

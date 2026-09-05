@@ -9,4 +9,6 @@
 *   **백그라운드 세션 유지**: 브라우저를 닫아도 `tmux` 세션에서 작업이 계속 유지
 *   **영구 저장소**: 설정/인증/스킬이 `/config/.gemini`에 안전하게 보관되어 업데이트 후에도 유지
 
+📖 **[고속 제어 모드 명령어 가이드](https://dugurs.github.io/homeassistant-addons/fast-control-guide/)** — 자연어로 쓸 수 있는 전체 명령어와 활용법 정리
+
 자세한 설치 방법, 사용법, 문제 해결은 **설명(Documentation)** 탭을 참고하세요.
