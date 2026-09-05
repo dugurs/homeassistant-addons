@@ -1,3 +1,59 @@
+## 1.1.0-beta.67
+
+### 수정 (Fix) — 추론/도구 로그 UI를 Antigravity 데스크톱 앱 스타일로 개편
+- **추론 로그가 응답 말풍선(`.bubble`) 안에 다시 한 번 박스로 갇혀 있던 문제 수정**: `.term-box`(추론/도구 타임라인)를 `.bubble` 내부에서 꺼내 `.bubble-wrap`의 형제 요소로 이동(`buildBotBubbleDOM()`, `core/ui/scripts.py`) — 기존엔 어두운 터미널 패널(`.term-box`)이 다시 카드 스타일 말풍선(`.bubble`) 안에 중첩되어 이중으로 갇혀 보였음
+- **어두운 "터미널 콘솔" 룩 제거, 페이지와 같은 배경에 자연스럽게 흐르는 스타일로 전환**(`core/ui/styles.py`): `.term-box`/`.term-header`/`.term-body`의 고정 다크 배경(#0d1117 등)·테두리·모노스페이스 폰트·가로 스크롤을 제거하고 앱 테마 변수(`var(--text-muted)` 등)로 교체 — 라이트 모드에서도 자연스럽게 보임(기존엔 "터미널은 항상 다크"라는 전제였는데, 더 이상 독립된 박스가 아니라 페이지에 녹아드는 요소가 되면서 그 전제가 깨짐)
+- 상단 요약 뱃지("● LIVE"/"🕐 N초 동안 작업함")를 알약(pill) 모양에서 일반 텍스트 토글로 변경, 끝에 항상 접기/펼치기 화살표(▾/▸)가 따라붙도록 신설 `setTermBadgeText()`/`toggleTermBody()`로 통일(3곳에 흩어져 있던 중복 로직 정리)
+- **MCP 도구 호출("HA 도구") 표시를 Antigravity 참고화면과 동일하게 "MCP Tool: {서버} / {도구}" + 펼치면 "Tool arguments"/"Tool Output" JSON 블록**으로 변경(`_classify_tool_call()`의 `call_mcp_tool` 분기, `core/streamer.py`/`core/ui/scripts.py` 양쪽 미러 + 신설 `toolIoDetailHTML()`) — 이전엔 인자를 한 줄에 다 욱여넣었음. "Tool Output"은 `find_by_name`/`run_command`/`search_web`와 동일한 GENERIC 결과 버퍼링에 의존하는데, agy가 MCP 호출에도 동일하게 결과 스텝을 남기는지는 아직 실측 전 — 없으면 "Tool arguments"만 보임(정상 동작, 추정으로 지어내지 않음)
+- 그룹 요약 "파일 N개 탐색, 검색 M회"의 숫자를 굵게 표시, 파일 경로류 텍스트(`view_file`/`write_to_file`/`replace_file_content`의 대상)를 코드체(모노스페이스)로 표시 — 참고 화면의 "Analyzed {} ha_search.json" 스타일과 동일
+- 접기/펼치기 화살표를 항상 줄 끝에 오도록 변경(CSS `order` 사용, 마크업 순서는 그대로 두고 시각적 위치만 이동) — 참고 화면과 동일하게 왼쪽이 아니라 오른쪽에 표시
+- "Explored N files, M searches" 그룹은 기본적으로 펼쳐진 채로 시작(개별 도구 결과/추론 블록은 여전히 기본 접힘) — 참고 화면과 동일한 기본 상태
+
+## 1.1.0-beta.66
+
+### 수정 (Fix) — 모바일 UI 정리
+- **CPU/RAM 그래프 패널 제목/범례 텍스트가 좁은 화면에서 단어 중간(예: "애드\n온")까지 줄바꿈되던 문제 수정**: 제목을 "CPU 사용률 추이 (듀얼)"/"RAM 점유율 추이 (듀얼)" → "CPU"/"RAM"으로, 범례를 "애드온:"/"시스템 전체:" → "애드온"/"전체"로 축약(`core/ui/templates.py`), `.lg-item`/`.chart-title`에 `white-space: nowrap` 추가하고 안 맞으면 개별 항목이 아니라 범례 전체가 다음 줄로 내려가도록 `.chart-top`에 `flex-wrap` 적용(`core/ui/styles.py`)
+- **모바일에서 좌측 세션 사이드바를 열면 CPU/RAM 그래프 패널이 그 위에 떠 있는 것처럼 보이던 문제 수정**: `.top-resource-panel`이 `position` 없이 `z-index: 50`만 있어 사실상 아무 효과가 없었던 것(포지션 없는 요소의 z-index는 무시됨 -- 반면 모바일의 `.session-sidebar`는 `position: fixed`라 항상 위에 그려짐)이 근본 원인은 아니었지만, 상태 동기화가 어긋나 두 패널이 동시에 열려 있는 경우 자체가 혼란의 원인이었음 — `toggleResourcePanel()`/`toggleSessionSidebar()`가 모바일(`window.innerWidth <= 768`)에서 서로를 상호 배타적으로 닫도록 수정(`core/ui/scripts.py`), `.top-resource-panel`에도 `position: relative`와 사이드바(z-index 40)보다 낮은 `z-index: 10`을 명시해 상태가 어긋나도 항상 사이드바가 위에 그려지도록 이중 방어(`core/ui/styles.py`)
+- **헤더의 누적 토큰 표시(🪙) 제거**: `resetTokens()`/`session-tokens` 갱신 로직은 이미 전부 `if (element)` 가드가 있어 요소를 지워도 안전 — 턴별 토큰 수치는 각 답변 말풍선 하단(`⚡ N초 완료` 옆 토큰 배지)에 여전히 표시됨(`core/ui/templates.py`)
+- **모바일에서 실행모드/모델/에이전트 선택 버튼 3개가 한 줄에 다 안 들어가 마지막(에이전트) 버튼이 화면 밖으로 잘려 나가던 문제 수정**: `.composer-toolbar-left`에 가로 스크롤(`overflow-x: auto`, 스크롤바 숨김) 적용, `.composer-toolbar-right`(마이크/전송 버튼)는 `flex-shrink: 0`으로 항상 고정(`core/ui/styles.py`) — 에이전트 선택을 모델 선택 드롭다운 안으로 합치는 대신 이 방법을 택함(아래 참고)
+
+## 1.1.0-beta.65
+
+### 추가 (Add) — HA 파일 보호를 실제 강제 차단으로 승격 (PreToolUse 훅)
+- beta.47의 HA 파일 보호는 (a) `ha-file-safety.md` 규칙 주입(모델이 원칙적으로 따르길 기대하는 지시일 뿐)과 (b) `settings.json`의 `permissions.deny`(Mode 3가 항상 쓰는 `--dangerously-skip-permissions`가 permissions 엔진 자체를 우회해버려서 실제로는 강제되지 않음) 두 가지뿐이었음 — 이번에 공식 문서(antigravity.google/docs/hooks/)를 확인해 **PreToolUse 훅**을 추가로 도입: 훅은 사람의 승인 프롬프트가 전혀 필요 없는 "스크립트를 동기 실행하고 그 결과(JSON)로 허용/차단을 결정"하는 별개의 메커니즘이라, `--dangerously-skip-permissions`가 우회하는 permissions 엔진과도, 헤드리스에서 영구 행(hang)하는 상위 버그가 있는 인터랙티브 승인 UI와도 무관하게 동작할 것으로 판단(문서상 인터랙티브 CLI에서는 매 도구 호출마다 실제로 발동해 차단이 동작한다는 실사용자 확인까지는 찾았으나, 헤드리스(`-p`) 모드에서도 그런지는 아직 실측 전 — 배포 후 실제 삭제 시도로 반드시 확인 필요)
+  - 신설 `run.sh` → `/root/.gemini/hooks/ha_file_guard.py`: `run_command`(쉘 명령어에 `rm`/`unlink`/`shred`/`truncate`/`mv`/`>`(단순 리다이렉트, `>>`는 제외) 같은 파괴적 동작 + 보호 대상 경로 문자열이 함께 있을 때만 차단 — `cat`/`ls`/`grep` 같은 단순 조회는 걸리지 않음)와 `write_to_file`/`replace_file_content`(대상 경로가 보호 목록과 일치/그 하위일 때 차단)를 매처로 지정. beta.59에서 발견된 "일부 도구 인자 문자열이 이중 JSON 인코딩되어 있다"는 특성을 이 훅의 자체 stdin 페이로드에도 방어적으로 동일 적용(`_unwrap()`)
+  - 차단 대상 목록은 `ha-file-safety.md`와 동일(`.storage`/`secrets.yaml`/`configuration.yaml`/`.uuid`/`.HA_VERSION`/`home-assistant_v2.db`/`.cloud`/이 애드온 자신의 `.gemini`/`automations·scripts·scenes.yaml`/`custom_components`/`/backup`) — 로컬에서 13개 케이스(보호 경로+파괴적 동작 조합 차단, 무관한 rm/조회/mv/append 허용, mcp 도구 통과, 이중 인코딩 경로 차단 등)로 훅 스크립트 자체의 판정 로직만 별도 검증 완료(agy가 실제로 이 훅을 호출하는지는 별개로 미검증)
+  - 훅 등록 위치가 문서상 명확하지 않아(워크스페이스 `.agents/hooks.json` vs `settings.json`의 `hooks` 키, 기존 `core/hooks_discovery.py`는 후자를 전제로 작성돼 있었음) 두 곳 모두에 동일하게 등록(중복 실행은 되어도 무해함) — 실제로 어느 쪽이 유효한지는 라이브 테스트로 확인 예정
+
+## 1.1.0-beta.64
+
+### 추가 (Feature) — Mode 3 추론/도구 로그 전면 개편 (그룹핑 + 접기/펼치기 + 실제 결과 표시)
+- 기존엔 추론(💭)/도구 호출(🔧)이 전부 완성된 문자열 한 줄씩으로 쌓이기만 하고, 접기/펼치기도 없이 180px 고정 높이 박스에 계속 쌓여 답답했던 것을 Antigravity IDE 자체의 액션 타임라인(연속 탐색/검색 묶기 + "Thought for Xs" + "Edited +N -M") 형태로 개편
+- **`transcript.jsonl`에 `write_to_file`/`replace_file_content` 외의 도구(`find_by_name`/`grep_search`/`run_command`/`search_web`)는 호출 인자만 있고 실제 결과(검색 결과 개수, 커맨드 출력, 웹검색 요약)가 안 보이던 문제를 실측으로 해결**: agy가 도구 호출 바로 다음 줄에 `type:"GENERIC"`인 결과 스텝을 별도로 남긴다는 것을 실제 대화로 확인(예: `find_by_name` 다음 줄에 `"Found 2 results\nautomations.yaml\n..."`) — 신설 버퍼링 로직(`core/streamer.py` `tail_transcript()`)이 결과가 필요한 도구 호출을 한 줄 보류했다가, 바로 다음 줄이 매칭되는 GENERIC 결과면 접어서 하나의 항목으로 합침(결과가 없으면 한 줄 지연 후 그대로 흘려보냄, 무한 대기 없음)
+- 신설 `_classify_tool_call()`이 도구별로 그룹(탐색/웹검색/편집/명령어/HA 도구)·동사·대상·통계·펼치기용 상세내용을 한 곳에서 결정 — `write_to_file`/`replace_file_content`는 beta.59에서 만든 diff에서 바로 `+N -M` 통계를 계산하고, `find_by_name`/`grep_search`/`run_command`는 GENERIC 결과에서 "N개 결과"/"N줄 출력" 요약을 정규식으로 뽑아냄(`_result_stat()`)
+- SSE에 신설 `reasoning_step` 이벤트 타입 추가(`make_sse()`에 구조화 `data` 페이로드 지원 추가) — 기존 `live_log`(세션 시작/오류 배너 등 일회성 메시지)는 그대로 두고, 추론/도구 로그만 구조화 데이터로 분리 전송
+- 프론트(`core/ui/scripts.py` 신설 `createReasoningTimeline()`): 연속된 파일 확인/파일명 검색/grep/웹검색은 자동으로 "파일 N개 탐색, 검색 M회" 하나의 접힌 그룹으로 묶이고, 편집/명령어/HA 도구 호출은 각각 독립된 줄로 표시. 각 줄(추론/그룹/개별 항목)은 클릭으로 개별 펼치기 가능 — 펼치면 diff, 커맨드 출력, 검색 결과 요약 등 실제 내용이 보임(6000자 캡, `_cap_detail()`)
+- 말풍선 상단 뱃지(`.term-badge`, 기존 "● LIVE"/"● COMPLETED")를 전체 접기/펼치기 토글로 재활용 — 스트리밍 중엔 "⏳ N초 작업 중"으로 틱, 답변이 끝나면 "🕐 N초 동안 작업함"으로 고정되며 자동으로 접힘(사용자가 이미 수동으로 펼쳤다면 그 상태 유지)
+- 복원된(과거) 대화도 동일하게 보이도록 신설 `buildStepsFromResponses()`가 `core/streamer.py`의 버퍼링 로직을 JS로 그대로 미러링 — `get_session_history()`가 이미 GENERIC 결과 스텝을 포함해서 반환하고 있었다는 것을 확인했기 때문에(rewind가 의존하는 `transcript.jsonl`/`step_index` 체계는 전혀 건드리지 않음) 서버 쪽 변경 없이 프론트만으로 라이브와 동일한 타임라인을 재구성. 다만 복원된 대화는 처음부터 접힌 상태로 시작(라이브는 완료 시점에 자동으로 접힘)
+- `core/ui/styles.py`에 `.step-row`/`.step-child`/`.step-detail`/`.step-children` 등 신설 — 기존 `.term-box`와 동일한 고정 다크 콘솔 팔레트 사용
+
+## 1.1.0-beta.63
+
+### 개선 (Improve) — 도움말 패널 스크롤 + 스킬 설명 팝오버
+- **도움말/피드백 패널(`.help-box`)에 `max-height`/`overflow-y:auto`가 없어 스킬·훅이 많아지면 화면 밖으로 넘칠 수 있던 문제 수정**: MCP/스킬/훅 목록이 전부 늘어나는 패널인데 세로 크기 제한이 없었음 (`core/ui/styles.py`)
+- **스킬 목록에서 긴 `description`을 줄에 그대로 늘어놓지 않고, 이름 옆 (i) 아이콘 클릭 시 팝오버로 보여주도록 변경** (`core/ui/scripts.py` `toggleSkillInfo()`/`closeSkillInfoPopover()`, `core/ui/styles.py` `.skill-info-btn`/`.info-popover`): 특히 이번에 기본 탑재한 `home-assistant-best-practices` skill처럼 설명이 여러 문장인 경우 목록이 옆으로 한참 길어지던 문제 해결. 아이콘 클릭 시 버튼 위치 기준으로 팝오버를 띄우고(화면 밖으로 나가면 반대쪽으로 뒤집음), 같은 버튼 재클릭·바깥 클릭·패널 닫기 시 닫힘 — 이미지 라이트박스(beta.19 이전)와 동일하게 delegated click 리스너로 구현해 목록이 새로고침돼도 계속 동작
+
+## 1.1.0-beta.62
+
+### 추가 (Feature) — Home Assistant 모범사례 Agent Skill 기본 탑재
+- `homeassistant-ai/skills` 저장소의 `home-assistant-best-practices` skill(SKILL.md + `references/` 참고파일 14개, 총 15개 파일)을 이미지 빌드 시 구워서 기본 탑재(`Dockerfile`). Agent Skills 표준의 progressive-disclosure 구조 그대로 유지 — SKILL.md만 컨텍스트에 상시 로드되고 나머지 참고파일은 에이전트가 필요할 때만 읽음
+- **`/skills` 목록 기능(`core/skills_discovery.py`)이 애초에 실제 skill을 하나도 못 찾던 버그를 이번에 발견해 같이 수정**: 이 모듈은 공식 웹 문서(antigravity.google/docs/cli/plugins/)를 근거로 "skill은 `{skill}.md` 형태의 flat 파일이고 글로벌 경로는 `~/.gemini/antigravity-cli/skills/`"라고 가정하고 있었는데, 실제 설치된 Antigravity 제품 자체의 내장 문서(`agy-customizations` skill의 `docs/skills.md`)와 실제 파일시스템(`~/.gemini/config/skills/<name>/SKILL.md`에 이미 존재하던 사용자 생성 skill 2개, 그리고 `antigravity_guide`/`agy-customizations` 등 내장 skill들이 전부 `references/`·`docs/` 하위 폴더를 쓰는 디렉토리 구조)을 직접 확인한 결과 공식 웹 문서가 stale함을 실측으로 확인:
+  - 진짜 글로벌 경로는 `~/.gemini/antigravity-cli/skills/`가 아니라 `~/.gemini/config/skills/`(`~/.gemini/antigravity-cli/`는 `settings.json`이 있는 곳이지 skill이 있는 곳이 아니었음)
+  - 진짜 포맷은 skill 하나당 flat `.md` 파일이 아니라 `<skill>/SKILL.md` 디렉토리(+선택적 `scripts/`/`examples/`/`resources/`/`references/`)
+  - `_skill_search_dirs()`의 global 경로와 `list_available_skills()`의 스캔 로직(디렉토리 목록 → 각 하위 디렉토리의 `SKILL.md` 탐색)을 이 실측 결과에 맞게 수정
+- 새로 구운 skill은 `run.sh`가 `/root/.gemini/config/skills/`(=`/config/.gemini/config/skills/`, addon_config에 영구 보존)에 최초 1회만 복사 — `ha-guidelines.md`/`ha-file-safety.md`와 동일하게 이미 존재하면 건드리지 않아 사용자가 삭제/수정해도 다음 재시작에 되살아나지 않음. `Dockerfile`에서 바로 `~/.gemini/`에 굽지 않은 이유: `run.sh`가 매 시작마다 `/root/.gemini`를 통째로 지우고 `/config/.gemini`로 심볼릭 링크하기 때문에, 이미지에 구운 파일은 그 시점에 사라짐
+- **실제 addon을 재빌드해 `/api/skills`로 실측하는 과정에서 두 번째 버그를 발견해 같이 수정**: 위 경로/포맷 수정 후 skill 자체는 잡혔지만 `description`이 `">"` 한 글자만 나옴 — `home-assistant-best-practices/SKILL.md`가 `description: >`(YAML 접힘 블록 스칼라)로 여러 줄에 걸쳐 설명을 적어두는데(같은 이유로 antigravity 자체 내장 예시 `agy-customizations/docs/skills.md`도 `description: >-`를 씀 — skill 설명은 에이전트가 언제 이 skill을 쓸지 판단하는 핵심 필드라 길게 쓰는 게 일반적인 관례), `_parse_frontmatter()`가 한 줄짜리 `key: value`만 읽던 기존 로직(`agent_discovery.py`와 공유하던 접근)이 `>` 마커 자체만 값으로 잘라먹고 있었음. 블록 스칼라(`>`/`|`, 폴딩 여부 구분)를 뒤따르는 들여쓰기 줄까지 이어붙이도록 `_parse_frontmatter()`를 확장(`core/skills_discovery.py`) — `agent_discovery.py`의 동일 파서는 지금까지 실제로 여러 줄 description을 만난 적이 없어 그대로 둠(범위 밖)
+
 ## 1.1.0-beta.60
 
 ### 수정 (Fix) — 화면 전체 먹통(세션 목록/모드/모델 선택 불가) 긴급수정

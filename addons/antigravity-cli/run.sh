@@ -201,6 +201,186 @@ trigger: always_on
 SAFETY_EOF
 fi
 
+# Hard-block HA-critical file deletion/overwrite via a PreToolUse hook.
+#
+# Unlike the `deny` permission list above (bypassed by
+# --dangerously-skip-permissions) or the ha-file-safety.md rule (an
+# instruction the model can in principle ignore), a hook is a synchronous
+# "run a script, read its JSON decision" contract with no human prompt
+# involved at all -- per antigravity.google/docs/hooks/, PreToolUse fires
+# before a tool executes and a `{"decision":"deny",...}` on stdout blocks it
+# outright, regardless of --dangerously-skip-permissions. This should apply
+# in Mode 3 headless too (it's not the same interactive-approval-UI code
+# path that's documented to hang headless -- see the NOTE on HA_DENY_RULES
+# above) but that has NOT been live-verified against this container's agy
+# build yet; treat it as the enforced backstop only after confirming a real
+# denied attempt in chat.
+mkdir -p /root/.gemini/hooks
+HOOK_SCRIPT="/root/.gemini/hooks/ha_file_guard.py"
+if [ ! -f "$HOOK_SCRIPT" ]; then
+    cat << 'HOOK_PY_EOF' > "$HOOK_SCRIPT"
+#!/usr/bin/env python3
+"""PreToolUse hook: hard-block deletion/overwrite of Home Assistant's
+critical config data (see run.sh's ha-file-safety.md for the same list in
+rule-instruction form -- this is the enforced counterpart, matched on
+run_command's shell command line and on write_to_file/replace_file_content's
+target path).
+
+Payload shape and decision contract per antigravity.google/docs/hooks/:
+    stdin:  {"toolCall": {"name": ..., "args": {...}}, ...}
+    stdout: {"decision": "allow"} | {"decision": "deny", "reason": "..."}
+"""
+import json
+import re
+import sys
+
+PROTECTED = [
+    ("/config/.storage", ".storage 레지스트리(엔티티/기기/로그인 계정 등 HA 핵심 상태)"),
+    ("/config/secrets.yaml", "민감정보(비밀번호/토큰) 파일"),
+    ("/config/configuration.yaml", "HA 메인 설정 파일"),
+    ("/config/.uuid", "이 HA 인스턴스의 고유 식별자"),
+    ("/config/.HA_VERSION", "내부 버전 마커"),
+    ("/config/home-assistant_v2.db", "히스토리/로그북 레코더 데이터베이스"),
+    ("/config/.cloud", "Nabu Casa Cloud 인증 토큰"),
+    ("/config/.gemini", "이 애드온(Antigravity CLI) 자신의 설정/인증/대화 기록"),
+    ("/config/automations.yaml", "사용자 자동화 정의"),
+    ("/config/scripts.yaml", "사용자 스크립트 정의"),
+    ("/config/scenes.yaml", "사용자 씬 정의"),
+    ("/config/custom_components", "설치된 커스텀 통합(HACS 등)"),
+    ("/backup", "Home Assistant 백업 아카이브"),
+]
+
+# A protected path substring alone isn't enough (plain `cat`/`ls`/`grep` must
+# stay unblocked) -- only deny when a destructive verb/redirect is also
+# present. `>` (but not `>>`, which only appends) covers truncate-by-redirect.
+_DESTRUCTIVE_RE = re.compile(r"(?:^|[\s;&|])(rm|unlink|shred|truncate|mv)\b|(?<!>)>(?!>)")
+
+
+def _unwrap(value):
+    """agy has been observed double-JSON-encoding string tool-call args for
+    some fields (confirmed for AbsolutePath/CodeContent/TargetContent in
+    transcript.jsonl -- see core/streamer.py _agy_str()). This hook gets its
+    payload from a separate, first-class stdin contract that may or may not
+    share the quirk, so unwrap defensively either way -- a plain unquoted
+    path string just fails json.loads and falls through unchanged."""
+    if not isinstance(value, str):
+        return value
+    try:
+        unwrapped = json.loads(value)
+        if isinstance(unwrapped, str):
+            return unwrapped
+    except Exception:
+        pass
+    return value
+
+
+def _deny(path, why):
+    print(json.dumps({
+        "decision": "deny",
+        "reason": (
+            f"[HA 파일 보호] '{path}' 는 Home Assistant 운영에 필수적인 핵심 데이터({why})로, "
+            "이 애드온의 안전 정책상 어떤 요청에도 삭제/덮어쓰기가 차단됩니다. "
+            "사용자에게 이 사실과 위험성을 알리고, 정말 필요하다면 HA 자체 백업/복원 기능이나 "
+            "공식 설정 화면을 통한 개별 작업을 안내하세요."
+        ),
+    }, ensure_ascii=False))
+
+
+def _allow():
+    print(json.dumps({"decision": "allow"}))
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        _allow()
+        return
+
+    tool_call = payload.get("toolCall") or {}
+    name = tool_call.get("name", "")
+    args = tool_call.get("args")
+    if isinstance(args, str):
+        args = _unwrap(args)
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+    if not isinstance(args, dict):
+        args = {}
+
+    if name == "run_command":
+        cmd = _unwrap(args.get("CommandLine", "")) or ""
+        if _DESTRUCTIVE_RE.search(cmd):
+            for path, why in PROTECTED:
+                if path in cmd:
+                    _deny(path, why)
+                    return
+        _allow()
+        return
+
+    if name in ("write_to_file", "replace_file_content"):
+        target = _unwrap(args.get("AbsolutePath", "")) or ""
+        for path, why in PROTECTED:
+            if target == path or target.startswith(path.rstrip("/") + "/"):
+                _deny(path, why)
+                return
+        _allow()
+        return
+
+    _allow()
+
+
+if __name__ == "__main__":
+    main()
+HOOK_PY_EOF
+fi
+
+HOOK_DEF='{
+  "enabled": true,
+  "PreToolUse": [
+    {
+      "matcher": "run_command|write_to_file|replace_file_content",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 /root/.gemini/hooks/ha_file_guard.py",
+          "timeout": 10
+        }
+      ]
+    }
+  ]
+}'
+
+# Register the hook two ways, since the documented registration surface is
+# ambiguous between sources (a workspace .agents/hooks.json vs a top-level
+# "hooks" key in settings.json -- core/hooks_discovery.py already expects to
+# find hooks in settings.json). Registering in both is harmless (worst case
+# the same check runs twice) and doesn't depend on picking the one right
+# answer before it's been live-tested.
+mkdir -p "${WORKDIR}/.agents"
+AGENTS_HOOKS_FILE="${WORKDIR}/.agents/hooks.json"
+if [ ! -f "$AGENTS_HOOKS_FILE" ]; then
+    printf '{\n  "ha-file-guard": %s\n}\n' "$HOOK_DEF" > "$AGENTS_HOOKS_FILE"
+elif command -v jq >/dev/null 2>&1; then
+    jq --argjson h "$HOOK_DEF" '.["ha-file-guard"] = $h' "$AGENTS_HOOKS_FILE" > "${AGENTS_HOOKS_FILE}.tmp" 2>/dev/null && mv "${AGENTS_HOOKS_FILE}.tmp" "$AGENTS_HOOKS_FILE"
+fi
+
+if command -v jq >/dev/null 2>&1; then
+    jq --argjson h "$HOOK_DEF" '.hooks["ha-file-guard"] = $h' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" 2>/dev/null && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+fi
+
+# Install the baked-in Home Assistant best-practices Agent Skill (see
+# Dockerfile step 5b) into the persistent global skills dir, once. Skipped
+# if the user has already removed/replaced it, same guard style as the
+# rules above -- this only seeds it on first boot, never overwrites.
+mkdir -p /root/.gemini/config/skills
+if [ -d /usr/local/share/antigravity-cli-skills/home-assistant-best-practices ] && \
+   [ ! -d /root/.gemini/config/skills/home-assistant-best-practices ]; then
+    cp -r /usr/local/share/antigravity-cli-skills/home-assistant-best-practices /root/.gemini/config/skills/
+fi
+
 # Tmux configuration
 if [ ! -f /root/.tmux.conf ]; then
     cat << 'TMUX_EOF' > /root/.tmux.conf

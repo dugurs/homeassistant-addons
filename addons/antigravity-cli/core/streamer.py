@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 
 from core.ha_engine import (
     get_ai_deep_environment_analysis,
@@ -73,13 +74,125 @@ def _diff_log_lines(old_text: str, new_text: str) -> str:
     return "\n".join(lines)
 
 
-def make_sse(event_type: str, content: str = "", tokens: dict = None) -> str:
+def _diff_stat(old_text: str, new_text: str) -> str:
+    """'+N -M' added/removed line counts for a reasoning-step badge."""
+    added = len(new_text.splitlines()) if new_text else 0
+    removed = len(old_text.splitlines()) if old_text else 0
+    return f"+{added} -{removed}"
+
+
+def _parse_iso(ts):
+    """Parse agy's 'YYYY-MM-DDTHH:MM:SSZ' created_at into a datetime, or None."""
+    if not ts or not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+_DETAIL_CAP = 6000  # matches build_rewind_context_preamble()'s existing convention
+
+
+def _cap_detail(text: str) -> str:
+    if text and len(text) > _DETAIL_CAP:
+        return text[:_DETAIL_CAP] + "\n...(생략)"
+    return text or ""
+
+
+def _result_stat(tname: str, content: str) -> str:
+    """Best-effort short summary badge for a tool's GENERIC follow-up result."""
+    if tname == "find_by_name":
+        m = re.search(r"Found (\d+) results?", content or "")
+        if m:
+            return f"{m.group(1)}개 결과"
+    elif tname == "grep_search":
+        m = re.search(r"Found (\d+) (?:matches|results?)", content or "", re.IGNORECASE)
+        if m:
+            return f"{m.group(1)}개 결과"
+    elif tname == "run_command":
+        lines = (content or "").strip().splitlines()
+        if lines:
+            return f"{len(lines)}줄 출력"
+    return ""
+
+
+def _classify_tool_call(tname: str, args: dict, desc: str) -> dict:
+    """Build the display shape for one tool_call -- shared by the live SSE
+    reasoning_step pipeline and (mirrored in core/ui/scripts.py) the
+    restored-history renderer. `needs_result` marks tools whose args alone
+    don't carry their outcome, so tail_transcript() holds the step open one
+    more line waiting for a GENERIC follow-up step to fill in stat/detail
+    (see the buffering loop below) -- write_to_file/replace_file_content
+    already carry full old/new content in args, so they're never buffered.
+    """
+    if tname == "call_mcp_tool":
+        # Args go in a separate "Tool arguments" JSON block on expand (see
+        # args_json / toolIoDetailHTML() in core/ui/scripts.py) rather than
+        # crammed into the summary line -- matches Antigravity's own
+        # "MCP Tool: server / tool" + expandable arguments/output UI.
+        tcalled = _agy_str(args.get("ToolName", "mcp"))
+        tcalled_display = tcalled.replace("/", " / ") if isinstance(tcalled, str) and "/" in tcalled else tcalled
+        targs = args.get("Arguments", {})
+        args_json = json.dumps(targs, ensure_ascii=False, indent=2) if isinstance(targs, dict) and targs else ""
+        return {
+            "group": "ha", "verb": "MCP Tool:", "target": tcalled_display,
+            "stat": "", "detail": "", "args_json": args_json, "needs_result": True,
+        }
+    if tname == "view_file":
+        fpath = _agy_str(args.get("AbsolutePath", ""))
+        fname = os.path.basename(fpath) if fpath else "file"
+        return {"group": "explore", "explore_kind": "file", "verb": "확인", "target": fname + (f" ({desc})" if desc else ""), "stat": "", "detail": "", "needs_result": True}
+    if tname == "run_command":
+        cmd_str = _agy_str(args.get("CommandLine", ""))
+        return {"group": "command", "verb": "명령어", "target": cmd_str, "stat": "", "detail": "", "needs_result": True}
+    if tname == "search_web":
+        q = _agy_str(args.get("query", ""))
+        return {"group": "web", "verb": "웹 검색", "target": q, "stat": "", "detail": "", "needs_result": True}
+    if tname == "find_by_name":
+        pattern = _agy_str(args.get("Pattern", ""))
+        return {"group": "explore", "explore_kind": "search", "verb": "파일명 검색", "target": pattern, "stat": "", "detail": "", "needs_result": True}
+    if tname == "grep_search":
+        query = _agy_str(args.get("Query", "")) or desc
+        return {"group": "explore", "explore_kind": "search", "verb": "검색", "target": query, "stat": "", "detail": "", "needs_result": True}
+    if tname == "replace_file_content":
+        fpath = _agy_str(args.get("TargetFile", ""))
+        fname = os.path.basename(fpath) if fpath else "file"
+        old_c = _agy_str(args.get("TargetContent", "")) or ""
+        new_c = _agy_str(args.get("ReplacementContent", "")) or ""
+        instr = _agy_str(args.get("Instruction", "")) or desc
+        return {
+            "group": "edit", "verb": "수정", "target": fname + (f" ({instr})" if instr else ""),
+            "stat": _diff_stat(old_c, new_c), "detail": _diff_log_lines(old_c, new_c), "needs_result": False,
+        }
+    if tname == "write_to_file":
+        fpath = _agy_str(args.get("TargetFile", ""))
+        fname = os.path.basename(fpath) if fpath else "file"
+        new_c = _agy_str(args.get("CodeContent", "")) or ""
+        overwrite = _agy_str(args.get("Overwrite", "false")) == "true"
+        added = len(new_c.splitlines()) if new_c else 0
+        # Overwriting an existing file's prior line count isn't in these args
+        # (see _agy_str's docstring -- write_to_file only ever carries the
+        # new content), so the stat only claims what's actually known: lines
+        # added. A genuine diff needs old content, which replace_file_content
+        # supplies and this tool doesn't.
+        stat = f"+{added}" if not overwrite else f"+{added} (덮어씀)"
+        return {
+            "group": "edit", "verb": "덮어쓰기" if overwrite else "생성", "target": fname + (f" ({desc})" if desc else ""),
+            "stat": stat, "detail": _diff_log_lines("", new_c), "needs_result": False,
+        }
+    return {"group": "other", "verb": "도구 실행", "target": f"{tname} {desc}".strip(), "stat": "", "detail": "", "needs_result": True}
+
+
+def make_sse(event_type: str, content: str = "", tokens: dict = None, data: dict = None) -> str:
     """Format SSE payload."""
     payload = {"type": event_type}
     if content:
         payload["content"] = content
     if tokens:
         payload["tokens"] = tokens
+    if data is not None:
+        payload["data"] = data
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -427,6 +540,22 @@ def stream_headless_cli(
             # happened, flooding the live log with stale history.
             file_obj.seek(0, os.SEEK_END)
 
+        # A tool step whose outcome isn't in its own args (see
+        # _classify_tool_call's needs_result) is held here for one more line
+        # instead of being emitted right away -- agy logs a plain GENERIC step
+        # with the tool's actual output *right after* the call (confirmed live
+        # for find_by_name/run_command/search_web: "Found N results", command
+        # stdout, a search summary), and folding that in beats showing an
+        # empty "검색했음" row with no way to see what it found.
+        pending_tool = None
+        prev_created_at = None  # previous step's created_at, for "Nsec" badges
+
+        def flush_pending():
+            nonlocal pending_tool
+            if pending_tool is not None:
+                event_queue.put(("reasoning_step", pending_tool))
+                pending_tool = None
+
         try:
             while not done_event.is_set():
                 line = file_obj.readline()
@@ -441,19 +570,41 @@ def stream_headless_cli(
                     seen_step_indices.add(s_idx)
 
                     stype = step_data.get("type", "")
+                    created = _parse_iso(step_data.get("created_at"))
+                    duration_sec = None
+                    if created and prev_created_at:
+                        duration_sec = max(0, round((created - prev_created_at).total_seconds()))
+                    if created:
+                        prev_created_at = created
+
+                    tcs = step_data.get("tool_calls", [])
+                    thinking = (step_data.get("thinking") or "").strip()
+                    content = step_data.get("content", "")
+
+                    if stype == "GENERIC" and content and not tcs and pending_tool is not None:
+                        pending_tool["detail"] = _cap_detail(content)
+                        if not pending_tool["stat"]:
+                            pending_tool["stat"] = _result_stat(pending_tool["tname"], content)
+                        flush_pending()
+                        continue
+
+                    # This step isn't the buffered tool's result (or nothing was
+                    # buffered) -- whatever was waiting doesn't get a result now.
+                    flush_pending()
 
                     # 1. Thinking / Reasoning step
-                    thinking = (step_data.get("thinking") or "").strip()
                     if thinking:
                         # No length cap -- the reasoning-log box scrolls
                         # horizontally instead of wrapping (see .term-body in
                         # core/ui/styles.py), so truncating here only threw
                         # content away for no display reason.
                         clean_think = thinking.replace("\n\n", " · ").replace("\n", " ")
-                        event_queue.put(("live_log", f"💭 [추론] {clean_think}"))
+                        event_queue.put(("reasoning_step", {
+                            "kind": "thinking", "step_index": s_idx,
+                            "text": clean_think, "duration_sec": duration_sec,
+                        }))
 
                     # 2. Tool Calls
-                    tcs = step_data.get("tool_calls", [])
                     for tc in tcs:
                         tname = tc.get("name", "tool")
                         args = tc.get("args") or {}
@@ -462,69 +613,33 @@ def stream_headless_cli(
                                 args = json.loads(args)
                             except Exception:
                                 pass
+                        if not isinstance(args, dict):
+                            args = {}
 
-                        summary = _agy_str(tc.get("toolSummary") or (args.get("toolSummary") if isinstance(args, dict) else "")) or ""
-                        action = _agy_str(tc.get("toolAction") or (args.get("toolAction") if isinstance(args, dict) else "")) or ""
+                        summary = _agy_str(tc.get("toolSummary") or args.get("toolSummary") or "") or ""
+                        action = _agy_str(tc.get("toolAction") or args.get("toolAction") or "") or ""
                         desc = summary or action or ""
 
-                        # No length caps below (arg dumps/commands/queries used to be
-                        # cut at 50-70 chars with "...") -- the reasoning-log box
-                        # scrolls horizontally instead of wrapping (see .term-body
-                        # in core/ui/styles.py), so truncating here only threw
-                        # content away for no display reason (confirmed live: tool
-                        # args like automation identifiers/BestPracticeKey were
-                        # getting cut mid-string).
-                        if tname == "call_mcp_tool" and isinstance(args, dict):
-                            tcalled = _agy_str(args.get("ToolName", "mcp"))
-                            targs = args.get("Arguments", {})
-                            arg_str = json.dumps(targs, ensure_ascii=False) if isinstance(targs, dict) else str(targs)
-                            event_queue.put(("live_log", f"🔧 [HA 도구] {tcalled} {arg_str}"))
-                        elif tname == "view_file" and isinstance(args, dict):
-                            fpath = _agy_str(args.get("AbsolutePath", ""))
-                            fname = os.path.basename(fpath) if fpath else "file"
-                            event_queue.put(("live_log", f"📄 [파일 확인] {fname} {f'({desc})' if desc else ''}"))
-                        elif tname == "run_command" and isinstance(args, dict):
-                            cmd_str = _agy_str(args.get("CommandLine", ""))
-                            event_queue.put(("live_log", f"⚙️ [명령어] {cmd_str}"))
-                        elif tname == "search_web":
-                            q = _agy_str(args.get("query", "")) if isinstance(args, dict) else str(args)
-                            event_queue.put(("live_log", f"🌐 [웹 검색] {q}"))
-                        elif tname == "replace_file_content" and isinstance(args, dict):
-                            # old/new are both given, already scoped to the exact
-                            # changed range (StartLine/EndLine) -- see _agy_str's
-                            # docstring for why these need unwrapping.
-                            fpath = _agy_str(args.get("TargetFile", ""))
-                            fname = os.path.basename(fpath) if fpath else "file"
-                            old_c = _agy_str(args.get("TargetContent", "")) or ""
-                            new_c = _agy_str(args.get("ReplacementContent", "")) or ""
-                            instr = _agy_str(args.get("Instruction", "")) or desc
-                            header = f"✏️ [파일 수정] {fname}{f' ({instr})' if instr else ''}"
-                            diff_body = _diff_log_lines(old_c, new_c)
-                            event_queue.put(("live_log", f"{header}\n{diff_body}" if diff_body else header))
-                        elif tname == "write_to_file" and isinstance(args, dict):
-                            # Only the new content is ever given here -- no prior
-                            # content to diff against, so an overwrite of an
-                            # existing file is labeled distinctly rather than
-                            # implying a full diff we can't actually show.
-                            fpath = _agy_str(args.get("TargetFile", ""))
-                            fname = os.path.basename(fpath) if fpath else "file"
-                            new_c = _agy_str(args.get("CodeContent", "")) or ""
-                            overwrite = _agy_str(args.get("Overwrite", "false")) == "true"
-                            label = "파일 덮어쓰기" if overwrite else "파일 생성"
-                            header = f"📝 [{label}] {fname}{f' ({desc})' if desc else ''}"
-                            diff_body = _diff_log_lines("", new_c)
-                            event_queue.put(("live_log", f"{header}\n{diff_body}" if diff_body else header))
+                        step = {"kind": "tool", "step_index": s_idx, "tname": tname, "duration_sec": duration_sec}
+                        step.update(_classify_tool_call(tname, args, desc))
+
+                        if step.pop("needs_result", False):
+                            # Only the last call in a multi-call step can plausibly
+                            # be answered by the very next line -- flush any earlier
+                            # one in this same step as-is first.
+                            flush_pending()
+                            pending_tool = step
                         else:
-                            event_queue.put(("live_log", f"🔧 [도구 실행] {tname} {desc}"))
+                            event_queue.put(("reasoning_step", step))
 
                     # 3. Model Response (Final output)
-                    content = step_data.get("content", "")
                     if content and stype == "PLANNER_RESPONSE" and not tcs:
                         event_queue.put(("content", content))
 
                 except Exception:
                     pass
         finally:
+            flush_pending()
             try:
                 file_obj.close()
             except Exception:
@@ -618,6 +733,8 @@ def stream_headless_cli(
                     yield make_sse("session_init", ev_data)
                 elif ev_type == "live_log":
                     yield make_sse("live_log", ev_data)
+                elif ev_type == "reasoning_step":
+                    yield make_sse("reasoning_step", data=ev_data)
                 elif ev_type == "chunk":
                     full_text_parts.append(ev_data)
                     output_chars += len(ev_data)

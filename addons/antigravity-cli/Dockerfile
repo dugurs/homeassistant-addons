@@ -64,6 +64,17 @@ RUN if [ "${BUILD_ARCH}" = "amd64" ] || [ "${BUILD_ARCH}" = "x86_64" ]; then ARC
 # 5. Install Google Antigravity CLI
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 
+# 5b. Bake in the homeassistant-ai/skills "home-assistant-best-practices" Agent
+# Skill (SKILL.md + references/) so it's available out of the box. Placed
+# outside ~/.gemini here because run.sh symlinks /root/.gemini -> the
+# persistent /config/.gemini addon_config volume on every start (see run.sh);
+# run.sh copies this baked copy into ~/.gemini/config/skills/ on first boot.
+RUN curl -fsSL https://github.com/homeassistant-ai/skills/archive/refs/heads/main.tar.gz -o /tmp/ha-skills.tar.gz \
+    && mkdir -p /tmp/ha-skills-extract /usr/local/share/antigravity-cli-skills \
+    && tar -xzf /tmp/ha-skills.tar.gz -C /tmp/ha-skills-extract \
+    && cp -r /tmp/ha-skills-extract/skills-main/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ \
+    && rm -rf /tmp/ha-skills.tar.gz /tmp/ha-skills-extract
+
 # 6. Automatically install CLI packages (HA CLI, Python AI tools)
 RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli || true
 
