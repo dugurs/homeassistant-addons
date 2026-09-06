@@ -215,12 +215,11 @@ CSS_STYLES = """
       opacity: 0.7;
     }
 
-    /* Sticky Top Resource Panel -- position:relative so z-index actually
-       applies (it's a no-op on a static element); kept below
-       .session-sidebar's z-index (40) as a fail-safe on top of the
-       toggleResourcePanel()/toggleSessionSidebar() mutual-exclusion on
-       mobile, so a state-sync slip can't put the graph above the fixed,
-       full-height sidebar again. */
+    /* Sticky Top Resource Panel -- lives inside #chat-view, above
+       .chat-container, so it's scoped to the chat column and never
+       overlaps .session-sidebar (fixed, full-height on mobile). That means
+       it and the sidebar can be open at the same time with no z-index
+       fighting; position:relative is just so z-index below is meaningful. */
     .top-resource-panel {
       display: none;
       position: relative;
@@ -258,19 +257,31 @@ CSS_STYLES = """
       border: 1px solid var(--border-color);
       border-radius: 10px;
       padding: 10px 14px;
+      position: relative;
     }
+    /* Overlaid on top of the canvas (not stacked above it) to give the
+       chart itself the full chart-box height -- text-shadow instead of a
+       backdrop chip keeps it legible over both the chart lines and either
+       theme without covering more of the graph than necessary. */
     .chart-top {
+      position: absolute;
+      top: 8px;
+      left: 14px;
+      right: 14px;
+      z-index: 2;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 6px;
       font-size: 0.78rem;
       flex-wrap: wrap;
       row-gap: 2px;
+      pointer-events: none;
+      color: #fff;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.85);
     }
     .chart-title {
       font-weight: 700;
-      color: var(--text-bold);
+      color: inherit;
       white-space: nowrap;
       flex-shrink: 0;
     }
@@ -296,7 +307,7 @@ CSS_STYLES = """
 
     .canvas-holder {
       width: 100%;
-      height: 70px;
+      height: 88px;
       position: relative;
     }
     .canvas-holder canvas {
@@ -308,9 +319,23 @@ CSS_STYLES = """
       .top-resource-panel { padding: 8px 10px; }
       .panel-grid { gap: 6px; }
       .chart-box { padding: 6px 8px; }
-      .chart-top { margin-bottom: 3px; font-size: 0.62rem; }
-      .chart-legend { gap: 4px; font-size: 0.58rem; }
-      .canvas-holder { height: 40px; }
+      .canvas-holder { height: 58px; }
+      /* Title (CPU/RAM) left, spanning both rows; 애드온/전체 values right,
+         one per row -- the single-row layout above doesn't fit this narrow. */
+      .chart-top {
+        top: 5px;
+        left: 8px;
+        right: 8px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-rows: auto auto;
+        column-gap: 6px;
+        row-gap: 1px;
+        font-size: 0.62rem;
+      }
+      .chart-title { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+      .chart-legend { grid-column: 2; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 0.58rem; }
+      .lg-item { justify-content: flex-end; }
     }
 
     /* .icon-btn-lg (defined near the top) now covers both the theme toggle
@@ -731,6 +756,11 @@ CSS_STYLES = """
     }
     .msg-row.user .bubble-wrap { align-items: flex-end; }
     .msg-row.bot .bubble-wrap { align-items: flex-start; }
+    @media (max-width: 640px) {
+      /* On mobile 88%/min-280px wastes screen edge-to-edge and cramps
+         tables/code blocks -- let responses use the full available width. */
+      .bubble-wrap { max-width: 100%; min-width: 0; }
+    }
 
     .bubble {
       width: 100%;
@@ -1451,6 +1481,123 @@ CSS_STYLES = """
     .diff-add { color: var(--accent-green); }
     .diff-del { color: var(--accent-red); }
 
+    /* Structured per-line diff rows (renderLineDiff() in core/ui/scripts.py)
+       -- one .diff-row per source line, laid out as a fixed-width old/new
+       line-number gutter + prefix + wrapping content, GitHub-style. Used by
+       both the inline reasoning-timeline step-detail and the "전체 보기"
+       modal (same markup, .step-detail vs .diff-modal-body just size it). */
+    .diff-row {
+      display: flex;
+      align-items: flex-start;
+      font-family: 'Fira Code', Consolas, monospace;
+    }
+    .diff-ln {
+      flex-shrink: 0;
+      width: 2.2em;
+      text-align: right;
+      padding-right: 6px;
+      color: var(--text-dim);
+      opacity: 0.55;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .diff-prefix {
+      flex-shrink: 0;
+      width: 1.1em;
+      text-align: center;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .diff-content {
+      flex: 1;
+      min-width: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .diff-row-del { background: rgba(239, 68, 68, 0.08); }
+    .diff-row-add { background: rgba(16, 185, 129, 0.08); }
+    .diff-row-del .diff-prefix { color: var(--accent-red); }
+    .diff-row-add .diff-prefix { color: var(--accent-green); }
+    /* Word-level sub-diff within one paired old/new line (diffWordsWithSpace)
+       -- e.g. commenting out a line highlights just the inserted "# "
+       instead of recoloring the whole line, since the two full lines never
+       match at the line-diff level above. */
+    .diff-word-del { background: rgba(239, 68, 68, 0.35); color: var(--accent-red); border-radius: 2px; }
+    .diff-word-add { background: rgba(16, 185, 129, 0.35); color: var(--accent-green); border-radius: 2px; }
+
+    /* Collapsed run of unchanged lines in a jsdiff-rendered diff (see
+       renderLineDiff() in core/ui/scripts.py) -- folded only in the inline
+       timeline view, never in the "전체 보기" modal. */
+    .diff-fold {
+      display: block;
+      color: var(--text-dim);
+      font-style: italic;
+      text-align: center;
+      padding: 1px 0;
+    }
+    .diff-expand-btn {
+      display: block;
+      margin: 0 0 6px auto;
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--text-dim);
+      font-size: 0.78em;
+      padding: 2px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .diff-expand-btn:hover { color: var(--text-main); border-color: var(--accent-blue); }
+
+    /* Full, unfolded diff modal (openDiffModal()/closeDiffModal()) -- same
+       fixed-centered-overlay pattern as .help-overlay/.hw-notice-overlay. */
+    .diff-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .diff-modal-overlay.open { display: flex; }
+    /* Full-screen, not a centered card -- a real diff needs all the width
+       and height it can get, not a small window with margins on all sides. */
+    .diff-modal-box {
+      background: var(--bg-card-high);
+      border: none;
+      border-radius: 0;
+      padding: 14px 18px;
+      width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: none;
+    }
+    .diff-modal-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      flex-shrink: 0;
+    }
+    .diff-modal-top h3 { margin: 0; font-size: 1rem; color: var(--text-bold); }
+    .diff-modal-close { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 2px; }
+    .diff-modal-body {
+      flex: 1;
+      min-height: 0;
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--bg-card);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: var(--text-muted);
+      font-family: 'Fira Code', Consolas, monospace;
+      font-size: 0.85em;
+    }
+
     /* Grouped, expandable reasoning timeline (createReasoningTimeline() in
        core/ui/scripts.py). One .step-row per thinking block / grouped
        explore-search streak / standalone tool call; a .step-row-header click
@@ -1913,6 +2060,8 @@ CSS_STYLES = """
     }
     .mode-picker-btn:hover { background: var(--bg-card-high); }
     .mode-picker-btn .icon { width: 12px; height: 12px; }
+    .mode-picker-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+    .mode-picker-btn.disabled:hover { background: var(--bg-card-hover); }
     .model-picker-name { font-weight: 600; }
     .model-effort-tag {
       color: var(--text-dim);
@@ -1984,7 +2133,6 @@ CSS_STYLES = """
     }
     .mode-row:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-main); }
     .mode-row.active { background: rgba(245, 158, 11, 0.2); color: #fcd34d; font-weight: 600; }
-    .mode-row.disabled { opacity: 0.3; cursor: not-allowed; }
     .mode-row-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .mode-row-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -2415,6 +2563,58 @@ CSS_STYLES = """
       font-size: 0.85rem;
     }
     .help-section a:hover { text-decoration: underline; }
+
+    /* Hardware-limited-support notice (AVX/AVX2 missing) for CLI mode.
+       Informational only -- CLI mode itself stays selectable, this just
+       warns that the experience will be degraded (no live stream, slower). */
+    .hw-notice-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .hw-notice-overlay.open { display: flex; }
+    .hw-notice-box {
+      background: var(--bg-card-high);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 22px 24px;
+      width: min(420px, 90vw);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    }
+    .hw-notice-icon { font-size: 1.6rem; margin-bottom: 8px; }
+    .hw-notice-title { margin: 0 0 12px; font-size: 1rem; color: var(--text-bold); }
+    .hw-notice-list {
+      margin: 0 0 18px;
+      padding-left: 18px;
+      font-size: 0.85rem;
+      color: var(--text-main);
+      line-height: 1.6;
+    }
+    .hw-notice-list li + li { margin-top: 8px; }
+    .hw-notice-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .hw-notice-actions button {
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+    }
+    .hw-notice-btn-secondary { background: var(--bg-base); color: var(--text-main); }
+    .hw-notice-btn-primary { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+
+    /* Small warning badge next to "CLI 추론 모드" in the stream-mode picker
+       when hardware doesn't support it -- mode stays clickable, this is
+       just a hint (see hw-notice-overlay above for the full explanation). */
+    .mode-row-hw-warn { font-size: 0.78rem; margin-left: 2px; cursor: pointer; }
 
     /* Skill list info button (help-skills-list) -- description is often
        several sentences long (e.g. HA best-practices skill), too long to

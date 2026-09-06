@@ -39,23 +39,69 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(korean_chars * 0.8 + other_chars * 0.3))
 
 
+_TRUNCATION_MARKER_RE = re.compile(r"(?:\\n|\n)?<truncated (\d+) bytes>\s*$")
+
+
 def _agy_str(v):
-    """Unwrap agy's double-JSON-encoded tool-call arg values.
+    """Unwrap agy's JSON-encoded tool-call arg values -- looped, not just
+    once, and tolerant of agy's own truncation marker on huge values.
 
     Content-bearing args (CodeContent, TargetContent, AbsolutePath,
     CommandLine, toolSummary, ...) arrive as a JSON string literal *inside*
     the already-parsed outer value -- e.g. parsing the transcript line once
     leaves args["CodeContent"] == '"hello world\\n"' (quote characters and
-    all), and it takes a second json.loads() to get the real `hello world`
+    all), and it takes another json.loads() to get the real `hello world`
     text. Scalar-looking args (Overwrite, StartLine, ...) aren't wrapped
-    this way (confirmed against a real write_to_file/replace_file_content
-    transcript) and pass through unchanged.
+    this way and pass through unchanged. A single unwrap was enough for
+    every case originally seen, but a large replace_file_content edit
+    surfaced one wrapped in an extra layer -- loop with a small cap so
+    depth doesn't matter, while still bailing out immediately (after 0
+    iterations) for genuinely scalar values.
+
+    A separate, larger edit (confirmed live) surfaced a value that never
+    even reaches that well-formed check: agy truncates a huge tool-call arg
+    by cutting the JSON-encoded string mid-stream and appending its own
+    "<truncated N bytes>" marker as raw text, with no closing quote -- so
+    `v[-1] == '"'` is false and the *entire* value, including the
+    properly-escaped part before the cut, was left completely un-decoded
+    (rendered as one giant unsplit line, literal "\\n" and all, instead of
+    separate +/- lines). Recovered by stripping that marker, closing the
+    salvaged JSON-string prefix ourselves, and re-attaching the marker as
+    plain readable text -- trying a couple of trims first in case the cut
+    landed mid-escape-sequence, so even that doesn't parse as-is.
     """
-    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
-        try:
-            return json.loads(v)
-        except Exception:
-            pass
+    for _ in range(4):
+        if not (isinstance(v, str) and len(v) >= 2 and v[0] == '"'):
+            break
+        if v[-1] == '"':
+            try:
+                v = json.loads(v)
+                continue
+            except Exception:
+                break
+        m = _TRUNCATION_MARKER_RE.search(v)
+        if not m:
+            break
+        prefix = v[: m.start()]
+        recovered = None
+        for trim in range(3):
+            candidate = prefix[: len(prefix) - trim] if trim else prefix
+            try:
+                recovered = json.loads(candidate + '"')
+                break
+            except Exception:
+                continue
+        if recovered is None:
+            break
+        # Kept as agy's own original marker text (not translated/reworded)
+        # -- this line inevitably diffs oddly against its counterpart
+        # anyway (old/new are each truncated at their own unrelated byte
+        # offset, so the salvaged tail is often a different partial word on
+        # each side), and matching agy's own wording at least makes it
+        # obviously recognizable as that same, familiar marker rather than
+        # a new, unfamiliar phrase.
+        v = f"{recovered}\n<truncated {m.group(1)} bytes>"
+        break
     return v
 
 

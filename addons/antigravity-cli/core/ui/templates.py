@@ -74,6 +74,13 @@ HTML_BODY = f"""
         </ul>
       </div>
       <div class="help-section">
+        <h4>가이드 문서</h4>
+        <ul>
+          <li><a href="https://dugurs.github.io/homeassistant-addons/fast-control-guide/" target="_blank" rel="noopener">고속 제어 모드 명령어 가이드 ↗</a></li>
+          <li><a href="https://dugurs.github.io/homeassistant-addons/cli-reasoning-guide/" target="_blank" rel="noopener">CLI 추론 모드 가이드 ↗</a></li>
+        </ul>
+      </div>
+      <div class="help-section">
         <h4>단축키</h4>
         <ul>
           <li><span class="mono">Ctrl+K</span> — 새 대화 시작</li>
@@ -100,35 +107,33 @@ HTML_BODY = f"""
     </div>
   </div>
 
-  <!-- Top Pinned Resource Panel (Collapsible) -->
-  <div id="top-resource-panel" class="top-resource-panel">
-    <div class="panel-inner">
-      <div class="panel-grid">
-        <div class="chart-box">
-          <div class="chart-top">
-            <span class="chart-title">⚙️ CPU</span>
-            <div class="chart-legend">
-              <span class="lg-item lg-purple">● 애드온 <strong id="val-addon-cpu">0.0%</strong></span>
-              <span class="lg-item lg-blue">● 전체 <strong id="val-sys-cpu">0.0%</strong></span>
-            </div>
-          </div>
-          <div class="canvas-holder">
-            <canvas id="cpu-dual-chart" width="460" height="75"></canvas>
-          </div>
-        </div>
-        <div class="chart-box">
-          <div class="chart-top">
-            <span class="chart-title">💾 RAM</span>
-            <div class="chart-legend">
-              <span class="lg-item lg-green">● 애드온 <strong id="val-addon-ram">0MB (0%)</strong></span>
-              <span class="lg-item lg-cyan">● 전체 <strong id="val-sys-ram">0GB (0%)</strong></span>
-            </div>
-          </div>
-          <div class="canvas-holder">
-            <canvas id="ram-dual-chart" width="460" height="75"></canvas>
-          </div>
-        </div>
+  <div class="hw-notice-overlay" id="hw-notice-overlay" onclick="if(event.target===this) closeHwNotice(false)">
+    <div class="hw-notice-box">
+      <div class="hw-notice-icon">⚠️</div>
+      <h3 class="hw-notice-title">CLI 추론 모드 — 하드웨어 제한 감지</h3>
+      <ul class="hw-notice-list">
+        <li>이 기기의 CPU가 agy 엔진에 필요한 AVX/AVX2 명령어 집합을 지원하지 않아, 실시간 추론 진행 상황이 화면에 표시되지 않을 수 있습니다.</li>
+        <li>가상머신(VM)에서 실행 중이라면 하이퍼바이저 설정에서 CPU를 <strong>호스트(Host) 패스스루 모드</strong>로 전환해보세요.</li>
+        <li>그래도 응답 자체는 정상적으로 오지만, 완료까지 <strong>1~2분 이상</strong> 걸릴 수 있습니다.</li>
+        <li><strong>웹 터미널 모드</strong>를 사용하면 추론 과정을 확인할 수 있습니다.</li>
+      </ul>
+      <div class="hw-notice-actions">
+        <button class="hw-notice-btn-secondary" onclick="closeHwNotice(true)">다시 보지 않기</button>
+        <button class="hw-notice-btn-primary" onclick="closeHwNotice(false)">닫기</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Full, unfolded file-edit diff -- opened by the "⤢ 전체 보기" button
+       inside a reasoning-timeline diff step (see openDiffModal() /
+       stepDetailHTML() in core/ui/scripts.py). -->
+  <div class="diff-modal-overlay" id="diff-modal-overlay" onclick="if(event.target===this) closeDiffModal()">
+    <div class="diff-modal-box">
+      <div class="diff-modal-top">
+        <h3>전체 diff</h3>
+        <button class="diff-modal-close" onclick="closeDiffModal()"><span class="icon">{ICON_X}</span></button>
+      </div>
+      <div class="diff-modal-body" id="diff-modal-body"></div>
     </div>
   </div>
 
@@ -175,19 +180,45 @@ HTML_BODY = f"""
     <main>
       <!-- Chat View -->
       <section id="chat-view" class="tab-view active">
+        <!-- Top Pinned Resource Panel (Collapsible) -- scoped to the chat
+             column (not the header/sidebar) so it never overlaps the
+             session list, and the two can be open at the same time. -->
+        <div id="top-resource-panel" class="top-resource-panel">
+          <div class="panel-inner">
+            <div class="panel-grid">
+              <div class="chart-box">
+                <div class="chart-top">
+                  <span class="chart-title">⚙️ CPU</span>
+                  <div class="chart-legend">
+                    <span class="lg-item lg-purple">● 애드온 <strong id="val-addon-cpu">0.0%</strong></span>
+                    <span class="lg-item lg-blue">● 전체 <strong id="val-sys-cpu">0.0%</strong></span>
+                  </div>
+                </div>
+                <div class="canvas-holder">
+                  <canvas id="cpu-dual-chart" width="460" height="75"></canvas>
+                </div>
+              </div>
+              <div class="chart-box">
+                <div class="chart-top">
+                  <span class="chart-title">💾 RAM</span>
+                  <div class="chart-legend">
+                    <span class="lg-item lg-green">● 애드온 <strong id="val-addon-ram">0MB (0%)</strong></span>
+                    <span class="lg-item lg-cyan">● 전체 <strong id="val-sys-ram">0GB (0%)</strong></span>
+                  </div>
+                </div>
+                <div class="canvas-holder">
+                  <canvas id="ram-dual-chart" width="460" height="75"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="chat-container" id="chat-box">
           <div class="hero-card" id="chat-hero-card">
             <span class="hero-badge">Google Antigravity Engine</span>
             <h2>무엇을 도와드릴까요?</h2>
             <p>Home Assistant 스마트홈 제어 및 환경 분석 실시간 AI 어시스턴트입니다.</p>
-            <div class="quick-grid">
-              <button class="quick-card" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 우리집 종합 상황</button>
-              <button class="quick-card" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도 조회</button>
-              <button class="quick-card" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도 조회</button>
-              <button class="quick-card" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명 목록</button>
-              <button class="quick-card" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그 진단</button>
-              <button class="quick-card" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</button>
-            </div>
+            <div class="quick-grid" id="quick-grid"></div>
           </div>
         </div>
         <div class="input-bar-wrap">

@@ -6,6 +6,7 @@ from core.markdown_parser import MARKDOWN_JS_MODULE
 from core.ui.styles import CSS_STYLES
 from core.ui.templates import HTML_BODY
 from core.ui.scripts import JS_SCRIPTS
+from core.ui.vendor_diff import JSDIFF_MIN_JS
 
 HTML_INDEX = f"""<!DOCTYPE html>
 <html lang="ko" data-theme="dark">
@@ -22,6 +23,9 @@ HTML_INDEX = f"""<!DOCTYPE html>
 </head>
 <body>
 {HTML_BODY}
+  <script>
+{JSDIFF_MIN_JS}
+  </script>
   <script>
 {MARKDOWN_JS_MODULE}
 

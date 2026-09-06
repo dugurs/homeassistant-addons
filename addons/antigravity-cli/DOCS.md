@@ -13,6 +13,11 @@
 *   **백그라운드 세션 유지 (Tmux):** 브라우저 창을 닫아도 AI의 작업과 채팅 세션이 백그라운드(`tmux`)에서 그대로 유지됩니다.
 *   **영구 저장소 (Persistence):** AI의 설정, 인증 정보, 사용자가 만든 스킬 등은 Home Assistant의 `/config/.gemini` 폴더에 안전하게 영구 저장되어 애드온을 재시작하거나 업데이트해도 날아가지 않습니다.
 
+## 📖 관련 문서
+
+*   **[고속 제어 모드 명령어 가이드](https://dugurs.github.io/homeassistant-addons/fast-control-guide/)** — 자연어로 쓸 수 있는 전체 명령어와 활용법 정리
+*   **[CLI 추론 모드 가이드](https://dugurs.github.io/homeassistant-addons/cli-reasoning-guide/)** — agy 기반 심층 에이전트의 로그인, 모델·에이전트 선택, 파일 첨부, MCP 연동 정리
+
 ## 🚀 설치 및 실행 (Installation)
 
 아래 버튼을 클릭하여 Home Assistant에 이 애드온 저장소를 간편하게 추가할 수 있습니다:
@@ -70,6 +75,39 @@
 
 *   **MCP 서버가 `Method Not Allowed` 에러를 낸다면?** (v1.0.2 이하에서 업그레이드 시)
     v1.0.3부터 SSE HTTP 서버 방식을 제거하고 Antigravity CLI의 공식 지원 방식인 `stdio`로 전환했습니다. 애드온을 최신 버전으로 업데이트 후 재시작하면 해결됩니다.
+
+## 🧩 기본 제공 구성 요소 (MCP · 스킬 · 에이전트 · 훅 · 규칙)
+
+애드온을 설치하면 아래 항목들이 자동으로 세팅됩니다. 대부분 CLI 추론 모드(agy)에서 의미가 있는 구성이며, 매 부팅마다 3-way 병합 방식으로 배포되므로 애드온이 업데이트돼도 사용자가 직접 수정해둔 내용은 보존됩니다.
+
+*   **MCP 서버 — `ha-mcp`**
+    공식 Home Assistant MCP 서버를 `uvx ha-mcp@latest`로 `stdio` 실행해 자동 연결합니다. 조명/스위치 제어, 센서 조회, 자동화·스크립트·씬 생성/수정, 백업 관리 등 **88개 이상의 도구**를 제공하며, `SUPERVISOR_TOKEN`을 자동 주입하므로 별도 토큰 발급이 필요 없습니다.
+    출처: [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp) (MIT License, PyPI `ha-mcp` 패키지)
+
+*   **에이전트 스킬 — `home-assistant-best-practices`**
+    자동화/헬퍼/스크립트/대시보드/블루프린트 작성 시 자동으로 참고하는 베스트 프랙티스 모음입니다. Jinja2 템플릿 대신 네이티브 옵션을 쓸지, 헬퍼를 어떻게 고를지, 카드 종류나 도메인 문서를 어디서 찾을지 등을 CLI 모드가 상황에 맞게 자동으로 불러와 적용합니다.
+    출처: [homeassistant-ai/skills](https://github.com/homeassistant-ai/skills/tree/main/skills/home-assistant-best-practices) — 이미지 빌드 시 최신 버전을 자동으로 가져오고, 네트워크 실패 시에만 이 저장소에 내장된 스냅샷([bundled/skills/home-assistant-best-practices](bundled/skills/home-assistant-best-practices))으로 대체됩니다.
+
+*   **커스텀 에이전트 (CLI 모드 입력창의 "에이전트 선택"에서 전환 가능)**
+
+    | 에이전트 | 전문 분야 |
+    |---|---|
+    | HA Antigravity Orchestrator (기본) | 자동화/대시보드/진단/실시간 제어 중 어떤 영역인지 스스로 판단해 직접 처리하는 총괄 에이전트 |
+    | HA Automation Engineer | 자동화·스크립트·씬 설계, YAML 검증, 트레이스(Trace) 디버깅 |
+    | HA Dashboard Designer | Lovelace 대시보드 뷰/카드 디자인, 리소스 등록, 반응형 레이아웃 |
+    | HA Diagnostics Operator | HA/애드온 로그 분석, 오프라인 기기 탐지, 시스템 헬스체크 |
+    | HA Smart Controller | 조명/스위치/냉난방 실시간 제어, 모드 일괄 제어, 상태 브리핑 |
+
+*   **훅(Hook) — `ha-file-guard`**
+    파일 삭제/덮어쓰기 도구가 호출되기 직전(PreToolUse)에 가로채, `/homeassistant/.storage`, `secrets.yaml`, `configuration.yaml`, `automations.yaml`, `home-assistant_v2.db`, `/backup` 등 HA 핵심 데이터를 대상으로 한 `rm`/`mv`/덮어쓰기 시도를 스크립트 레벨에서 무조건 차단합니다. 사용자 승인 여부와 무관하게 항상 거부되는 최후 방어선입니다.
+
+*   **하네스 규칙 (always-on rule, 모든 대화에 항상 적용)**
+    *   `ha-guidelines` — 기기 제어/조회 시 직접 `curl` 대신 `ha-mcp` 도구를 우선 사용하도록 지시
+    *   `ha-file-safety` — 파일 삭제·덮어쓰기 전에는 항상 대상 경로와 개수, 이유를 먼저 제시하고 사용자의 명시적 승인을 받은 뒤에만 실행하도록 지시하며, 위 훅이 보호하는 HA 핵심 데이터는 사용자가 승인해도 거부하고 위험성을 설명하도록 지시. CLI 모드의 headless 실행 경로(`--dangerously-skip-permissions`)에서는 승인 절차 자체가 우회되므로, 이 규칙이 실질적인 최종 안전장치 역할을 합니다.
+
+*   **웹 UI 오픈소스 라이브러리 — `jsdiff`**
+    CLI 추론 모드의 파일 수정 내역을 실제 줄 단위(line-matching)로 비교해 보여주는 diff 뷰어에 사용됩니다. CDN이 아니라 `core/ui/vendor_diff.py`에 직접 내장(vendoring)되어 있어 외부 네트워크 접근 없이 동작합니다.
+    출처: [kpdecker/jsdiff](https://github.com/kpdecker/jsdiff) (`diff` 9.0.0, BSD-3-Clause)
 
 ## 🏗 아키텍처 및 내부 구조
 
