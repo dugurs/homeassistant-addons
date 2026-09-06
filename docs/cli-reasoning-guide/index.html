@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI 추론 모드 가이드</title>
+<meta name="description" content="Google Antigravity CLI 애드온의 CLI 추론 모드(agy 기반 심층 에이전트) 사용법 — 로그인, 모델·에이전트 선택, 파일 첨부, MCP 연동, 고속 제어 모드와의 차이를 정리한 참고 문서.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #edf0ef;
+    --surface: #ffffff;
+    --surface-2: #e1e6e5;
+    --border: #cbd2d1;
+    --text: #161b1d;
+    --text-dim: #57666a;
+    --accent: #2f6f8f;
+    --accent-ink: #1c4a60;
+    --accent-on: #ffffff;
+    --code-bg: #e1e8ea;
+    --code-text: #24424f;
+    --danger: #a4442c;
+    --danger-bg: #f3e2dc;
+    --ok: #3f6b4a;
+    --ok-bg: #e2ece3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14191a;
+      --surface: #1c2224;
+      --surface-2: #242b2d;
+      --border: #333c3e;
+      --text: #e8ecec;
+      --text-dim: #93a0a2;
+      --accent: #7ec3e8;
+      --accent-ink: #7ec3e8;
+      --accent-on: #0d2430;
+      --code-bg: #1f2c31;
+      --code-text: #bfe3f0;
+      --danger: #e18468;
+      --danger-bg: #3a241d;
+      --ok: #8fcb9c;
+      --ok-bg: #1f2e22;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans KR', 'Noto Sans', sans-serif;
+    line-height: 1.6;
+  }
+  img { max-width: 100%; }
+  h1, h2, h3 {
+    font-family: 'IBM Plex Sans KR', 'IBM Plex Sans', sans-serif;
+    text-wrap: balance;
+    color: var(--text);
+  }
+  code, .kw {
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    font-size: 0.86em;
+    white-space: nowrap;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+
+  header.hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 28px 26px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 22px;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+  header.hero h1 {
+    font-size: clamp(1.6rem, 3vw, 2.15rem);
+    font-weight: 700;
+    margin: 0;
+  }
+  header.hero p.lede {
+    max-width: 66ch;
+    color: var(--text-dim);
+    font-size: 0.98rem;
+    margin: 0;
+  }
+  .mode-chips {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .mode-chip {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    min-width: 220px;
+    flex: 1 1 220px;
+    text-decoration: none;
+  }
+  .mode-chip.active { border-color: var(--accent); }
+  .mode-chip .name { font-weight: 600; font-size: 0.88rem; color: var(--text); }
+  .mode-chip .name .badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-on);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .mode-chip .desc { font-size: 0.8rem; color: var(--text-dim); }
+  a.mode-chip:hover { border-color: var(--accent); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 26px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  nav.toc a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 7px 10px;
+    border-radius: 8px;
+  }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+  nav.toc .icon { font-size: 1rem; }
+
+  section.group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px 20px;
+    margin-bottom: 20px;
+    scroll-margin-top: 20px;
+  }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .group-head .icon { font-size: 1.3rem; }
+  .group-head h2 { font-size: 1.15rem; margin: 0; }
+  .group-note {
+    color: var(--text-dim);
+    font-size: 0.86rem;
+    margin: 0 0 16px;
+    max-width: 78ch;
+  }
+
+  .entry {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    gap: 18px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  @media (max-width: 640px) {
+    .entry { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .entry-examples {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-self: start;
+  }
+  .example {
+    font-size: 0.86rem;
+    background: var(--surface-2);
+    border-left: 3px solid var(--accent);
+    padding: 6px 10px;
+    border-radius: 0 8px 8px 0;
+    width: fit-content;
+  }
+  .entry-body p {
+    margin: 0 0 6px;
+    font-size: 0.9rem;
+  }
+  .entry-body p:last-child { margin-bottom: 0; }
+  .entry-body .sub {
+    color: var(--text-dim);
+    font-size: 0.84rem;
+  }
+  .entry-body ol, .entry-body ul {
+    margin: 4px 0 6px;
+    padding-left: 1.3em;
+    font-size: 0.9rem;
+  }
+  .entry-body li { margin: 2px 0; }
+
+  .flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 6px;
+  }
+  .flag.warn { background: var(--danger-bg); color: var(--danger); }
+  .flag.ok { background: var(--ok-bg); color: var(--ok); }
+
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+    margin-top: 4px;
+  }
+  table.compare th, table.compare td {
+    text-align: left;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.compare th {
+    font-family: 'IBM Plex Sans KR', sans-serif;
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.8rem;
+  }
+  table.compare td:first-child, table.compare th:first-child {
+    width: 130px;
+    font-weight: 600;
+  }
+
+  footer.note {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    text-align: center;
+    padding: 24px 0 0;
+  }
+  footer.note a { color: var(--accent-ink); }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="hero">
+    <span class="eyebrow">Google Antigravity CLI · Home Assistant Add-on</span>
+    <h1>CLI 추론 모드 가이드</h1>
+    <p class="lede">채팅창 실행 모드를 <strong>CLI</strong>로 바꾸면 공식 <code>agy</code>(Antigravity CLI) 에이전트가 직접 붙어 실시간 스트리밍으로 추론합니다. 정해진 문형만 알아듣는 고속 제어 모드와 달리 <strong>실제 LLM이 대화 맥락을 이해하고 도구를 스스로 골라 실행</strong>하므로, 자동화 작성처럼 다단계 판단이 필요한 작업에 적합합니다. 대신 토큰(사용량)을 소모하고 응답도 더 느립니다.</p>
+    <div class="mode-chips">
+      <a class="mode-chip" href="../fast-control-guide/">
+        <span class="name">고속 제어 모드</span>
+        <span class="desc">기기 제어·상태 조회·환경 분석을 즉시 처리. 정해진 키워드 기반, 토큰 소모 없음 → 명령어 가이드 보기</span>
+      </a>
+      <div class="mode-chip active">
+        <span class="name"><span class="badge">이 문서</span>CLI 추론 모드</span>
+        <span class="desc">공식 agy 에이전트가 직접 추론하며 실시간 스트리밍. 최초 1회 Google 로그인 필요.</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" id="toc">
+      <a href="#compare"><span class="icon">⚖️</span>모드 비교</a>
+      <a href="#start"><span class="icon">🔑</span>시작하기·로그인</a>
+      <a href="#hw"><span class="icon">🖥️</span>하드웨어 요건</a>
+      <a href="#model"><span class="icon">🧠</span>모델·Thinking Effort</a>
+      <a href="#agent"><span class="icon">🧑‍💻</span>커스텀 에이전트</a>
+      <a href="#attach"><span class="icon">📎</span>파일·이미지 첨부</a>
+      <a href="#mcp"><span class="icon">🔌</span>MCP 연동·권한</a>
+      <a href="#usecase"><span class="icon">✅</span>언제 쓰나</a>
+      <a href="#terminal"><span class="icon">⌨️</span>웹 터미널</a>
+      <a href="#trouble"><span class="icon">🛠️</span>문제 해결</a>
+    </nav>
+
+    <main>
+
+      <section class="group" id="compare">
+        <div class="group-head"><span class="icon">⚖️</span><h2>두 모드 비교</h2></div>
+        <p class="group-note">채팅 입력창 좌측의 실행 모드 버튼(⚡ 제어 / ⌨ CLI)으로 언제든 전환할 수 있습니다. 대화 도중 모드를 바꿔도 대화 맥락은 유지됩니다.</p>
+        <table class="compare">
+          <tr><th></th><th>고속 제어 모드</th><th>CLI 추론 모드</th></tr>
+          <tr><td>처리 방식</td><td>로컬 패턴 매칭(정해진 키워드·문형)</td><td>공식 agy 에이전트의 실시간 LLM 추론</td></tr>
+          <tr><td>속도·비용</td><td>~0.05초, 토큰 소모 없음</td><td>스트리밍 응답, 모델 사용량(토큰) 소모</td></tr>
+          <tr><td>이해 범위</td><td>가이드에 정리된 키워드·문형만 인식</td><td>자유로운 자연어, 복합·모호한 요청도 스스로 판단</td></tr>
+          <tr><td>기기 제어</td><td>즉시 on/off·밝기 등 단순 제어</td><td>ha-mcp 88개+ 도구로 자동화 생성/수정 등 심층 작업</td></tr>
+          <tr><td>파일·이미지 첨부</td><td>불가</td><td>가능 (코드·문서·이미지 분석)</td></tr>
+          <tr><td>로그인</td><td>불필요</td><td>최초 1회 Google 계정 로그인 필요</td></tr>
+          <tr><td>CPU 요건</td><td>없음</td><td>AVX/AVX2 지원 CPU 필요</td></tr>
+        </table>
+      </section>
+
+      <section class="group" id="start">
+        <div class="group-head"><span class="icon">🔑</span><h2>시작하기 · 로그인</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">채팅에서 처음 CLI 모드로 메시지 전송</span>
+            <span class="example">🔑 [인증 필요] Terminal 탭에서 agy 실행 후 로그인하세요</span>
+          </div>
+          <div class="entry-body">
+            <p>로그인 전에 CLI 모드로 메시지를 보내면 위와 같은 안내와 함께 <span class="flag warn">자동으로 고속 제어 모드 답변</span>이 대신 나옵니다. 로그인은 아래 순서로 최초 1회만 하면 됩니다.</p>
+            <ol>
+              <li>왼쪽 내비게이션에서 <strong>"웹 터미널 (ttyd)"</strong> 탭으로 이동</li>
+              <li><code>agy</code>(Antigravity CLI)를 실행할지 물으면 <strong>Yes</strong> 선택</li>
+              <li>안내되는 URL로 브라우저에서 Google 계정 로그인 진행</li>
+              <li>로그인 완료 후 채팅 탭으로 돌아와 CLI 모드로 다시 질문</li>
+            </ol>
+            <p class="sub">로그인 정보는 <code>/config/.gemini</code>에 영구 저장되어 애드온을 재시작·업데이트해도 다시 로그인할 필요가 없습니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="hw">
+        <div class="group-head"><span class="icon">🖥️</span><h2>하드웨어 요건</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">ℹ️ CPU 호스트 모드(AVX) 미지원 감지 → 안전하게 [제어] 모드로 자동 전환</span>
+          </div>
+          <div class="entry-body">
+            <p><code>agy</code> 엔진은 <strong>AVX + AVX2</strong> 명령어 집합을 지원하는 CPU에서만 동작합니다. 라즈베리파이 등 이를 지원하지 않는 호스트에서는 CLI 모드를 선택해도 위 안내와 함께 고속 제어 모드로 자동 전환되어 답변이 끊기지 않습니다.</p>
+            <p class="sub">지원 여부는 대시보드 상단 리소스 패널이 불러와지는 시점에 자동으로 감지되며, 미지원 호스트에서는 실행 모드 목록에서 CLI 항목이 비활성 표시됩니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="model">
+        <div class="group-head"><span class="icon">🧠</span><h2>모델 선택 · Thinking Effort</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">입력창의 "모델 선택" 버튼 클릭</span>
+          </div>
+          <div class="entry-body">
+            <p>CLI 모드에서만 노출되는 <strong>모델 피커</strong>에서 사용할 모델과 추론 강도(Thinking Effort)를 고를 수 있습니다. 선택한 모델은 대화별로 유지됩니다.</p>
+            <p class="sub"><strong>View Usage</strong>로 모델별 사용량(잔여 할당량)을 바로 확인할 수 있고, 기본 모델의 할당량이 소진되면 입력창 위에 안내 배너가 뜹니다 — 이때는 다른 모델로 바꾸거나 잠시 후 다시 시도하세요.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="agent">
+        <div class="group-head"><span class="icon">🧑‍💻</span><h2>커스텀 에이전트</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">{workspace}/.agents/agents/&lt;이름&gt;/agent.md</span>
+            <span class="example">~/.gemini/config/agents/&lt;이름&gt;/agent.md</span>
+          </div>
+          <div class="entry-body">
+            <p>위 두 경로 중 하나에 YAML 프런트매터가 있는 <code>agent.md</code> 파일을 직접 만들어두면, 입력창에 <strong>에이전트 피커</strong>가 나타나 기본 에이전트 대신 그 커스텀 에이전트로 대화할 수 있습니다. 만들어둔 에이전트가 없으면 이 버튼은 표시되지 않습니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="attach">
+        <div class="group-head"><span class="icon">📎</span><h2>파일·이미지 첨부</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">코드/문서: .py .js .json .yaml .md .pdf .docx 등</span>
+            <span class="example">이미지: .png .jpg .jpeg .webp .gif</span>
+          </div>
+          <div class="entry-body">
+            <p>입력창의 <strong>+ 버튼</strong>은 CLI 추론 모드에서만 활성화됩니다. 로그 파일을 첨부해 원인을 분석시키거나, 사진을 올려 "이 방 조명이 뭐가 문제야?" 같은 질문을 할 수 있습니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="mcp">
+        <div class="group-head"><span class="icon">🔌</span><h2>MCP 연동 · 권한</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">"Yes, and always allow... (Persist to settings.json)"</span>
+          </div>
+          <div class="entry-body">
+            <p>agy는 공식 <code>ha-mcp</code>를 <code>stdio</code>로 실행해 <strong>88개 이상</strong>의 Home Assistant 전용 도구(조명·자동화·스크립트·백업 관리 등)를 직접 사용합니다. 고속 제어 모드가 못 하는 자동화 생성·수정, 여러 단계를 조합한 진단도 이 모드에서는 agy가 스스로 도구를 골라 수행합니다.</p>
+            <p class="sub">기기를 처음 제어하려 할 때 권한을 물으면 <strong>"Yes, and always allow... (Persist to settings.json)"</strong>를 선택해두면 이후로는 다시 묻지 않습니다.</p>
+            <p class="sub">채팅에 <code>/codesearch &lt;검색어&gt;</code>를 입력하면 agy 호출 없이 애드온 자체 grep으로 워크스페이스 코드를 빠르게 검색합니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="usecase">
+        <div class="group-head"><span class="icon">✅</span><h2>언제 CLI 모드를 쓰나</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">"습도 60% 넘으면 제습기 켜는 자동화 만들어줘"</span>
+            <span class="example">"이 에러 로그 첨부했는데 원인이 뭐야?"</span>
+            <span class="example">"거실 조명 자동화 스크립트 고쳐줘"</span>
+          </div>
+          <div class="entry-body">
+            <p>자동화·스크립트 작성/수정, 여러 조건을 조합한 진단, 파일·이미지를 근거로 한 질문처럼 <strong>실제 판단과 도구 선택이 필요한 작업</strong>에 적합합니다. 단순 on/off·상태 조회처럼 정해진 패턴으로 끝나는 요청은 <a href="../fast-control-guide/">고속 제어 모드 가이드</a>의 즉시 응답이 더 빠르고 비용도 없습니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="terminal">
+        <div class="group-head"><span class="icon">⌨️</span><h2>웹 터미널 (tmux) 기본 사용법</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">Ctrl + B → [ : 스크롤 모드 진입</span>
+            <span class="example">Esc 또는 q : 스크롤 모드 종료</span>
+          </div>
+          <div class="entry-body">
+            <p>백그라운드 세션 유지를 위해 내부적으로 <code>tmux</code>를 사용합니다. 브라우저를 닫아도 agy 세션은 계속 유지되며, 이전 출력은 <code>Ctrl+B</code> 후 <code>[</code>로 스크롤 모드에 진입해 방향키/Page Up·Down으로 확인할 수 있습니다.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="group" id="trouble">
+        <div class="group-head"><span class="icon">🛠️</span><h2>문제 해결</h2></div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">최초 실행이 10~20초 걸림</span>
+          </div>
+          <div class="entry-body">
+            <p><code>agy</code>가 처음 실행될 때 <code>uvx</code>가 <code>ha-mcp@latest</code> 패키지를 다운로드합니다(약 10~20초). 이후부터는 캐시를 사용해 즉시 시작됩니다.</p>
+          </div>
+        </div>
+        <div class="entry">
+          <div class="entry-examples">
+            <span class="example">채팅에서 계속 인증 필요 메시지가 뜸</span>
+          </div>
+          <div class="entry-body">
+            <p>웹 터미널 탭에서 <code>agy</code>가 실제로 로그인된 상태인지 확인하세요. 세션이 만료됐다면 터미널에서 다시 로그인 절차를 진행하면 됩니다.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="note">전체 동작은 코드 변경에 따라 계속 바뀔 수 있습니다 — 최신 동작은 실제 채팅으로 확인하는 게 가장 정확합니다. · <a href="../fast-control-guide/">고속 제어 모드 명령어 가이드로 이동</a></footer>
+</div>
+
+</body>
+</html>
