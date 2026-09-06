@@ -875,9 +875,45 @@ function showToast(text) {
     // function's docstring for why (CodeContent/TargetContent/AbsolutePath/
     // etc. arrive as a JSON string literal *inside* the already-parsed
     // outer value).
+    // Matches agy's own truncation marker on a huge tool-call arg -- see
+    // agyStr()'s comment below for what this recovers.
+    const AGY_TRUNCATION_MARKER_RE = /(?:\\\\n|\\n)?<truncated (\\d+) bytes>\\s*$/;
+
     function agyStr(v) {
-      if (typeof v === 'string' && v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') {
-        try { return JSON.parse(v); } catch (e) {}
+      // Looped, not just once -- see _agy_str()'s docstring in
+      // core/streamer.py (a large replace_file_content edit surfaced
+      // content wrapped in an extra layer of JSON-string escaping; a
+      // single unwrap left it rendering as one giant unsplit diff line,
+      // literal backslash-n and all, instead of separate +/- lines).
+      for (let i = 0; i < 4; i++) {
+        if (!(typeof v === 'string' && v.length >= 2 && v[0] === '"')) break;
+        if (v[v.length - 1] === '"') {
+          try { v = JSON.parse(v); continue; } catch (e) { break; }
+        }
+        // Doesn't end in a closing quote -- agy truncates a huge value by
+        // cutting the JSON-encoded string mid-stream and appending its own
+        // "<truncated N bytes>" marker as raw text with no closing quote,
+        // so the check above never fires and the ENTIRE value (including
+        // the properly-escaped part before the cut) is left completely
+        // un-decoded. Recover by stripping that marker, closing the
+        // salvaged prefix ourselves, and re-attaching the marker as plain
+        // readable text -- trying a couple of trims first in case the cut
+        // landed mid-escape-sequence so even that doesn't parse as-is.
+        const m = AGY_TRUNCATION_MARKER_RE.exec(v);
+        if (!m) break;
+        const prefix = v.slice(0, m.index);
+        let recovered = null;
+        for (let trim = 0; trim < 3; trim++) {
+          const candidate = trim ? prefix.slice(0, prefix.length - trim) : prefix;
+          try { recovered = JSON.parse(candidate + '"'); break; } catch (e) { continue; }
+        }
+        if (recovered === null) break;
+        // Kept as agy's own original marker text -- see _agy_str()'s
+        // comment in core/streamer.py for why (it diffs oddly against its
+        // counterpart regardless of wording, so at least keep it
+        // recognizable as that same familiar marker).
+        v = recovered + '\\n<truncated ' + m[1] + ' bytes>';
+        break;
       }
       return v;
     }
@@ -1059,21 +1095,157 @@ function showToast(text) {
       return `<span class="step-stat">${html}</span>`;
     }
 
-    function stepDetailHTML(detail, isDiff) {
-      if (!detail) return '';
+    // Client-side registry mapping an integer id -> a diff step's raw
+    // "- old\\n+ new" detail string (see _diff_log_lines() in
+    // core/streamer.py) so the "전체 보기" button can re-render the same
+    // diff unfolded in the full-screen modal below, with no extra network
+    // round-trip for content the browser already has.
+    let _diffModalStore = [];
+
+    // Splits _diff_log_lines()'s "- old\\n+ new" block back into separate
+    // old/new texts (all removed lines come first, then all added lines --
+    // see that function's docstring), then hands both to the vendored
+    // jsdiff (window.Diff, see core/ui/vendor_diff.py) for a REAL
+    // line-matched diff instead of always showing the whole old block
+    // followed by the whole new block -- a single-line edit no longer lights
+    // up the entire snippet red-then-green. Renders old/new line-number
+    // gutters (GitHub-style) and, for a removed/added line pair at the same
+    // position within one change hunk, a word-level sub-diff
+    // (diffWordsWithSpace) so e.g. commenting out a line ("- foo" ->
+    // "+ # foo") highlights just the inserted "# " instead of recoloring
+    // the whole line -- a pure line-diff can't do this since the two lines'
+    // full text never matches. `fold` collapses long unchanged runs to keep
+    // the inline timeline compact; the "전체 보기" modal calls this again
+    // with fold=false for the untruncated view.
+    function renderLineDiff(detail, fold) {
       const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      let body;
-      if (isDiff) {
-        body = String(detail).split('\\n').map(l => {
+      const lines = String(detail).split('\\n');
+      if (typeof Diff === 'undefined' || typeof Diff.diffLines !== 'function') {
+        // Vendored jsdiff failed to load for some reason -- fall back to the
+        // flat "- block then + block" rendering rather than showing nothing.
+        return lines.map(l => {
           const e = esc(l);
           if (l.startsWith('+ ')) return `<span class="diff-add">${e}</span>`;
           if (l.startsWith('- ')) return `<span class="diff-del">${e}</span>`;
           return e;
         }).join('\\n');
+      }
+      const oldLines = [];
+      const newLines = [];
+      lines.forEach(l => {
+        if (l.startsWith('- ')) oldLines.push(l.slice(2));
+        else if (l.startsWith('+ ')) newLines.push(l.slice(2));
+      });
+      const parts = Diff.diffLines(oldLines.join('\\n'), newLines.join('\\n'));
+      const FOLD_AT = 3;
+      let oldNum = 1;
+      let newNum = 1;
+      const rows = [];
+
+      function row(oldN, newN, rowCls, prefix, contentHTML) {
+        rows.push(
+          `<div class="diff-row${rowCls ? ' ' + rowCls : ''}">` +
+          `<span class="diff-ln">${oldN != null ? oldN : ''}</span>` +
+          `<span class="diff-ln">${newN != null ? newN : ''}</span>` +
+          `<span class="diff-prefix">${prefix}</span>` +
+          `<span class="diff-content">${contentHTML}</span>` +
+          `</div>`
+        );
+      }
+
+      // Word-level sub-diff for one paired old/new line -- null if
+      // diffWordsWithSpace isn't available (older vendored bundle), letting
+      // the caller fall back to a plain whole-line color.
+      function wordDiffHTML(oldLine, newLine) {
+        if (typeof Diff.diffWordsWithSpace !== 'function') return null;
+        return Diff.diffWordsWithSpace(oldLine, newLine).map(p => {
+          const e = esc(p.value);
+          if (p.added) return `<span class="diff-word-add">${e}</span>`;
+          if (p.removed) return `<span class="diff-word-del">${e}</span>`;
+          return e;
+        }).join('');
+      }
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const partLines = part.value.split('\\n');
+        if (partLines.length && partLines[partLines.length - 1] === '') partLines.pop();
+
+        if (!part.added && !part.removed) {
+          if (fold && partLines.length > FOLD_AT) {
+            row(oldNum, newNum, '', '&nbsp;', esc(partLines[0]));
+            oldNum++; newNum++;
+            rows.push(`<div class="diff-fold">⋯ ${partLines.length - 2}줄 변경 없음 ⋯</div>`);
+            oldNum += partLines.length - 2; newNum += partLines.length - 2;
+            row(oldNum, newNum, '', '&nbsp;', esc(partLines[partLines.length - 1]));
+            oldNum++; newNum++;
+          } else {
+            partLines.forEach(l => { row(oldNum, newNum, '', '&nbsp;', esc(l)); oldNum++; newNum++; });
+          }
+          continue;
+        }
+
+        if (part.removed) {
+          // A removed hunk immediately followed by an added hunk is one
+          // "change" in GitHub's sense -- pair their lines by position for
+          // word-level highlighting. Extra lines on either side (hunk
+          // lengths differ) fall back to a plain whole-line color.
+          const next = parts[i + 1];
+          const pairedNewLines = (next && next.added) ? (() => {
+            const nl = next.value.split('\\n');
+            if (nl.length && nl[nl.length - 1] === '') nl.pop();
+            return nl;
+          })() : [];
+          const pairCount = Math.min(partLines.length, pairedNewLines.length);
+          for (let j = 0; j < partLines.length; j++) {
+            const html = j < pairCount ? wordDiffHTML(partLines[j], pairedNewLines[j]) : null;
+            row(oldNum, null, 'diff-row-del', '-', html !== null ? html : esc(partLines[j]));
+            oldNum++;
+          }
+          for (let j = 0; j < pairedNewLines.length; j++) {
+            const html = j < pairCount ? wordDiffHTML(partLines[j], pairedNewLines[j]) : null;
+            row(null, newNum, 'diff-row-add', '+', html !== null ? html : esc(pairedNewLines[j]));
+            newNum++;
+          }
+          if (next && next.added) i++; // consumed the paired 'added' part
+          continue;
+        }
+
+        // A standalone added part (no preceding removed part -- e.g. a
+        // brand-new file via write_to_file, where oldLines is empty).
+        partLines.forEach(l => { row(null, newNum, 'diff-row-add', '+', esc(l)); newNum++; });
+      }
+
+      return rows.join('');
+    }
+
+    function stepDetailHTML(detail, isDiff) {
+      if (!detail) return '';
+      const esc = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      let body;
+      let expandBtn = '';
+      if (isDiff) {
+        body = renderLineDiff(detail, true);
+        const idx = _diffModalStore.push(detail) - 1;
+        expandBtn = `<button type="button" class="diff-expand-btn" onclick="event.stopPropagation(); openDiffModal(${idx});">⤢ 전체 보기</button>`;
       } else {
         body = esc(detail);
       }
-      return `<div class="step-detail">${body}</div>`;
+      return `<div class="step-detail">${expandBtn}${body}</div>`;
+    }
+
+    function openDiffModal(idx) {
+      const detail = _diffModalStore[idx];
+      if (detail === undefined) return;
+      const body = document.getElementById('diff-modal-body');
+      if (body) body.innerHTML = renderLineDiff(detail, false);
+      const overlay = document.getElementById('diff-modal-overlay');
+      if (overlay) overlay.classList.add('open');
+    }
+
+    function closeDiffModal() {
+      const overlay = document.getElementById('diff-modal-overlay');
+      if (overlay) overlay.classList.remove('open');
     }
 
     // MCP tool calls (call_mcp_tool) show labeled "Tool arguments"/"Tool
@@ -1517,21 +1689,7 @@ function showToast(text) {
       if (!panel) return;
       isResourcePanelOpen = !panel.classList.contains('open');
       panel.classList.toggle('open', isResourcePanelOpen);
-      if (isResourcePanelOpen) {
-        renderCharts();
-        // On mobile the session sidebar is a fixed overlay spanning the full
-        // viewport height, including where this panel renders -- having both
-        // open at once looked like the graph floating on top of the menu.
-        // Only one makes sense open at a time on a screen this narrow.
-        if (window.innerWidth <= 768) {
-          const sidebar = document.getElementById('session-sidebar');
-          const overlay = document.getElementById('sidebar-overlay');
-          if (sidebar && sidebar.classList.contains('open')) {
-            sidebar.classList.remove('open');
-            if (overlay) overlay.classList.remove('open');
-          }
-        }
-      }
+      if (isResourcePanelOpen) renderCharts();
     }
 
     function formatUptime(seconds) {
@@ -1701,14 +1859,13 @@ function showToast(text) {
         if (valAddonRam) valAddonRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
         if (valSysRam) valSysRam.textContent = `${data.used_memory_gb || 0}GB (${sysRamPct.toFixed(1)}%)`;
 
-        // Mode 3 (CLI 모드) Conditional Enable/Disable
+        // Mode 3 (CLI 모드) hardware support flag. CLI mode stays selectable
+        // even when unsupported (AVX/AVX2 missing, e.g. VM without CPU host
+        // passthrough) -- we just warn instead of force-switching away, since
+        // agy still works there, just without live streaming and much slower.
         cliModeSupported = !!data.agy_stream_supported;
-        if (!cliModeSupported && currentStreamMode === '3') {
-          currentStreamMode = '1';
-          localStorage.setItem('antigravity_stream_mode', '1');
-          updateStreamModeButton();
-        }
         renderStreamModeList();
+        if (!cliModeSupported && currentStreamMode === '3') maybeShowHwNotice();
 
         // Cached for the Help modal's "MCP 연동" section (see
         // renderHelpMcpStatus()) -- no need for a separate fetch since this
@@ -1741,6 +1898,32 @@ function showToast(text) {
     ];
     let currentStreamMode = localStorage.getItem('antigravity_stream_mode') || '3';
     let cliModeSupported = true;
+    let hwNoticeShownThisSession = false;
+
+    // Hardware-limited-support notice for CLI mode (AVX/AVX2 missing).
+    // Shown once per session (not on every poll tick) and skipped entirely
+    // once the user picks "다시 보지 않기", persisted in localStorage.
+    function maybeShowHwNotice() {
+      if (hwNoticeShownThisSession) return;
+      if (localStorage.getItem('antigravity_hw_notice_dismissed') === '1') return;
+      hwNoticeShownThisSession = true;
+      const overlay = document.getElementById('hw-notice-overlay');
+      if (overlay) overlay.classList.add('open');
+    }
+
+    function closeHwNotice(permanent) {
+      if (permanent) localStorage.setItem('antigravity_hw_notice_dismissed', '1');
+      const overlay = document.getElementById('hw-notice-overlay');
+      if (overlay) overlay.classList.remove('open');
+    }
+
+    // Clicking the ⚠️ badge next to "CLI 추론 모드" always re-opens the
+    // notice, even if the user previously picked "다시 보지 않기" -- that's
+    // the one remaining way back to the explanation once it's dismissed.
+    function forceShowHwNotice() {
+      const overlay = document.getElementById('hw-notice-overlay');
+      if (overlay) overlay.classList.add('open');
+    }
 
     function updateStreamModeButton() {
       const nameEl = document.getElementById('stream-mode-current');
@@ -1749,19 +1932,39 @@ function showToast(text) {
       if (nameEl) nameEl.textContent = m.shortName;
       if (iconEl) { iconEl.innerHTML = m.icon; iconEl.className = `icon ${m.colorClass}`; }
       updateAttachBtnState();
+      updateModelAgentPickerState();
+      renderQuickGrid();
+    }
+
+    // Model/agent pickers only matter for `agy` (Mode 3) -- 고속 제어 모드
+    // never invokes it, so both stay visibly disabled and non-interactive
+    // outside CLI mode (same pattern as updateAttachBtnState() above).
+    const PICKER_ENABLED_TITLES = {
+      'model-picker-btn': '모델 및 Thinking Effort 변경',
+      'agent-picker-btn': '커스텀 에이전트 변경',
+    };
+    function updateModelAgentPickerState() {
+      const enabled = currentStreamMode === '3';
+      Object.keys(PICKER_ENABLED_TITLES).forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.classList.toggle('disabled', !enabled);
+        btn.title = enabled ? PICKER_ENABLED_TITLES[id] : '모델·에이전트 선택은 CLI 추론 모드에서만 가능합니다';
+      });
     }
 
     function renderStreamModeList() {
       const list = document.getElementById('stream-mode-list');
       if (!list) return;
       list.innerHTML = STREAM_MODES.map(m => {
-        const disabled = m.value === '3' && !cliModeSupported;
         const isActive = m.value === currentStreamMode;
+        const hwLimited = m.value === '3' && !cliModeSupported;
         return `
-          <div class="mode-row ${isActive ? 'active' : ''} ${disabled ? 'disabled' : ''}" ${disabled ? '' : `onclick="selectStreamMode('${m.value}')"`}>
+          <div class="mode-row ${isActive ? 'active' : ''}" onclick="selectStreamMode('${m.value}')">
             <div class="mode-row-left">
               <span class="icon ${m.colorClass}">${m.icon}</span>
               <span class="mode-row-name">${m.name}</span>
+              ${hwLimited ? '<span class="mode-row-hw-warn" title="하드웨어 제한 감지 (AVX 미지원) — 클릭 시 안내 다시 보기" onclick="event.stopPropagation(); forceShowHwNotice();">⚠️</span>' : ''}
             </div>
             ${isActive ? `<span class="icon icon-sm mode-color-amber">${ICON_CHECK_SVG}</span>` : ''}
           </div>`;
@@ -1774,6 +1977,7 @@ function showToast(text) {
       updateStreamModeButton();
       renderStreamModeList();
       closeStreamModePicker();
+      if (value === '3' && !cliModeSupported) maybeShowHwNotice();
     }
 
     // Mode/model/agent dropdowns open ABOVE their button (CSS default:
@@ -1978,6 +2182,10 @@ function showToast(text) {
     }
 
     function toggleModelPicker() {
+      if (currentStreamMode !== '3') {
+        notSupportedYet('모델·에이전트 선택은 CLI 추론 모드에서만');
+        return;
+      }
       const dropdown = document.getElementById('model-dropdown');
       if (!dropdown) return;
       const opening = !dropdown.classList.contains('open');
@@ -2071,6 +2279,10 @@ function showToast(text) {
     }
 
     function toggleAgentPicker() {
+      if (currentStreamMode !== '3') {
+        notSupportedYet('모델·에이전트 선택은 CLI 추론 모드에서만');
+        return;
+      }
       const dropdown = document.getElementById('agent-dropdown');
       if (!dropdown) return;
       const opening = !dropdown.classList.contains('open');
@@ -2292,7 +2504,18 @@ function showToast(text) {
     }
 
     // Session Management & History Restore
-    let currentConversationId = localStorage.getItem('antigravity_active_conv_id') || '';
+    //
+    // currentConversationId deliberately starts blank on every page load
+    // (never restored from localStorage) -- it used to persist across a
+    // reload, but the chat area itself was never restored to match (no
+    // openSession() call at startup), so a fresh page load showed the
+    // "새 채팅" empty state with a past session silently highlighted
+    // active in the sidebar; sending a message then continued THAT old
+    // session instead of the new one the screen implied. Reset to blank so
+    // sidebar/chat/next-send agree: nothing selected, next message starts a
+    // real new session. Explicitly opening a session from the sidebar
+    // (openSession()) still works exactly as before.
+    let currentConversationId = '';
     let loadedHistorySteps = [];
     // Raw transcript steps are grouped into turns (one USER_INPUT + every
     // following non-USER_INPUT step up to the next USER_INPUT) before any
@@ -2316,13 +2539,6 @@ function showToast(text) {
         const opening = !sidebar.classList.contains('open');
         sidebar.classList.toggle('open', opening);
         overlay.classList.toggle('open', opening);
-        // Same reasoning as toggleResourcePanel()'s mobile guard -- avoid the
-        // resource panel appearing to float above the opened sidebar.
-        if (opening && isResourcePanelOpen) {
-          const panel = document.getElementById('top-resource-panel');
-          if (panel) panel.classList.remove('open');
-          isResourcePanelOpen = false;
-        }
       } else {
         sidebar.classList.toggle('collapsed');
       }
@@ -2522,23 +2738,16 @@ function showToast(text) {
     function startNewSession() {
       teardownHistoryScrollObserver();
       currentConversationId = '';
-      localStorage.removeItem('antigravity_active_conv_id');
       const box = document.getElementById('chat-box');
       box.innerHTML = `
         <div class="hero-card" id="chat-hero-card">
           <span class="hero-badge">Google Antigravity Engine</span>
           <h2>무엇을 도와드릴까요?</h2>
           <p>Home Assistant 스마트홈 제어 및 환경 분석 실시간 AI 어시스턴트입니다.</p>
-          <div class="quick-grid">
-            <button class="quick-card" onclick="sendQuick('우리집 종합 상황 알려줘')">🏠 우리집 종합 상황</button>
-            <button class="quick-card" onclick="sendQuick('각 방 온도 알려줘')">🌡️ 각 방 온도 조회</button>
-            <button class="quick-card" onclick="sendQuick('각 방 습도 알려줘')">💧 각 방 습도 조회</button>
-            <button class="quick-card" onclick="sendQuick('켜져 있는 조명 목록')">💡 켜진 조명 목록</button>
-            <button class="quick-card" onclick="sendQuick('시스템 에러 로그 확인')">⚠️ 에러 로그 진단</button>
-            <button class="quick-card" onclick="sendQuick('오늘 날씨와 환경 분석해줘')">🌤️ 날씨 & 환경 분석</button>
-          </div>
+          <div class="quick-grid" id="quick-grid"></div>
         </div>
       `;
+      renderQuickGrid();
       document.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
       if (window.innerWidth <= 768) {
         toggleSessionSidebar();
@@ -2573,7 +2782,6 @@ function showToast(text) {
       if (!cid) return;
       teardownHistoryScrollObserver();
       currentConversationId = cid;
-      localStorage.setItem('antigravity_active_conv_id', cid);
 
       document.querySelectorAll('.session-card').forEach(c => {
         c.classList.toggle('active', c.getAttribute('data-cid') === cid);
@@ -3150,6 +3358,38 @@ function showToast(text) {
       sendMessage();
     }
 
+    // Empty-state quick-command examples ("무엇을 도와드릴까요?" hero card) --
+    // kept separate per mode since 고속 제어 모드 only ever does instant
+    // status/control, while CLI 추론 모드's agy can actually author
+    // automations/dashboards and debug traces (see bundled/agents/*).
+    // Showing mode-3-style examples under mode 1 (or vice versa) would just
+    // set expectations the current mode can't meet.
+    const QUICK_COMMANDS = {
+      '1': [
+        { icon: '🏠', label: '우리집 종합 상황', prompt: '우리집 종합 상황 알려줘' },
+        { icon: '🌡️', label: '각 방 온도 조회', prompt: '각 방 온도 알려줘' },
+        { icon: '💧', label: '각 방 습도 조회', prompt: '각 방 습도 알려줘' },
+        { icon: '💡', label: '켜진 조명 목록', prompt: '켜져 있는 조명 목록' },
+        { icon: '⚠️', label: '에러 로그 진단', prompt: '시스템 에러 로그 확인' },
+        { icon: '🌤️', label: '날씨 & 환경 분석', prompt: '오늘 날씨와 환경 분석해줘' },
+      ],
+      '3': [
+        { icon: '🔧', label: '자동화 새로 만들기', prompt: '습도 60% 넘으면 제습기 켜는 자동화 만들어줘' },
+        { icon: '🧩', label: '자동화 트레이스 디버깅', prompt: '최근에 실행 안 된 자동화 있으면 트레이스 확인하고 원인 알려줘' },
+        { icon: '🩺', label: '에러 로그 근본 원인 분석', prompt: '최근 에러 로그 근본 원인 분석해줘' },
+        { icon: '🛠️', label: '문제 해결 항목 확인 및 해결방안', prompt: '지금 우리집에 문제 되는 항목들 확인하고 해결 방안 알려줘' },
+        { icon: '📡', label: '오프라인 기기 점검', prompt: '오프라인이거나 응답 없는 기기 있는지 찾아줘' },
+        { icon: '🌙', label: '취침 모드 자동화 구성', prompt: '취침 모드 자동화 만들고 정상 동작하는지 테스트해줘' },
+      ],
+    };
+
+    function renderQuickGrid() {
+      const grid = document.getElementById('quick-grid');
+      if (!grid) return;
+      const items = QUICK_COMMANDS[currentStreamMode] || QUICK_COMMANDS['1'];
+      grid.innerHTML = items.map(c => `<button class="quick-card" onclick="sendQuick('${c.prompt}')">${c.icon} ${c.label}</button>`).join('');
+    }
+
     // "/" slash-command autocomplete -- placeholder text ("/ for actions")
     // implied this was always meant to exist, never actually wired up.
     // Scope kept to commands genuinely confirmed to work through this chat
@@ -3433,7 +3673,6 @@ function showToast(text) {
               const ev = JSON.parse(jsonStr);
               if (ev.type === 'session_init') {
                 currentConversationId = ev.content;
-                localStorage.setItem('antigravity_active_conv_id', currentConversationId);
                 loadSessionsList();
               } else if (ev.type === 'stream_id') {
                 activeStreamId = ev.content;

@@ -424,6 +424,15 @@ ALLOWED_CARD_SERVICES = {
 _MEDIA_PAUSE_WORDS = ["중지", "정지", "멈춰", "일시정지"]
 _MEDIA_RESUME_WORDS = ["재생"]
 
+# Relative volume step (percentage points) for "소리 줄여"/"볼륨 높여" style
+# commands that name no explicit number -- see _h_media()'s volume branch.
+# "볼률" is a common fat-finger typo of "볼륨" kept as its own literal, same
+# spirit as every other exact-match keyword list in this module.
+_MEDIA_VOLUME_STEP = 10
+_MEDIA_VOLUME_WORDS = ["볼륨", "볼률", "소리"]
+_MEDIA_VOLUME_UP_WORDS = ["높여", "높이고", "키워", "키우고", "올려", "올리고"]
+_MEDIA_VOLUME_DOWN_WORDS = ["줄여", "줄이고", "낮춰", "낮추고", "내려", "내리고"]
+
 # Verb stems (not the conjugated is_on/is_off forms below) for detecting an
 # explicit "-지 말고"/"-지 마" negation, e.g. "켜지 말고 꺼줘" ("don't turn
 # on, turn off"). A command naming both on- and off- vocabulary is checked
@@ -1163,7 +1172,8 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         return None
 
     def _h_media():
-        # 7. Media player (TV / speaker) -- on/off only. TV prefers an existing
+        # 7. Media player (TV / speaker) -- on/off/pause/resume, plus speaker
+        # volume (percent or relative up/down). TV prefers an existing
         # user-authored IR script (this house already has reliable "리모콘 TV 전원
         # ON/OFF" scripts) over a generic media_player call, since IR-controlled
         # TVs are unreliable to power on/off via a plain media_player service.
@@ -1176,12 +1186,60 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         # mention -- see wants_playlist_picker below for what actually
         # differs once a target speaker is resolved.
         wants_playlist_picker = any(w in clean for w in ["음악", "노래", "플레이리스트"])
+        # "안방 소리 20%"/"안방 볼륨 20%" named no "스피커"/"음악"/"노래" word at
+        # all, so without this they never set media_trigger and fell through
+        # every handler here -- then _execute_single_control_clause()'s bare
+        # PERCENT follow-up fallback (see its comment) matched the trailing
+        # "20%" anyway and silently reapplied it to whatever OTHER device
+        # (e.g. a light) this conversation last controlled instead.
+        wants_volume_control = any(w in clean for w in _MEDIA_VOLUME_WORDS)
         if "티비" in clean or "tv" in lower_clean:
             media_trigger = "TV"
             filter_terms = ["tv"]
-        elif "스피커" in clean or wants_playlist_picker:
+        elif "스피커" in clean or wants_playlist_picker or wants_volume_control:
             media_trigger = "스피커"
             filter_terms = ["스피커", "speaker"]
+
+        if media_trigger == "스피커":
+            # Volume -- checked before the on/off/pause/resume branch below,
+            # same percent-wins-over-bare-verb priority _h_curtain()/_h_fan()/
+            # _h_light() already give a number over an on/off word within one
+            # command (a bare "%" alone implies volume just as clearly as it
+            # implies brightness/position/speed for those domains).
+            percent_match = _PERCENT_RE.search(clean) if (wants_volume_control or wants_playlist_picker) else None
+            wants_volume_up = wants_volume_control and any(k in clean for k in _MEDIA_VOLUME_UP_WORDS)
+            wants_volume_down = wants_volume_control and any(k in clean for k in _MEDIA_VOLUME_DOWN_WORDS)
+            if percent_match or wants_volume_up or wants_volume_down:
+                candidates = [
+                    s for s in states
+                    if s.get("entity_id", "").startswith("media_player.")
+                    and any(t in (s.get("attributes", {}).get("friendly_name") or "").lower() for t in filter_terms)
+                ]
+                targets, err = resolve_control_scope(
+                    prompt, clean, rooms, matched_room, candidates, "스피커", conversation_id,
+                    domain="media_player", service="volume_set",
+                )
+                if err:
+                    return err
+                results = []
+                for t in targets:
+                    eid = t.get("entity_id")
+                    name = t.get("attributes", {}).get("friendly_name") or eid
+                    if percent_match:
+                        pct = max(0, min(100, int(percent_match.group(1))))
+                    else:
+                        current = t.get("attributes", {}).get("volume_level")
+                        current_pct = round(current * 100) if isinstance(current, (int, float)) else 50
+                        step = _MEDIA_VOLUME_STEP if wants_volume_up else -_MEDIA_VOLUME_STEP
+                        pct = max(0, min(100, current_pct + step))
+                    call_ok = ha_call_service_api("media_player", "volume_set", {"entity_id": eid, "volume_level": pct / 100})
+                    results.append((name, pct, call_ok))
+                ok = all(r[2] for r in results)
+                if percent_match:
+                    names = [r[0] for r in results]
+                    return f"🔊 {', '.join(names)} 볼륨을 {results[0][1]}%로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                parts = [f"{n} {p}%" for n, p, _ in results]
+                return f"🔊 {', '.join(parts)}로 볼륨을 조절했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
 
         if media_trigger:
             # Pause/resume only makes sense for a speaker's actual playback
