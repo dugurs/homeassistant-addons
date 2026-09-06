@@ -33,6 +33,11 @@ import time
 from core.system_info import get_supervisor_token
 
 _CACHE_TTL_SECONDS = 60
+# Retry much sooner than the normal TTL when we've never had a good snapshot
+# yet (cold start, or the Supervisor WS call just failed) -- hidden_ids feeds
+# the safety-critical hidden-entity filter (see module docstring incident),
+# so a transient failure shouldn't leave it silently disabled for a full minute.
+_FAILURE_RETRY_SECONDS = 5
 _cache_lock = threading.Lock()
 _cache_snapshot: dict | None = None
 _cache_timestamp = 0.0
@@ -127,19 +132,27 @@ def _get_snapshot() -> dict:
     unreachable, auth failure, ...) returns an empty snapshot (or the last
     good cached value, if any) rather than raising -- every feature built on
     this degrades to a no-op instead of breaking device control entirely.
+
+    A failure that leaves us with NO prior good snapshot is retried every
+    _FAILURE_RETRY_SECONDS instead of waiting out the full _CACHE_TTL_SECONDS,
+    so the hidden-entity filter doesn't stay silently disabled for a full
+    minute after one transient WS hiccup (e.g. HA restarting).
     """
     global _cache_snapshot, _cache_timestamp
     with _cache_lock:
         now = time.time()
         if _cache_snapshot is not None and (now - _cache_timestamp) < _CACHE_TTL_SECONDS:
             return _cache_snapshot
+        if _cache_snapshot is None and _cache_timestamp and (now - _cache_timestamp) < _FAILURE_RETRY_SECONDS:
+            return dict(_EMPTY_SNAPSHOT)
         try:
             fresh = _fetch_registry_snapshot()
         except Exception:
-            fresh = _cache_snapshot if _cache_snapshot is not None else dict(_EMPTY_SNAPSHOT)
-        _cache_snapshot = fresh
+            fresh = _cache_snapshot
         _cache_timestamp = now
-        return fresh
+        if fresh is not None:
+            _cache_snapshot = fresh
+        return fresh if fresh is not None else dict(_EMPTY_SNAPSHOT)
 
 
 def get_hidden_entity_ids() -> set:

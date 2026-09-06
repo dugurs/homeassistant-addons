@@ -210,6 +210,7 @@ def resolve_control_scope(
     domain: str = "",
     service: str = "",
     extra_data: dict = None,
+    is_toggle: bool = False,
 ):
     """Decide which entities a control command should act on.
 
@@ -228,7 +229,13 @@ def resolve_control_scope(
 
     `domain`/`service`/`extra_data` (the exact HA service call this
     resolution is for) are only used for the hidden-entity confirmation gate
-    below -- every other code path here is unaffected by them.
+    below -- every other code path here is unaffected by them. `is_toggle`
+    marks that `service` is only a placeholder for a toggle (see each
+    handler's own comment on why toggles are resolved per-target from
+    current state rather than as one fixed service) -- when the hidden-
+    entity gate below has to defer to a later confirmation turn, it stores a
+    "__toggle__" sentinel instead of that placeholder so the real direction
+    gets resolved from state at confirm time, not parse time.
     """
     def _remember(targets: list) -> list:
         if conversation_id and targets:
@@ -263,9 +270,16 @@ def resolve_control_scope(
 
     def _confirm_hidden(entity: dict):
         name = entity.get("attributes", {}).get("friendly_name") or entity.get("entity_id")
-        if domain and service and conversation_id:
+        # Derived from the entity's own entity_id, not the caller's `domain`
+        # param -- several handlers now search more than one domain per
+        # device type (a boiler/AC/fan can be switch, climate, or its own
+        # domain depending on the house), so the single `domain` passed in
+        # no longer reliably matches every candidate that can reach here.
+        entity_domain = entity.get("entity_id", "").split(".", 1)[0] or domain
+        if entity_domain and service and conversation_id:
             from core.session_manager import set_pending_confirmation
-            target = {"domain": domain, "service": service, "entity_id": entity.get("entity_id")}
+            target_service = "__toggle__" if is_toggle else service
+            target = {"domain": entity_domain, "service": target_service, "entity_id": entity.get("entity_id")}
             if extra_data:
                 target.update(extra_data)
             set_pending_confirmation(conversation_id, {"targets": [target], "names": [name]})
@@ -381,7 +395,7 @@ ALLOWED_CARD_SERVICES = {
     "light": {"turn_on", "turn_off"},
     "fan": {"turn_on", "turn_off", "set_percentage"},
     "switch": {"turn_on", "turn_off"},
-    "cover": {"open_cover", "close_cover", "set_cover_position"},
+    "cover": {"open_cover", "close_cover", "stop_cover", "set_cover_position"},
     "climate": {"turn_on", "turn_off", "set_temperature", "set_hvac_mode", "set_fan_mode"},
     "media_player": {
         "turn_on", "turn_off", "volume_set",
@@ -409,6 +423,22 @@ ALLOWED_CARD_SERVICES = {
 # instead of turn_off/turn_on for a media_player target specifically.
 _MEDIA_PAUSE_WORDS = ["중지", "정지", "멈춰", "일시정지"]
 _MEDIA_RESUME_WORDS = ["재생"]
+
+# Verb stems (not the conjugated is_on/is_off forms below) for detecting an
+# explicit "-지 말고"/"-지 마" negation, e.g. "켜지 말고 꺼줘" ("don't turn
+# on, turn off"). A command naming both on- and off- vocabulary is checked
+# against these before falling back to is_on -- see _execute_single_control_
+# clause()'s is_on/is_off section for why a bare double-match would
+# otherwise always resolve to on, the opposite of what was asked.
+_ON_NEGATION_STEMS = ["켜", "틀", "시작하", "올리", "가동하"]
+_OFF_NEGATION_STEMS = ["끄", "정지하", "내리", "종료하", "중지하"]
+
+# Appended to a control handler's success message when ha_call_service_api()
+# reported at least one failure for the batch (missing Supervisor token, HA
+# API timeout, ...) -- every handler below used to discard that return
+# value entirely and always report success regardless of what actually
+# happened.
+_PARTIAL_FAILURE_SUFFIX = " (일부 기기 제어에 실패했을 수 있습니다)"
 
 _STATE_QUERY_PATTERNS = [
     "켜져있", "꺼져있", "켜있", "꺼있", "켜진", "꺼진", "켜졌", "꺼졌",
@@ -516,6 +546,58 @@ def get_device_status_answer(prompt: str, states: list) -> str:
 
 _PERCENT_RE = re.compile(r"(\d{1,3})\s*(?:%|퍼센트|프로)")
 
+# "26도로 맞춰줘"/"18도로 설정해줘" -- a target climate temperature named
+# directly, distinct from an on/off command. 1-2 digits since HA climate
+# entities' realistic min/max temp range never reaches 3 digits Celsius.
+_TEMPERATURE_RE = re.compile(r"(\d{1,2})\s*도")
+
+
+def _is_target_currently_on(entity: dict, domain: str) -> bool:
+    """Whether `entity` is currently "on" in the sense relevant to toggling
+    it -- used only by the per-handler toggle ("토글해줘"/"반전해줘") support
+    below, since "on" means a different state string per domain: cover uses
+    open/closed rather than on/off, and media_player never reports state
+    "on" at all (see core/ui/scripts.py's deviceCardToggleHTML() for the
+    same distinction made client-side for the device card's toggle switch).
+    """
+    state = entity.get("state")
+    if domain == "cover":
+        return state == "open"
+    if domain in ("media_player", "climate"):
+        # Both report their own richer state instead of a plain on/off --
+        # media_player uses playing/paused/idle/..., climate's `state` IS
+        # its current hvac_mode (cool/heat/fan_only/...) -- so anything
+        # other than "off" (or unavailable/unknown) counts as "on" here.
+        return state not in ("off", "unavailable", "unknown")
+    return state == "on"
+
+
+def resolve_toggle_service(entity: dict, domain: str) -> str:
+    """The on/off service that flips `entity`'s CURRENT state -- used to
+    resolve a toggle whose confirmation was deferred (the "__toggle__"
+    sentinel service resolve_control_scope()'s hidden-entity confirmation
+    gate stores instead of a fixed direction) so the direction actually
+    executed reflects the entity's state at confirm time, not whatever it
+    was when the original command was first parsed and may no longer be by
+    the time the user replies (see ha_engine.py's pending-confirmation
+    resume handler).
+    """
+    on_service = "open_cover" if domain == "cover" else "turn_on"
+    off_service = "close_cover" if domain == "cover" else "turn_off"
+    return off_service if _is_target_currently_on(entity, domain) else on_service
+
+
+def _resolve_onoff_service(wants_toggle: bool, is_on: bool, is_off: bool) -> str | None:
+    """turn_on/turn_off decision shared by every on/off/toggle-capable
+    domain handler (_h_fan/_h_light/_h_humidifier/_h_appliance/_h_climate)
+    below. A toggle always starts as a "turn_off" placeholder here -- the
+    real per-target direction is resolved later from actual state (see
+    resolve_toggle_service()) -- so a toggle onto a currently-off dangerous
+    appliance still goes through the same confirmation gate a plain "off"
+    would (a blind homeassistant.toggle call would silently bypass it).
+    """
+    return "turn_off" if wants_toggle else ("turn_on" if is_on else ("turn_off" if is_off else None))
+
 
 def _service_for_action(domain: str, is_on: bool, is_off: bool, is_open: bool, is_close: bool) -> str | None:
     """Map a domain + this turn's detected verb to the right HA service name.
@@ -565,6 +647,18 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
     # at all and the whole clause was dropped.
     is_on = any(k in clean for k in ["켜", "틀어", "틀고", "시작", "올려", "올리고", "가동"])
     is_off = any(k in clean for k in ["꺼", "끄고", "정지", "내려", "내리고", "종료", "중지"])
+    if is_on and is_off:
+        # Both vocabularies matched -- usually an explicit negation ("켜지
+        # 말고 꺼줘") rather than a genuinely ambiguous command. Without
+        # this, is_on always wins below (every handler checks it first),
+        # silently executing the opposite of an explicit "don't turn on"
+        # instruction.
+        on_negated = any(f"{s}지말고" in clean or f"{s}지마" in clean for s in _ON_NEGATION_STEMS)
+        off_negated = any(f"{s}지말고" in clean or f"{s}지마" in clean for s in _OFF_NEGATION_STEMS)
+        if on_negated and not off_negated:
+            is_on = False
+        elif off_negated and not on_negated:
+            is_off = False
     is_open = any(k in clean for k in ["열어", "열고", "open"])
     is_close = any(k in clean for k in ["닫아", "닫고", "close"])
     # See _MEDIA_PAUSE_WORDS/_MEDIA_RESUME_WORDS above -- media_player-only
@@ -572,6 +666,21 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
     # instead of power-cycling the speaker.
     wants_media_pause = any(k in clean for k in _MEDIA_PAUSE_WORDS)
     wants_media_resume = any(k in clean for k in _MEDIA_RESUME_WORDS)
+    # Only ever consulted inside _h_curtain() below, deliberately -- "정지"/
+    # "중지" are already generic is_off synonyms for every other domain
+    # (a light/fan legitimately has no "stop mid-motion" concept the way a
+    # cover does), so this stays scoped to the one domain where a mid-way
+    # stop is a real, distinct action from open/close.
+    is_stop = any(k in clean for k in ["멈춰", "정지", "중지"])
+    # "토글해줘"/"반전해줘" -- flip whatever a target's current state already
+    # is, rather than always driving to a fixed on/off. Handled per-target
+    # (each handler below looks up the entity's own `state` when this is
+    # set) rather than by calling the universal homeassistant.toggle
+    # service, specifically so a toggle onto a dangerous appliance switch
+    # (see APPLIANCE_SWITCH_KEYWORDS) still goes through the same turn_off
+    # confirmation gate as a plain "꺼줘" would -- a blind toggle call would
+    # silently bypass that safety check.
+    wants_toggle = any(k in clean for k in ["토글", "반전"])
 
     rooms = get_dynamic_rooms(states)
     matched_room = forced_room or match_room(rooms, clean)
@@ -588,20 +697,64 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
     def _h_curtain():
         # 1. Curtains / Covers
         if any(w in clean for w in ["커튼", "블라인드", "창문"]):
-            service = "open_cover" if is_open else ("close_cover" if is_close else None)
-            if service:
+            # A number-of-percent target ("10퍼센트 열어"/"20% 열어") wins over
+            # a bare open/close/stop word, same as fan speed/light brightness
+            # above -- HA's own 0(closed)-100(open) cover position already
+            # fully encodes the intent, so "열어"/"닫아" alongside a number is
+            # redundant, not conflicting, with the requested position.
+            percent_match = _PERCENT_RE.search(clean)
+            if percent_match:
+                percentage = max(0, min(100, int(percent_match.group(1))))
                 candidates = [s for s in states if s.get("entity_id", "").startswith("cover.")]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "커튼", conversation_id, domain="cover", service=service)
+                targets, err = resolve_control_scope(
+                    prompt, clean, rooms, matched_room, candidates, "커튼", conversation_id,
+                    domain="cover", service="set_cover_position", extra_data={"position": percentage},
+                )
                 if err:
                     return err
-                for c in targets:
-                    ha_call_service_api("cover", service, {"entity_id": c.get("entity_id")})
-                act_str = "열었습니다" if is_open else "닫았습니다"
+                ok = all([ha_call_service_api("cover", "set_cover_position", {"entity_id": c.get("entity_id"), "position": percentage}) for c in targets])
                 names = [
                     _strip_device_type_suffix(c.get("attributes", {}).get("friendly_name") or c.get("entity_id"), ("커튼", "블라인드"))
                     for c in targets
                 ]
-                return f"🪟 {', '.join(names)} 커튼을 {act_str}."
+                return f"🪟 {', '.join(names)} 위치를 {percentage}%로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+
+            # open/close win over a bare stop word if somehow both matched
+            # (e.g. "정지" is also is_off's generic vocabulary) -- stop is
+            # only the actual intent when neither direction was named.
+            if is_open:
+                service = "open_cover"
+            elif is_close:
+                service = "close_cover"
+            elif is_stop:
+                service = "stop_cover"
+            elif wants_toggle:
+                # Placeholder for resolve_control_scope's hidden-device
+                # bookkeeping only -- the real per-target direction is
+                # computed below from each entity's actual current state.
+                service = "close_cover"
+            else:
+                service = None
+            if service:
+                candidates = [s for s in states if s.get("entity_id", "").startswith("cover.")]
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "커튼", conversation_id, domain="cover", service=service, is_toggle=wants_toggle)
+                if err:
+                    return err
+                if wants_toggle:
+                    names = []
+                    ok = True
+                    for c in targets:
+                        t_service = "close_cover" if _is_target_currently_on(c, "cover") else "open_cover"
+                        ok = ha_call_service_api("cover", t_service, {"entity_id": c.get("entity_id")}) and ok
+                        names.append(_strip_device_type_suffix(c.get("attributes", {}).get("friendly_name") or c.get("entity_id"), ("커튼", "블라인드")))
+                    return f"🪟 {', '.join(names)} 커튼 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                ok = all([ha_call_service_api("cover", service, {"entity_id": c.get("entity_id")}) for c in targets])
+                act_str = {"open_cover": "열었습니다", "close_cover": "닫았습니다", "stop_cover": "멈췄습니다"}[service]
+                names = [
+                    _strip_device_type_suffix(c.get("attributes", {}).get("friendly_name") or c.get("entity_id"), ("커튼", "블라인드"))
+                    for c in targets
+                ]
+                return f"🪟 {', '.join(names)} 커튼을 {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_fan():
@@ -617,12 +770,11 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 )
                 if err:
                     return err
-                for f in targets:
-                    ha_call_service_api("fan", "set_percentage", {"entity_id": f.get("entity_id"), "percentage": percentage})
+                ok = all([ha_call_service_api("fan", "set_percentage", {"entity_id": f.get("entity_id"), "percentage": percentage}) for f in targets])
                 names = [f.get("attributes", {}).get("friendly_name") or f.get("entity_id") for f in targets]
-                return f"🌀 {', '.join(names)} 풍량을 {percentage}%로 설정했습니다."
+                return f"🌀 {', '.join(names)} 풍량을 {percentage}%로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
 
-            service = "turn_on" if is_on else ("turn_off" if is_off else None)
+            service = _resolve_onoff_service(wants_toggle, is_on, is_off)
             if service:
                 fan_candidates = [s for s in states if s.get("entity_id", "").startswith("fan.")]
                 # Some bathroom ventilator/dryer combo units (e.g. "안방 화장실
@@ -643,20 +795,48 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     and any(w in (s.get("attributes", {}).get("friendly_name") or "") for w in ["팬", "선풍기", "환풍기", "실링팬"])
                 ]
                 candidates = fan_candidates + climate_fan_candidates
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "선풍기/환풍기", conversation_id, domain="fan", service=service)
+                if not candidates:
+                    # A bathroom vent fan wired through a plain relay switch
+                    # instead of a real fan/climate entity -- tried only
+                    # when neither of the above matched anything.
+                    candidates = [
+                        s for s in states
+                        if s.get("entity_id", "").startswith("switch.")
+                        and any(w in (s.get("attributes", {}).get("friendly_name") or "") for w in ["팬", "선풍기", "환풍기", "실링팬"])
+                        and not any(x in (s.get("attributes", {}).get("friendly_name") or "") for x in DIAGNOSTIC_EXCLUDE_KEYWORDS)
+                    ]
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "선풍기/환풍기", conversation_id, domain="fan", service=service, is_toggle=wants_toggle)
                 if err:
                     return err
+
+                def _target_domain(f: dict) -> str:
+                    return f.get("entity_id", "").split(".", 1)[0] or "fan"
+
+                if wants_toggle:
+                    names = []
+                    ok = True
+                    for f in targets:
+                        td = _target_domain(f)
+                        currently_on = _is_target_currently_on(f, td)
+                        if td == "climate":
+                            ok = ha_call_service_api("climate", "set_hvac_mode", {"entity_id": f.get("entity_id"), "hvac_mode": "off" if currently_on else "fan_only"}) and ok
+                        else:
+                            ok = ha_call_service_api(td, "turn_off" if currently_on else "turn_on", {"entity_id": f.get("entity_id")}) and ok
+                        names.append(_strip_device_type_suffix(f.get("attributes", {}).get("friendly_name") or f.get("entity_id"), ("Climate",)))
+                    return f"🌀 {', '.join(names)} 가동 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                ok = True
                 for f in targets:
-                    if f.get("entity_id", "").startswith("climate."):
-                        ha_call_service_api("climate", "set_hvac_mode", {"entity_id": f.get("entity_id"), "hvac_mode": "fan_only" if is_on else "off"})
+                    td = _target_domain(f)
+                    if td == "climate":
+                        ok = ha_call_service_api("climate", "set_hvac_mode", {"entity_id": f.get("entity_id"), "hvac_mode": "fan_only" if is_on else "off"}) and ok
                     else:
-                        ha_call_service_api("fan", service, {"entity_id": f.get("entity_id")})
+                        ok = ha_call_service_api(td, service, {"entity_id": f.get("entity_id")}) and ok
                 act_str = "켰습니다" if is_on else "껐습니다"
                 names = [
                     _strip_device_type_suffix(f.get("attributes", {}).get("friendly_name") or f.get("entity_id"), ("Climate",))
                     for f in targets
                 ]
-                return f"🌀 {', '.join(names)} 가동을 {act_str}."
+                return f"🌀 {', '.join(names)} 가동을 {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_light():
@@ -695,15 +875,14 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 )
                 if err:
                     return err
-                for l in targets:
-                    ha_call_service_api("light", "turn_on", {"entity_id": l.get("entity_id"), "brightness_pct": percentage})
+                ok = all([ha_call_service_api("light", "turn_on", {"entity_id": l.get("entity_id"), "brightness_pct": percentage}) for l in targets])
                 names = [
                     _strip_device_type_suffix(l.get("attributes", {}).get("friendly_name") or l.get("entity_id"), ("조명", "전등"))
                     for l in targets
                 ]
-                return f"💡 {', '.join(names)} 밝기를 {percentage}%로 설정했습니다."
+                return f"💡 {', '.join(names)} 밝기를 {percentage}%로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
 
-            service = "turn_on" if is_on else ("turn_off" if is_off else None)
+            service = _resolve_onoff_service(wants_toggle, is_on, is_off)
             if service:
                 candidates = [
                     s for s in states
@@ -711,17 +890,24 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     and "all" not in s.get("entity_id", "").lower()
                     and not any(x in (s.get("attributes", {}).get("friendly_name") or "") for x in DIAGNOSTIC_EXCLUDE_KEYWORDS)
                 ]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "조명", conversation_id, domain="light", service=service)
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "조명", conversation_id, domain="light", service=service, is_toggle=wants_toggle)
                 if err:
                     return err
-                for l in targets:
-                    ha_call_service_api("light", service, {"entity_id": l.get("entity_id")})
+                if wants_toggle:
+                    names = []
+                    ok = True
+                    for l in targets:
+                        t_service = "turn_off" if _is_target_currently_on(l, "light") else "turn_on"
+                        ok = ha_call_service_api("light", t_service, {"entity_id": l.get("entity_id")}) and ok
+                        names.append(_strip_device_type_suffix(l.get("attributes", {}).get("friendly_name") or l.get("entity_id"), ("조명", "전등")))
+                    return f"💡 {', '.join(names)} 조명 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                ok = all([ha_call_service_api("light", service, {"entity_id": l.get("entity_id")}) for l in targets])
                 act_str = "켰습니다" if is_on else "껐습니다"
                 names = [
                     _strip_device_type_suffix(l.get("attributes", {}).get("friendly_name") or l.get("entity_id"), ("조명", "전등"))
                     for l in targets
                 ]
-                return f"💡 {', '.join(names)} 조명을 {act_str}."
+                return f"💡 {', '.join(names)} 조명을 {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_humidifier():
@@ -730,7 +916,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         # if no such entity exists for this appliance.
         if any(w in clean for w in ["가습기", "제습기"]):
             keyword = "가습기" if "가습기" in clean else "제습기"
-            service = "turn_on" if is_on else ("turn_off" if is_off else None)
+            service = _resolve_onoff_service(wants_toggle, is_on, is_off)
             if service:
                 domain = "humidifier"
                 candidates = [
@@ -746,33 +932,58 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                         and keyword in (s.get("attributes", {}).get("friendly_name") or "")
                         and not any(x in (s.get("attributes", {}).get("friendly_name") or "") for x in DIAGNOSTIC_EXCLUDE_KEYWORDS)
                     ]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, keyword, conversation_id, domain=domain, service=service)
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, keyword, conversation_id, domain=domain, service=service, is_toggle=wants_toggle)
                 if err:
                     return err
-                for t in targets:
-                    ha_call_service_api(domain, service, {"entity_id": t.get("entity_id")})
+                icon = "💧" if keyword == "가습기" else "🌬️"
+                if wants_toggle:
+                    names = []
+                    ok = True
+                    for t in targets:
+                        t_service = "turn_off" if _is_target_currently_on(t, domain) else "turn_on"
+                        ok = ha_call_service_api(domain, t_service, {"entity_id": t.get("entity_id")}) and ok
+                        names.append(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"))
+                    return f"{icon} {', '.join(names)} 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                ok = all([ha_call_service_api(domain, service, {"entity_id": t.get("entity_id")}) for t in targets])
                 act_str = "켰습니다" if is_on else "껐습니다"
                 names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
-                icon = "💧" if keyword == "가습기" else "🌬️"
                 obj_p = _particle(names[-1], "을", "를") if names else "를"
-                return f"{icon} {', '.join(names)}{obj_p} {act_str}."
+                return f"{icon} {', '.join(names)}{obj_p} {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_appliance():
-        # 5. Curated appliance switches (boiler, heater, outlet/plug)
+        # 5. Curated appliance switches (boiler, heater, outlet/plug) --
+        # primary search is switch.*, since that's how these are modeled in
+        # most houses; some houses instead expose the same appliance as its
+        # own climate entity (a boiler with a real climate integration), so
+        # that's tried only when no switch matched (mirrors _h_humidifier()'s
+        # humidifier->switch fallback, just in the other domain direction).
+        # Every domain below is looked up per-target from its own entity_id
+        # rather than assumed, since a resolved batch can now mix domains.
         matched_appliance = next((k for k in APPLIANCE_SWITCH_KEYWORDS if k in clean), None)
         if matched_appliance:
-            service = "turn_on" if is_on else ("turn_off" if is_off else None)
+            service = _resolve_onoff_service(wants_toggle, is_on, is_off)
             if service:
+                domain = "switch"
                 candidates = [
                     s for s in states
                     if s.get("entity_id", "").startswith("switch.")
                     and matched_appliance in (s.get("attributes", {}).get("friendly_name") or "")
                     and not any(x in (s.get("attributes", {}).get("friendly_name") or "") for x in DIAGNOSTIC_EXCLUDE_KEYWORDS)
                 ]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, matched_appliance, conversation_id, domain="switch", service=service)
+                if not candidates:
+                    domain = "climate"
+                    candidates = [
+                        s for s in states
+                        if s.get("entity_id", "").startswith("climate.")
+                        and matched_appliance in (s.get("attributes", {}).get("friendly_name") or "")
+                    ]
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, matched_appliance, conversation_id, domain=domain, service=service, is_toggle=wants_toggle)
                 if err:
                     return err
+
+                def _target_domain(t: dict) -> str:
+                    return t.get("entity_id", "").split(".", 1)[0] or domain
 
                 # Turning OFF one of these curated appliances (보일러/히터/
                 # 전기스토브/콘센트/플러그) can have real consequences (pipes
@@ -782,11 +993,43 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 # handle_agent_chat()'s pending-confirmation check in
                 # core/ha_engine.py). Turning ON is never gated -- there's no
                 # "accidentally turned something on" safety concern here.
+                #
+                # "토글해줘" complicates this: a mixed-state batch needs some
+                # targets turned on (no gate) and others turned off (needs
+                # the exact same gate as a plain "꺼줘" would) -- never
+                # collapse this to a single blind homeassistant.toggle call,
+                # or a toggle onto an already-on boiler would skip the
+                # confirmation a "꺼줘" alone would have required.
+                if wants_toggle:
+                    # Currently-on targets need turn_off (goes through the
+                    # confirm gate below); currently-off targets need
+                    # turn_on (no gate, executed immediately).
+                    to_turn_off = [t for t in targets if _is_target_currently_on(t, _target_domain(t))]
+                    to_turn_on = [t for t in targets if not _is_target_currently_on(t, _target_domain(t))]
+
+                    messages = []
+                    if to_turn_on:
+                        on_ok = all([ha_call_service_api(_target_domain(t), "turn_on", {"entity_id": t.get("entity_id")}) for t in to_turn_on])
+                        on_names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in to_turn_on]
+                        messages.append(f"🔌 {', '.join(on_names)}{_particle(on_names[-1], '을', '를')} 켰습니다.{'' if on_ok else _PARTIAL_FAILURE_SUFFIX}")
+                    if to_turn_off and conversation_id:
+                        from core.session_manager import set_pending_confirmation
+                        off_names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in to_turn_off]
+                        set_pending_confirmation(conversation_id, {
+                            "targets": [{"domain": _target_domain(t), "service": "turn_off", "entity_id": t.get("entity_id")} for t in to_turn_off],
+                            "names": off_names,
+                        })
+                        messages.append(
+                            f"⚠️ {', '.join(off_names)}{_particle(off_names[-1], '을', '를')} 정말 끄시겠어요? "
+                            f"끄면 불편이 생길 수 있는 기기입니다. 계속하시려면 \"응\"이라고 답해주세요."
+                        )
+                    return "\n".join(messages) if messages else "전환할 기기를 찾지 못했습니다."
+
                 if service == "turn_off" and conversation_id:
                     from core.session_manager import set_pending_confirmation
                     names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
                     set_pending_confirmation(conversation_id, {
-                        "targets": [{"domain": "switch", "service": "turn_off", "entity_id": t.get("entity_id")} for t in targets],
+                        "targets": [{"domain": _target_domain(t), "service": "turn_off", "entity_id": t.get("entity_id")} for t in targets],
                         "names": names,
                     })
                     return (
@@ -794,12 +1037,11 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                         f"끄면 불편이 생길 수 있는 기기입니다. 계속하시려면 \"응\"이라고 답해주세요."
                     )
 
-                for t in targets:
-                    ha_call_service_api("switch", service, {"entity_id": t.get("entity_id")})
+                ok = all([ha_call_service_api(_target_domain(t), service, {"entity_id": t.get("entity_id")}) for t in targets])
                 act_str = "켰습니다" if is_on else "껐습니다"
                 names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
                 obj_p = _particle(names[-1], "을", "를") if names else "를"
-                return f"🔌 {', '.join(names)}{obj_p} {act_str}."
+                return f"🔌 {', '.join(names)}{obj_p} {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_climate():
@@ -808,20 +1050,116 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         # branch above even for climate-domain bathroom ventilators, so this stays
         # scoped to actual air conditioning/heating only.
         if any(w in clean for w in ["에어컨", "냉방", "난방"]):
-            service = "turn_on" if is_on else ("turn_off" if is_off else None)
-            if service:
+            temp_match = _TEMPERATURE_RE.search(clean)
+            if temp_match:
+                # A number-of-degrees target, not on/off -- same "no 켜/꺼
+                # verb, so the command never got recognized at all" gap
+                # already fixed for fan speed/light brightness (beta.87/94)
+                # applies here too: "안방 에어컨 26도로 맞춰줘" has neither.
+                target_temp = float(temp_match.group(1))
                 candidates = [s for s in states if s.get("entity_id", "").startswith("climate.")]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "에어컨", conversation_id, domain="climate", service=service)
+                targets, err = resolve_control_scope(
+                    prompt, clean, rooms, matched_room, candidates, "에어컨", conversation_id,
+                    domain="climate", service="set_temperature", extra_data={"temperature": target_temp},
+                )
                 if err:
                     return err
-                for t in targets:
-                    ha_call_service_api("climate", service, {"entity_id": t.get("entity_id")})
+                ok = all([ha_call_service_api("climate", "set_temperature", {"entity_id": t.get("entity_id"), "temperature": target_temp}) for t in targets])
+                names = [
+                    _strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",))
+                    for t in targets
+                ]
+                return f"❄️ {', '.join(names)} 목표 온도를 {int(target_temp)}도로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+
+            service = _resolve_onoff_service(wants_toggle, is_on, is_off)
+            if service:
+                domain = "climate"
+                candidates = [s for s in states if s.get("entity_id", "").startswith("climate.")]
+                if not candidates:
+                    # A window unit controlled via a plain smart plug instead
+                    # of a real climate integration -- tried only when no
+                    # climate entity matched at all.
+                    domain = "switch"
+                    candidates = [
+                        s for s in states
+                        if s.get("entity_id", "").startswith("switch.")
+                        and any(w in (s.get("attributes", {}).get("friendly_name") or "") for w in ["에어컨", "에어콘", "냉방", "난방"])
+                        and not any(x in (s.get("attributes", {}).get("friendly_name") or "") for x in DIAGNOSTIC_EXCLUDE_KEYWORDS)
+                    ]
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, "에어컨", conversation_id, domain=domain, service=service, is_toggle=wants_toggle)
+                if err:
+                    return err
+
+                def _target_domain(t: dict) -> str:
+                    return t.get("entity_id", "").split(".", 1)[0] or domain
+
+                # A switch-domain match here is a real relay switch (a window-
+                # unit AC on a smart plug) -- the same real-consequence
+                # category _h_appliance() gates turn_off on. Without this
+                # gate, the identical physical switch
+                # could be turned off with a warning via appliance-intent
+                # wording ("보일러 꺼줘") but with none via climate-intent
+                # wording ("난방 꺼줘"), since both can resolve to the same
+                # switch.* entity.
+                if domain == "switch" and wants_toggle:
+                    to_turn_off = [t for t in targets if _is_target_currently_on(t, _target_domain(t))]
+                    to_turn_on = [t for t in targets if not _is_target_currently_on(t, _target_domain(t))]
+
+                    messages = []
+                    if to_turn_on:
+                        on_ok = all([ha_call_service_api(_target_domain(t), "turn_on", {"entity_id": t.get("entity_id")}) for t in to_turn_on])
+                        on_names = [
+                            _strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",))
+                            for t in to_turn_on
+                        ]
+                        messages.append(f"❄️ {', '.join(on_names)} 에어컨을 켰습니다.{'' if on_ok else _PARTIAL_FAILURE_SUFFIX}")
+                    if to_turn_off and conversation_id:
+                        from core.session_manager import set_pending_confirmation
+                        off_names = [
+                            _strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",))
+                            for t in to_turn_off
+                        ]
+                        set_pending_confirmation(conversation_id, {
+                            "targets": [{"domain": _target_domain(t), "service": "turn_off", "entity_id": t.get("entity_id")} for t in to_turn_off],
+                            "names": off_names,
+                        })
+                        messages.append(
+                            f"⚠️ {', '.join(off_names)}{_particle(off_names[-1], '을', '를')} 정말 끄시겠어요? "
+                            f"끄면 불편이 생길 수 있는 기기입니다. 계속하시려면 \"응\"이라고 답해주세요."
+                        )
+                    return "\n".join(messages) if messages else "전환할 기기를 찾지 못했습니다."
+
+                if domain == "switch" and service == "turn_off" and conversation_id:
+                    from core.session_manager import set_pending_confirmation
+                    names = [
+                        _strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",))
+                        for t in targets
+                    ]
+                    set_pending_confirmation(conversation_id, {
+                        "targets": [{"domain": _target_domain(t), "service": "turn_off", "entity_id": t.get("entity_id")} for t in targets],
+                        "names": names,
+                    })
+                    return (
+                        f"⚠️ {', '.join(names)}{_particle(names[-1], '을', '를') if names else '를'} 정말 끄시겠어요? "
+                        f"끄면 불편이 생길 수 있는 기기입니다. 계속하시려면 \"응\"이라고 답해주세요."
+                    )
+
+                if wants_toggle:
+                    names = []
+                    ok = True
+                    for t in targets:
+                        td = _target_domain(t)
+                        t_service = "turn_off" if _is_target_currently_on(t, td) else "turn_on"
+                        ok = ha_call_service_api(td, t_service, {"entity_id": t.get("entity_id")}) and ok
+                        names.append(_strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",)))
+                    return f"❄️ {', '.join(names)} 에어컨 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+                ok = all([ha_call_service_api(_target_domain(t), service, {"entity_id": t.get("entity_id")}) for t in targets])
                 act_str = "켰습니다" if is_on else "껐습니다"
                 names = [
                     _strip_device_type_suffix(t.get("attributes", {}).get("friendly_name") or t.get("entity_id"), ("에어컨",))
                     for t in targets
                 ]
-                return f"❄️ {', '.join(names)} 에어컨을 {act_str}."
+                return f"❄️ {', '.join(names)} 에어컨을 {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     def _h_media():
@@ -853,6 +1191,11 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 service = "media_pause"
             elif media_trigger == "스피커" and wants_media_resume:
                 service = "media_play"
+            elif wants_toggle:
+                # Placeholder for resolve_control_scope()'s bookkeeping only --
+                # the real per-target service is decided in the toggle loop
+                # below via _is_target_currently_on().
+                service = "turn_off"
             else:
                 service = "turn_on" if is_on else ("turn_off" if is_off else None)
             if service:
@@ -868,8 +1211,9 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                         None,
                     )
                     if script_match:
-                        ha_call_service_api("script", "turn_on", {"entity_id": script_match.get("entity_id")})
                         name = script_match.get("attributes", {}).get("friendly_name") or script_match.get("entity_id")
+                        if not ha_call_service_api("script", "turn_on", {"entity_id": script_match.get("entity_id")}):
+                            return f"'{name}' 스크립트 실행에 실패했습니다."
                         return f"📺 '{name}' 스크립트를 실행했습니다."
 
                 candidates = [
@@ -877,7 +1221,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     if s.get("entity_id", "").startswith("media_player.")
                     and any(t in (s.get("attributes", {}).get("friendly_name") or "").lower() for t in filter_terms)
                 ]
-                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, media_trigger, conversation_id, domain="media_player", service=service)
+                targets, err = resolve_control_scope(prompt, clean, rooms, matched_room, candidates, media_trigger, conversation_id, domain="media_player", service=service, is_toggle=wants_toggle)
                 if err:
                     return err
 
@@ -891,7 +1235,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 # non-MA speaker, or MA installed but genuinely empty
                 # library) falls straight through to the plain power-on
                 # below exactly as before this feature existed.
-                if service == "turn_on" and wants_playlist_picker and len(targets) == 1:
+                if service == "turn_on" and not wants_toggle and wants_playlist_picker and len(targets) == 1:
                     import core.ha_registry as ha_registry
                     import core.music_assistant as music_assistant
 
@@ -930,17 +1274,37 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                                 "playlists": playlists,
                                 "players": players,
                             }
-                            return f"🎵 {name}에서 재생할 플레이리스트를 선택해 주세요."
+                            # Remembered so a follow-up turn naming one of
+                            # these playlists (typed in chat, or spoken
+                            # through a surface with no card UI at all --
+                            # see resolve_pending_playlist_choice()) plays
+                            # it directly, without needing the click.
+                            if conversation_id:
+                                from core.session_manager import set_pending_playlist_choice
+                                set_pending_playlist_choice(conversation_id, {
+                                    "entity_id": ma_entity_id,
+                                    "entity_name": name,
+                                    "playlists": playlists,
+                                })
+                            playlist_names = ", ".join(p.get("name", "") for p in playlists)
+                            return f"🎵 {name}에서 재생할 플레이리스트를 선택해 주세요: {playlist_names} 중에서 말씀해 주세요."
 
-                for t in targets:
-                    ha_call_service_api("media_player", service, {"entity_id": t.get("entity_id")})
+                if wants_toggle:
+                    ok = True
+                    for t in targets:
+                        t_service = "turn_off" if _is_target_currently_on(t, "media_player") else "turn_on"
+                        ok = ha_call_service_api("media_player", t_service, {"entity_id": t.get("entity_id")}) and ok
+                    names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
+                    return f"📺 {', '.join(names)} 상태를 전환했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+
+                ok = all([ha_call_service_api("media_player", service, {"entity_id": t.get("entity_id")}) for t in targets])
                 act_str = {
                     "turn_on": "켰습니다", "turn_off": "껐습니다",
                     "media_pause": "일시정지했습니다", "media_play": "재생했습니다",
                 }[service]
                 names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
                 obj_p = _particle(names[-1], "을", "를") if names else "를"
-                return f"📺 {', '.join(names)}{obj_p} {act_str}."
+                return f"📺 {', '.join(names)}{obj_p} {act_str}.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
         return None
 
     messages = [
@@ -967,6 +1331,51 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
     # _MEDIA_RESUME_WORDS above), so it needs to be included in this gate
     # directly or a bare "재생해줘" following "안방에 음악 틀어줘" would never
     # even reach here.
+    # Bare PERCENT follow-up: "안방 커튼 20%" (no 열어/닫아 needed, see
+    # _h_curtain()) set a target, then a bare "40%" on its own next turn --
+    # no device word, no open/close/켜/꺼 verb at all -- should adjust that
+    # same remembered target rather than fall through to the "확인하지
+    # 못했습니다" clarifying question. Checked BEFORE the verb-based fallback
+    # below so a combined "이어서 40% 열어" still targets 40%, not a full
+    # open -- the same percent-wins-over-bare-verb priority _h_curtain()/
+    # _h_fan()/_h_light() already give a percentage over on/off within one
+    # command. Only meaningful for domains with an actual 0-100 concept
+    # (cover position, fan speed, light brightness); anything else (switch,
+    # climate, media_player) is silently skipped rather than guessed at.
+    if conversation_id:
+        percent_match = _PERCENT_RE.search(clean)
+        if percent_match:
+            from core.session_manager import get_last_control_targets, set_last_control_targets
+
+            last_ids = get_last_control_targets(conversation_id)
+            if last_ids:
+                percentage = max(0, min(100, int(percent_match.group(1))))
+                by_id = {s.get("entity_id"): s for s in states}
+                applied = []
+                for eid in last_ids:
+                    s = by_id.get(eid)
+                    if not s:
+                        continue
+                    pdomain = eid.split(".", 1)[0]
+                    if pdomain == "cover":
+                        call_ok = ha_call_service_api("cover", "set_cover_position", {"entity_id": eid, "position": percentage})
+                    elif pdomain == "fan":
+                        call_ok = ha_call_service_api("fan", "set_percentage", {"entity_id": eid, "percentage": percentage})
+                    elif pdomain == "light":
+                        call_ok = ha_call_service_api("light", "turn_on", {"entity_id": eid, "brightness_pct": percentage})
+                    else:
+                        continue
+                    if not call_ok:
+                        continue
+                    applied.append(s)
+                if applied:
+                    set_last_control_targets(conversation_id, [s.get("entity_id") for s in applied])
+                    card_sink = getattr(_card_entity_sink, "entities", None)
+                    if card_sink is not None:
+                        card_sink.extend(s.get("entity_id") for s in applied if s.get("entity_id"))
+                    names = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in applied]
+                    return f"↩️ (이어서) {', '.join(names)}{_particle(names[-1], '을', '를')} {percentage}%로 설정했습니다."
+
     if conversation_id and (is_on or is_off or is_open or is_close or wants_media_pause or wants_media_resume):
         from core.session_manager import get_last_control_targets, set_last_control_targets
 
@@ -992,7 +1401,24 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     service = _service_for_action(domain, is_on, is_off, is_open, is_close)
                 if not service:
                     continue
-                ha_call_service_api(domain, service, {"entity_id": eid})
+                # A climate entity that's really a fan-only ventilator (see
+                # _h_fan()'s climate_fan_candidates) must never get a plain
+                # climate.turn_on/off here -- that can restore some other
+                # hvac_mode (heat/cool) instead of staying pure ventilation,
+                # the same reason _h_fan() itself uses set_hvac_mode.
+                attrs = s.get("attributes", {}) or {}
+                if (
+                    domain == "climate" and service in ("turn_on", "turn_off")
+                    and "fan_only" in (attrs.get("hvac_modes") or [])
+                    and any(w in (attrs.get("friendly_name") or "") for w in ["팬", "선풍기", "환풍기", "실링팬"])
+                ):
+                    call_ok = ha_call_service_api("climate", "set_hvac_mode", {"entity_id": eid, "hvac_mode": "fan_only" if service == "turn_on" else "off"})
+                else:
+                    call_ok = ha_call_service_api(domain, service, {"entity_id": eid})
+                if not call_ok:
+                    # Don't claim success (or remember it as the last-acted
+                    # target) for an entity whose HA API call actually failed.
+                    continue
                 applied.append(s)
                 applied_service = service
             if applied:
@@ -1285,6 +1711,75 @@ def get_last_playlist_card() -> dict | None:
     return card
 
 
+def _normalize_for_match(s: str) -> str:
+    """Strips everything but letters/digits/Hangul and lowercases -- so a
+    playlist title like "오늘의 TOP 100: 대한민국" compares equal regardless
+    of spacing/punctuation the user didn't bother repeating exactly. Used
+    only by resolve_pending_playlist_choice() below."""
+    return re.sub(r"[^0-9a-zA-Z가-힣]", "", s or "").lower()
+
+
+def resolve_pending_playlist_choice(prompt: str, conversation_id: str) -> str | None:
+    """If this conversation has a playlist pick-list awaiting a name (see
+    _h_media()'s wants_playlist_picker branch and
+    core.session_manager.set_pending_playlist_choice()) and this prompt
+    names one of the offered playlists, plays it directly and returns the
+    confirmation message -- this is what lets "Favorite Songs 틀어줘" (typed
+    in chat, or spoken through HA Assist, which has no way to render the
+    clickable card at all) finish the job the card exists for.
+
+    Returns None when there's no pending choice, or this prompt doesn't
+    clearly name one of the offered playlists -- the caller should fall
+    through to normal processing in that case. Deliberately does NOT clear
+    the pending choice on a no-match (same as an unanswered dangerous-
+    action confirmation): an unrelated command in between doesn't cancel
+    the offer, so the user can still say the playlist's name later.
+    """
+    if not conversation_id:
+        return None
+    from core.session_manager import clear_pending_playlist_choice, get_pending_playlist_choice
+    import core.music_assistant as music_assistant
+
+    pending = get_pending_playlist_choice(conversation_id)
+    if not pending:
+        return None
+
+    norm_prompt = _normalize_for_match(prompt)
+    playlists = pending.get("playlists") or []
+    matches = []
+    for p in playlists:
+        norm_name = _normalize_for_match(p.get("name") or "")
+        if norm_name and (norm_name in norm_prompt or norm_prompt in norm_name):
+            matches.append(p)
+
+    if not matches:
+        return None
+    if len(matches) > 1:
+        names = [p.get("name") for p in matches]
+        return f"어느 플레이리스트요? ({', '.join(names)} 중 하나로 다시 말씀해 주세요.)"
+
+    chosen = matches[0]
+    entity_id = pending.get("entity_id")
+    entity_name = pending.get("entity_name") or entity_id
+    clear_pending_playlist_choice(conversation_id)
+
+    # music_assistant.play_media's REST call doesn't return until the real
+    # Cast handshake finishes -- confirmed live in beta.119 at ~5s, but a
+    # live beta.121 retest (right after the speaker had just been power-
+    # toggled off/on by an unrelated command) took over 12s to complete on
+    # the actual device even though the HTTP call reported failure at the
+    # 12s mark -- bumped to 20s here and in /api/device/control's card
+    # click handler to give a cold Cast reconnect enough headroom.
+    ok = ha_call_service_api(
+        "music_assistant", "play_media",
+        {"entity_id": entity_id, "media_id": chosen.get("uri"), "media_type": "playlist"},
+        timeout=20,
+    )
+    if not ok:
+        return f"'{chosen.get('name')}' 재생에 실패했습니다."
+    return f"🎵 {entity_name}에서 '{chosen.get('name')}' 재생을 시작합니다."
+
+
 def build_device_cards(entity_ids: list, states: list) -> list:
     """Shape the already-fetched HA state for each entity_id into a plain
     JSON "device card" descriptor for the chat UI's interactive control
@@ -1455,8 +1950,9 @@ def toggle_automation_intent(prompt: str, states: list) -> str:
 
     if len(matches) == 1:
         target = matches[0]
-        ha_call_service_api("automation", service, {"entity_id": target.get("entity_id")})
         name = target.get("attributes", {}).get("friendly_name") or target.get("entity_id")
+        if not ha_call_service_api("automation", service, {"entity_id": target.get("entity_id")}):
+            return f"자동화 '{name}' 제어에 실패했습니다."
         act_str = "켰습니다" if is_on else "껐습니다"
         return f"🤖 자동화 '{name}'{_particle(name, '을', '를')} {act_str}."
 
@@ -1465,6 +1961,52 @@ def toggle_automation_intent(prompt: str, states: list) -> str:
         return f"어느 자동화를 말씀하시는 걸까요? ({', '.join(names)} 중 하나로 다시 말씀해 주세요.)"
 
     return f"'{name_no_space}' 이름을 포함한 자동화를 찾지 못했습니다."
+
+
+def run_named_scene_macro(states: list, name_keywords: list, label: str) -> str:
+    """Run the first script./automation. entity whose friendly_name
+    contains any of `name_keywords` -- backs the "나갈게"/"잘 자"
+    outing-mode/sleep-mode shortcuts (see core.ha_engine.handle_agent_chat()'s
+    branch 0.6), ported from the HA-Assist conversation agent's old local
+    macro matching (custom_components/.../conversation.py's
+    _handle_special_macros). That version hardcoded this specific house's
+    own script.outing_mode/script.sub_sleep_mode entity_ids directly;
+    matching by name instead keeps this portable and consistent with how
+    the rest of this engine finds things (get_dynamic_rooms(),
+    run_script_or_scene_intent() below), rather than baking in a slug only
+    this one installation happens to have.
+
+    Falls back to turning off every light in the house when no matching
+    script/automation exists at all, on the theory that "외출"/"취침"
+    without a dedicated scene still obviously means "the room should go
+    dark" -- more honest than the old local sleep-mode macro, which
+    silently did nothing at all while still claiming success when its
+    hardcoded script was missing.
+    """
+    candidate = next(
+        (
+            s for s in states
+            if (s.get("entity_id", "").startswith("script.") or s.get("entity_id", "").startswith("automation."))
+            and any(k in (s.get("attributes", {}).get("friendly_name") or "") for k in name_keywords)
+        ),
+        None,
+    )
+    if candidate:
+        domain = candidate.get("entity_id", "").split(".")[0]
+        service = "turn_on" if domain == "script" else "trigger"
+        name = candidate.get("attributes", {}).get("friendly_name") or candidate.get("entity_id")
+        if not ha_call_service_api(domain, service, {"entity_id": candidate.get("entity_id")}):
+            return f"'{name}' 실행에 실패했습니다."
+        return f"▶️ '{name}'{_particle(name, '을', '를')} 실행했습니다."
+
+    on_lights = [
+        s.get("entity_id") for s in states
+        if s.get("entity_id", "").startswith("light.") and s.get("state") == "on"
+    ]
+    if on_lights:
+        ok = ha_call_service_api("light", "turn_off", {"entity_id": on_lights})
+        return f"등록된 {label} 시나리오는 없어서, 켜져 있던 조명 {len(on_lights)}개를 대신 껐습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+    return f"등록된 {label} 시나리오가 없고, 켜져 있는 조명도 없습니다."
 
 
 def run_script_or_scene_intent(prompt: str, states: list) -> str:
@@ -1488,9 +2030,10 @@ def run_script_or_scene_intent(prompt: str, states: list) -> str:
     if len(candidates) == 1:
         target = candidates[0]
         domain = target.get("entity_id", "").split(".")[0]
-        ha_call_service_api(domain, "turn_on", {"entity_id": target.get("entity_id")})
         name = target.get("attributes", {}).get("friendly_name") or target.get("entity_id")
         kind = "스크립트" if domain == "script" else "씬"
+        if not ha_call_service_api(domain, "turn_on", {"entity_id": target.get("entity_id")}):
+            return f"{kind} '{name}' 실행에 실패했습니다."
         return f"▶️ {kind} '{name}'{_particle(name, '을', '를')} 실행했습니다."
 
     if len(candidates) > 1:

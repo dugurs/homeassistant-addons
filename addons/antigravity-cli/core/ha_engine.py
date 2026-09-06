@@ -16,6 +16,9 @@ from core.ha_client import (
     ha_call_service_api,
     is_scheduled_controls_query,
     is_status_query,
+    resolve_pending_playlist_choice,
+    resolve_toggle_service,
+    run_named_scene_macro,
     run_script_or_scene_intent,
     toggle_automation_intent,
 )
@@ -45,8 +48,10 @@ from core.sensors import (
 )
 from core.session_manager import (
     clear_pending_confirmation,
+    clear_pending_playlist_choice,
     get_last_room_context,
     get_pending_confirmation,
+    get_pending_playlist_choice,
     set_last_control_targets,
     set_last_room_context,
 )
@@ -73,11 +78,30 @@ _METRIC_FOLLOWUP_WORDS = [
 # unrecognized light names, see CHANGELOG beta.86).
 _PERCENT_PATTERN = re.compile(r"\d{1,3}\s*(?:%|퍼센트|프로)")
 
+# A climate target-temperature command like "안방 에어컨 26도로 맞춰줘" carries
+# none of the 켜/꺼/... control verbs below either -- same reasoning as
+# _PERCENT_PATTERN above, mirrored in core.ha_client's _TEMPERATURE_RE.
+_TEMPERATURE_PATTERN = re.compile(r"\d{1,2}\s*도")
+
+# Outing/sleep-mode shortcut phrases ("나갈게", "잘 자") ported from the
+# antigravity_cli HA-Assist conversation agent's old local macro matching
+# (see custom_components/.../conversation.py's _handle_special_macros) --
+# that local matcher had zero room-scoping/hidden-device/dangerous-switch
+# safety and is being retired in favor of always delegating to this engine,
+# so these phrase shortcuts need to exist here or they'd simply stop
+# working. Deliberately excludes anything from _AFFIRMATIVE_WORDS/verb
+# keywords above so it can't misfire on an unrelated command.
+_OUTING_MODE_WORDS = ["나갈게", "외출할게", "외출모드", "외출", "나간다"]
+_SLEEP_MODE_WORDS = ["잘자", "취침모드", "수면모드", "자러갈게", "안녕히주무세요"]
+
 # Reply words for a pending dangerous-action confirmation (see
 # core.ha_client's turn_off gate on APPLIANCE_SWITCH_KEYWORDS and
 # core.session_manager.set_pending_confirmation()). Deliberately short,
 # unambiguous words only -- anything else is treated as an unrelated new
-# command rather than guessed at as a yes/no.
+# command rather than guessed at as a yes/no. Single-character words (어, 노, ...)
+# are matched by exact equality only, never as a prefix: as a prefix they're
+# common word-starts ("어디야?", "노래 틀어줘") and would silently execute or
+# cancel a pending dangerous action in response to an unrelated message.
 _AFFIRMATIVE_WORDS = ["네", "예", "응", "어", "그래", "맞아", "확인", "진행", "좋아", "오케이", "ok", "okay", "yes", "y"]
 _NEGATIVE_WORDS = ["아니", "아니요", "노", "취소", "그만", "안돼", "안 돼", "no", "n"]
 
@@ -106,21 +130,41 @@ def handle_agent_chat(
         pending = get_pending_confirmation(conversation_id)
         if pending:
             clear_pending_confirmation(conversation_id)
-            if any(w == no_space or no_space.startswith(w) for w in _AFFIRMATIVE_WORDS):
+            if any(w == no_space or (len(w) > 1 and no_space.startswith(w)) for w in _AFFIRMATIVE_WORDS):
                 targets = pending.get("targets", [])
                 captured = []
                 for t in targets:
                     data = {k: v for k, v in t.items() if k not in ("domain", "service")}
-                    ha_call_service_api(t["domain"], t["service"], data)
-                    captured.append((t["domain"], t["service"], data))
+                    svc = t["service"]
+                    if svc == "__toggle__":
+                        # A toggle's confirmation was deferred (see
+                        # resolve_control_scope()'s hidden-entity gate) --
+                        # resolve the real direction from the entity's state
+                        # NOW, not from whatever it was when first parsed.
+                        entity = next((s for s in states if s.get("entity_id") == t.get("entity_id")), None)
+                        svc = resolve_toggle_service(entity, t["domain"]) if entity else "turn_off"
+                    ha_call_service_api(t["domain"], svc, data)
+                    captured.append((t["domain"], svc, data))
                 if targets:
                     set_last_control_targets(conversation_id, [t.get("entity_id") for t in targets if t.get("entity_id")])
                     return f"✅ 확인했습니다 -- {describe_calls(captured, states, tense='past')}"
                 return "요청하신 작업을 실행했습니다."
-            if any(w == no_space or no_space.startswith(w) for w in _NEGATIVE_WORDS):
+            if any(w == no_space or (len(w) > 1 and no_space.startswith(w)) for w in _NEGATIVE_WORDS):
                 names = pending.get("names", [])
                 return f"취소했습니다. {', '.join(names)} 그대로 두겠습니다." if names else "취소했습니다."
             # not a yes/no -- fall through and process this as a new command
+
+    # 0.4 Reply to a pending playlist-pick-list ("OO에 음악 틀어줘" -> a list
+    # of recent playlists was just offered, by name, in this turn's text --
+    # see core.ha_client._h_media()'s wants_playlist_picker branch). Checked
+    # early, like the pending-confirmation reply above, so a name like
+    # "Favorite Songs" (which names no room/device keyword at all) doesn't
+    # fall through every branch below and land on the generic
+    # "파악하지 못했습니다" fallback the way it did before this existed.
+    if conversation_id:
+        playlist_reply = resolve_pending_playlist_choice(clean_prompt, conversation_id)
+        if playlist_reply:
+            return playlist_reply
 
     # 0.5 Scheduled (delayed) command list/count query ("예약 실행 목록
     # 보여줘", "예약 몇 개야?"). Checked before the control-verb branch below
@@ -128,6 +172,20 @@ def handle_agent_chat(
     # otherwise treat as a bare control command with nothing recognized.
     if is_scheduled_controls_query(clean_prompt, no_space):
         return get_scheduled_controls_answer()
+
+    # 0.6 Outing / sleep mode shortcuts ("나갈게", "잘 자") -- ported from the
+    # HA-Assist conversation agent's old local macro matching (see
+    # core.ha_client.run_named_scene_macro()'s docstring). Neither phrase
+    # carries any of branch 1's control-verb keywords, so this has to be
+    # its own early branch or these commands would just fall through to
+    # the room-query/weather/etc. checks below and land on the unrelated
+    # "Fallback" clarifying question.
+    if any(w in no_space for w in _OUTING_MODE_WORDS):
+        if states:
+            return run_named_scene_macro(states, ["외출"], "외출 모드")
+    if any(w in no_space for w in _SLEEP_MODE_WORDS):
+        if states:
+            return run_named_scene_macro(states, ["취침", "수면"], "취침 모드")
 
     # 1. Status Question vs. Direct Device / Automation / Script Control
     #
@@ -141,7 +199,11 @@ def handle_agent_chat(
         status_result = get_device_status_answer(clean_prompt, states)
         if status_result:
             return status_result
-    elif any(ctrl in no_space for ctrl in ["켜", "꺼", "틀어", "시작", "정지", "중지", "멈춰", "일시정지", "닫아", "열어", "작동", "돌려", "실행", "재생"]) or _PERCENT_PATTERN.search(no_space):
+    elif (
+        any(ctrl in no_space for ctrl in ["켜", "꺼", "틀어", "시작", "정지", "중지", "멈춰", "일시정지", "닫아", "열어", "작동", "돌려", "실행", "재생", "토글", "반전"])
+        or _PERCENT_PATTERN.search(no_space)
+        or _TEMPERATURE_PATTERN.search(no_space)
+    ):
         # Automation/script intents are tried BEFORE device control. Both only
         # ever engage on their own explicit trigger words ("자동화"/"오토메이션",
         # "실행"/"돌려"/...), so trying them first is safe -- but device control

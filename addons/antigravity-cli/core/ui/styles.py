@@ -1029,6 +1029,26 @@ CSS_STYLES = """
       color: var(--text-main);
       cursor: pointer;
     }
+    /* Curtain/blind (cover domain) control row -- 열기/멈춤/닫기 buttons
+       instead of the generic on/off toggle switch (see coverControlButtonsHTML()
+       in core/ui/scripts.py): a cover has no single "on" state, and a plain
+       toggle gives no way to stop it mid-motion. */
+    .cover-control-buttons {
+      display: flex;
+      gap: 6px;
+    }
+    .cover-control-buttons button {
+      flex: 1;
+      background: var(--bg-card-hover);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-main);
+      font-size: 0.8rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .cover-control-buttons button:hover { border-color: var(--accent-blue); }
 
     /* media_player "now playing" widget -- see nowPlayingHTML() in
        core/ui/scripts.py. Only rendered once something is actually

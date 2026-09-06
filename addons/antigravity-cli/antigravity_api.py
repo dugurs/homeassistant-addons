@@ -656,8 +656,11 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     # reported failure even on a call that then started
                     # playback anyway a moment later. This is this one
                     # click's own request, not the natural-language hot
-                    # path, so a longer wait here is free.
-                    call_timeout = 12 if domain == "music_assistant" else 3
+                    # path, so a longer wait here is free. Bumped 12->20s
+                    # after a live retest (right after the speaker had just
+                    # been power-toggled) took over 12s to complete on the
+                    # actual device despite the HTTP call itself timing out.
+                    call_timeout = 20 if domain == "music_assistant" else 3
                     ok = ha_call_service_api(domain, service, {**data, "entity_id": entity_id}, timeout=call_timeout)
                     self._set_headers(200)
                     self.wfile.write(json.dumps({"success": ok}, ensure_ascii=False).encode("utf-8"))

@@ -22,6 +22,7 @@ import datetime
 import json
 import os
 import re
+import tempfile
 import threading
 import uuid
 
@@ -439,6 +440,63 @@ def clear_pending_confirmation(conversation_id: str):
         pass
 
 
+def _pending_playlist_choice_path(conversation_id: str) -> str:
+    """Path to a conversation's pending-playlist-choice marker (see
+    set_pending_playlist_choice)."""
+    return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "pending_playlist_choice.json")
+
+
+def set_pending_playlist_choice(conversation_id: str, data: dict):
+    """Remember a "OO에 음악 틀어줘" playlist pick-list (see
+    core.ha_client._h_media()) that was just offered as text (and, on the
+    web UI, as a clickable card) so a follow-up turn naming one of those
+    playlists by name can play it directly -- see
+    get_pending_playlist_choice()/clear_pending_playlist_choice() and
+    handle_agent_chat()'s pending-playlist-choice check. `data` carries
+    {"entity_id": <music_assistant player to play on>, "entity_name": ...,
+    "playlists": [{"uri", "name", "image"}, ...]} -- the same shape already
+    sent to the frontend as the playlist_card SSE event's data.
+    """
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return
+    path = _pending_playlist_choice_path(conversation_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def get_pending_playlist_choice(conversation_id: str) -> dict | None:
+    """The playlist pick-list awaiting a name in this conversation, if any."""
+    if not conversation_id:
+        return None
+    path = _pending_playlist_choice_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) and data else None
+    except Exception:
+        pass
+    return None
+
+
+def clear_pending_playlist_choice(conversation_id: str):
+    """Clear a conversation's pending-playlist-choice marker -- once a
+    playlist was matched and played, or superseded by an unrelated new
+    command (see handle_agent_chat())."""
+    if not conversation_id:
+        return
+    path = _pending_playlist_choice_path(conversation_id)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def rewind_session(conversation_id: str, step_index: int) -> bool:
     """Truncate a conversation's canonical transcript to discard the
     USER_INPUT step at `step_index` and everything after it -- i.e. roll the
@@ -509,9 +567,26 @@ def rewind_session(conversation_id: str, step_index: int) -> bool:
                 break
         if cutoff is None:
             return False  # no line carries this step_index -- nothing to rewind to
+        # Written to a temp file and swapped in via os.replace() (atomic on
+        # both POSIX and Windows) rather than truncated in place -- agy's
+        # OWN native transcript writer for this file (see docstring above)
+        # is a separate OS process _TRANSCRIPT_LOCK has no effect on, so an
+        # append landing mid-rewrite could otherwise interleave with our
+        # truncate+write and leave the file corrupted (not just missing that
+        # one line). An atomic replace can still silently drop an append
+        # that races us, but the file itself is never left half-written.
         try:
-            with open(fpath, "w", encoding="utf-8") as f:
-                f.writelines(lines[:cutoff])
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(fpath) or ".", prefix=".rewind_tmp_")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.writelines(lines[:cutoff])
+                os.replace(tmp_path, fpath)
+            except Exception:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception:
             return False
     mark_rewound(conversation_id)

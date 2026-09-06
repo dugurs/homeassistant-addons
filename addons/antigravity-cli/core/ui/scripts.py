@@ -542,18 +542,43 @@ function showToast(text) {
       // toggle showed OFF for a media_player card no matter what it was
       // actually doing, confirmed live right after this card started
       // supporting speakers.
+      //
+      // Never called for cover (curtain/blind) cards -- see
+      // coverControlButtonsHTML() below for why a plain on/off toggle
+      // doesn't fit a device with no single "on" state and no way to stop
+      // it mid-motion.
       const isOn = card.domain === 'media_player'
         ? !['off', 'unavailable', 'unknown'].includes(card.state)
-        : (card.state === 'on' || card.state === 'open');
-      const onService = card.domain === 'cover' ? 'open_cover' : 'turn_on';
-      const offService = card.domain === 'cover' ? 'close_cover' : 'turn_off';
+        : card.state === 'on';
       const eid = jsAttrEscape(card.entity_id);
       const dm = jsAttrEscape(card.domain);
       return `
         <label class="toggle-switch">
-          <input type="checkbox" ${isOn ? 'checked' : ''} onchange="handleDeviceToggle(this, '${eid}', '${dm}', '${onService}', '${offService}')">
+          <input type="checkbox" ${isOn ? 'checked' : ''} onchange="handleDeviceToggle(this, '${eid}', '${dm}', 'turn_on', 'turn_off')">
           <span class="toggle-slider"></span>
         </label>`;
+    }
+
+    // Curtain/blind (cover domain) control row -- open/stop/close buttons
+    // instead of deviceCardToggleHTML()'s generic on/off switch. A cover
+    // has no single "on" state (open/closed/opening/closing) and, unlike a
+    // light or switch, a real mid-motion stop is a distinct, meaningful
+    // action (see core/ha_client.py's is_stop handling for the same
+    // "정지"/"중지" verb applying differently to covers than everywhere
+    // else) that a binary toggle simply has no way to express.
+    async function handleCoverButton(entityId, service) {
+      await postDeviceControl(entityId, 'cover', service, {});
+      setTimeout(function () { refreshDeviceCard(entityId); }, 400);
+    }
+
+    function coverControlButtonsHTML(card) {
+      const eid = jsAttrEscape(card.entity_id);
+      return `
+        <div class="cover-control-buttons">
+          <button type="button" onclick="handleCoverButton('${eid}', 'open_cover')">열기</button>
+          <button type="button" onclick="handleCoverButton('${eid}', 'stop_cover')">멈춤</button>
+          <button type="button" onclick="handleCoverButton('${eid}', 'close_cover')">닫기</button>
+        </div>`;
     }
 
     function handleDeviceSelect(select, entityId, domain, service, dataKey) {
@@ -702,6 +727,7 @@ function showToast(text) {
             card.min_temp || 16, card.max_temp || 30, card.target_temperature, '℃'));
         }
       } else if (card.domain === 'cover') {
+        rows.push(coverControlButtonsHTML(card));
         if (typeof card.current_position === 'number') {
           rows.push(deviceCardRowSlider(card.entity_id, 'cover', 'set_cover_position', 'position', '위치', 0, 100, card.current_position, '%'));
         }
@@ -718,7 +744,7 @@ function showToast(text) {
         <div class="device-card" data-entity-id="${jsAttrEscape(card.entity_id)}">
           <div class="device-card-header">
             <span class="device-card-name">${card.name}</span>
-            ${deviceCardToggleHTML(card)}
+            ${card.domain === 'cover' ? '' : deviceCardToggleHTML(card)}
           </div>
           ${rows.length ? `<div class="device-card-body">${rows.join('')}</div>` : ''}
         </div>`;
