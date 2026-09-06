@@ -642,20 +642,54 @@ function showToast(text) {
       setTimeout(function () { refreshDeviceCard(entityId); }, 500);
     }
 
+    // HA only updates a media_player's media_position attribute on discrete
+    // events (track start/seek/pause/resume), never continuously while
+    // playing -- confirmed live: polling this card every 3s alone still
+    // showed a frozen bar, since the underlying attribute itself doesn't
+    // change between those events either. The position is only accurate as
+    // of media_position_updated_at, so tickMediaProgress() below advances
+    // it client-side once a second using elapsed real time, independent of
+    // the slower full-card poll (which still runs to catch externally
+    // triggered changes -- a track skip from another device, etc.).
     function mediaProgressBarHTML(card) {
       const eid = jsAttrEscape(card.entity_id);
       const dur = card.media_duration;
-      const pos = Math.min(card.media_position, dur);
+      const basePos = Math.min(card.media_position, dur);
+      const isPlaying = card.state === 'playing';
+      const updatedAtMs = card.media_position_updated_at ? Date.parse(card.media_position_updated_at) : NaN;
+      const pos = (isPlaying && !isNaN(updatedAtMs))
+        ? Math.min(dur, basePos + Math.max(0, (Date.now() - updatedAtMs) / 1000))
+        : basePos;
       const safeId = 'mp_' + card.entity_id.replace(/[^a-zA-Z0-9]/g, '_') + '_pos';
       return `
         <input type="range" class="media-progress-slider" min="0" max="${dur}" value="${pos}" id="${safeId}"
-          oninput="document.getElementById('${safeId}_val').textContent = formatMediaSeconds(this.value)"
-          onchange="handleMediaButton('${eid}', 'media_seek', { seek_position: Number(this.value) })">
+          data-duration="${dur}" data-base-position="${basePos}"
+          data-updated-at="${isNaN(updatedAtMs) ? '' : updatedAtMs}" data-playing="${isPlaying ? '1' : '0'}"
+          oninput="this.dataset.seeking = '1'; document.getElementById('${safeId}_val').textContent = formatMediaSeconds(this.value)"
+          onchange="this.dataset.seeking = ''; handleMediaButton('${eid}', 'media_seek', { seek_position: Number(this.value) })">
         <div class="media-now-playing-time">
           <span id="${safeId}_val">${formatMediaSeconds(pos)}</span>
           <span>${formatMediaSeconds(dur)}</span>
         </div>`;
     }
+
+    // Ticks every visible playing media card's progress bar forward once a
+    // second without a server round-trip -- see mediaProgressBarHTML()'s
+    // comment above for why HA's own media_position doesn't do this on its
+    // own. Skips a slider mid-drag (data-seeking) so it doesn't fight the
+    // user's own scrubbing.
+    setInterval(function () {
+      document.querySelectorAll('.media-progress-slider[data-playing="1"]').forEach(function (el) {
+        if (el.dataset.seeking === '1') return;
+        const updatedAt = Number(el.dataset.updatedAt);
+        if (!updatedAt) return;
+        const dur = Number(el.dataset.duration);
+        const pos = Math.min(dur, Number(el.dataset.basePosition) + Math.max(0, (Date.now() - updatedAt) / 1000));
+        el.value = pos;
+        const valEl = document.getElementById(el.id + '_val');
+        if (valEl) valEl.textContent = formatMediaSeconds(pos);
+      });
+    }, 1000);
 
     // "Now playing" widget -- title/artist/cover/progress/prev-next/
     // play-pause. Only rendered when build_device_cards() actually reports

@@ -424,6 +424,14 @@ ALLOWED_CARD_SERVICES = {
 _MEDIA_PAUSE_WORDS = ["중지", "정지", "멈춰", "일시정지"]
 _MEDIA_RESUME_WORDS = ["재생"]
 
+# "다음"/"이전" alone are far too generic to gate on globally (see is_on/
+# is_off etc. above), so these are only ever consulted once media_trigger
+# is already "스피커" (an explicit 스피커/음악/노래/볼륨 word matched, or a
+# bare follow-up reusing the last-controlled media_player target) -- see
+# _h_media() and the bare follow-up fallback below.
+_MEDIA_NEXT_WORDS = ["다음곡", "다음 곡", "다음곡으로", "다음 트랙", "다음"]
+_MEDIA_PREV_WORDS = ["이전곡", "이전 곡", "이전곡으로", "이전 트랙", "이전"]
+
 # Relative volume step (percentage points) for "소리 줄여"/"볼륨 높여" style
 # commands that name no explicit number -- see _h_media()'s volume branch.
 # "볼률" is a common fat-finger typo of "볼륨" kept as its own literal, same
@@ -675,6 +683,8 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
     # instead of power-cycling the speaker.
     wants_media_pause = any(k in clean for k in _MEDIA_PAUSE_WORDS)
     wants_media_resume = any(k in clean for k in _MEDIA_RESUME_WORDS)
+    wants_media_next = any(k in clean for k in _MEDIA_NEXT_WORDS)
+    wants_media_prev = any(k in clean for k in _MEDIA_PREV_WORDS)
     # Only ever consulted inside _h_curtain() below, deliberately -- "정지"/
     # "중지" are already generic is_off synonyms for every other domain
     # (a light/fan legitimately has no "stop mid-motion" concept the way a
@@ -1249,6 +1259,10 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 service = "media_pause"
             elif media_trigger == "스피커" and wants_media_resume:
                 service = "media_play"
+            elif media_trigger == "스피커" and wants_media_next:
+                service = "media_next_track"
+            elif media_trigger == "스피커" and wants_media_prev:
+                service = "media_previous_track"
             elif wants_toggle:
                 # Placeholder for resolve_control_scope()'s bookkeeping only --
                 # the real per-target service is decided in the toggle loop
@@ -1359,6 +1373,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 act_str = {
                     "turn_on": "켰습니다", "turn_off": "껐습니다",
                     "media_pause": "일시정지했습니다", "media_play": "재생했습니다",
+                    "media_next_track": "다음 곡으로 넘겼습니다", "media_previous_track": "이전 곡으로 돌아갔습니다",
                 }[service]
                 names = [t.get("attributes", {}).get("friendly_name") or t.get("entity_id") for t in targets]
                 obj_p = _particle(names[-1], "을", "를") if names else "를"
@@ -1434,7 +1449,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     names = [s.get("attributes", {}).get("friendly_name") or s.get("entity_id") for s in applied]
                     return f"↩️ (이어서) {', '.join(names)}{_particle(names[-1], '을', '를')} {percentage}%로 설정했습니다."
 
-    if conversation_id and (is_on or is_off or is_open or is_close or wants_media_pause or wants_media_resume):
+    if conversation_id and (is_on or is_off or is_open or is_close or wants_media_pause or wants_media_resume or wants_media_next or wants_media_prev):
         from core.session_manager import get_last_control_targets, set_last_control_targets
 
         last_ids = get_last_control_targets(conversation_id)
@@ -1447,14 +1462,20 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                 if not s:
                     continue
                 domain = eid.split(".", 1)[0]
-                # media_player-only pause/resume override -- see
-                # _MEDIA_PAUSE_WORDS/_MEDIA_RESUME_WORDS above; every other
-                # domain (light/fan/cover/...) is unaffected by these words
-                # beyond "정지"/"중지" already being generic is_off synonyms.
+                # media_player-only pause/resume/next/prev override -- see
+                # _MEDIA_PAUSE_WORDS/_MEDIA_RESUME_WORDS/_MEDIA_NEXT_WORDS/
+                # _MEDIA_PREV_WORDS above; every other domain (light/fan/
+                # cover/...) is unaffected by these words beyond "정지"/
+                # "중지" already being generic is_off synonyms (다음/이전
+                # match nothing else at all outside a media_player target).
                 if domain == "media_player" and wants_media_pause:
                     service = "media_pause"
                 elif domain == "media_player" and wants_media_resume:
                     service = "media_play"
+                elif domain == "media_player" and wants_media_next:
+                    service = "media_next_track"
+                elif domain == "media_player" and wants_media_prev:
+                    service = "media_previous_track"
                 else:
                     service = _service_for_action(domain, is_on, is_off, is_open, is_close)
                 if not service:
@@ -1489,6 +1510,7 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
                     "open_cover": "열었습니다", "close_cover": "닫았습니다",
                     "turn_on": "켰습니다", "turn_off": "껐습니다",
                     "media_pause": "일시정지했습니다", "media_play": "재생했습니다",
+                    "media_next_track": "다음 곡으로 넘겼습니다", "media_previous_track": "이전 곡으로 돌아갔습니다",
                 }[applied_service]
                 return f"↩️ (이어서) {', '.join(names)}{_particle(names[-1], '을', '를')} {act_str}."
 
@@ -1933,30 +1955,48 @@ def build_device_cards(entity_ids: list, states: list) -> list:
                     card["media_image"] = attrs["entity_picture"]
                 duration = attrs.get("media_duration")
                 position = attrs.get("media_position")
-                if duration is None or position is None:
+                # HA only updates media_position on discrete events (track
+                # start/seek/pause), NOT continuously while playing -- a
+                # media_player's own reported position is only accurate as
+                # of media_position_updated_at, and the frontend is expected
+                # to interpolate from there for a smoothly-advancing bar
+                # (confirmed live: polling this card every 3s alone showed a
+                # frozen progress bar, since the underlying attribute itself
+                # doesn't change between those discrete events either).
+                position_updated_at = attrs.get("media_position_updated_at")
+                if duration is None:
                     # A native Cast-integration entity generically mirrors
                     # media_title/artist/position of whatever's casting to
                     # it, but NOT media_duration -- confirmed live (Music
                     # Assistant playing through it: media_title/position
                     # present, media_duration simply absent from that
-                    # entity's attributes). The Music-Assistant-owned
-                    # sibling (see ha_registry.find_music_assistant_sibling())
-                    # is the one that actually knows the track length, so
-                    # pull whichever of the two is missing from there when
-                    # one exists -- this is what makes the progress bar
-                    # show up at all for an MA-managed speaker's own card.
+                    # entity's attributes). Worse (also confirmed live, via
+                    # a Music-Assistant "flow"/continuous-radio stream): the
+                    # Cast entity's own media_position is the position
+                    # *within that whole continuous stream*, not within the
+                    # current track -- so pairing THIS entity's position
+                    # with the Music-Assistant sibling's duration produced
+                    # position > duration nonsense (a bare `min(pos, dur)`
+                    # then clamped the progress bar to permanently look
+                    # finished). The sibling (see
+                    # ha_registry.find_music_assistant_sibling()) is the one
+                    # that actually knows the current track's length AND its
+                    # own matching position/timestamp, so once duration is
+                    # missing, take all three from it together as one unit
+                    # -- never mix a duration from one entity with a
+                    # position from another.
                     import core.ha_registry as ha_registry
                     sibling_id = ha_registry.find_music_assistant_sibling(eid)
                     sibling = by_id.get(sibling_id) if sibling_id else None
                     if sibling:
                         s_attrs = sibling.get("attributes", {})
-                        if duration is None:
-                            duration = s_attrs.get("media_duration")
-                        if position is None:
-                            position = s_attrs.get("media_position")
+                        duration = s_attrs.get("media_duration")
+                        position = s_attrs.get("media_position")
+                        position_updated_at = s_attrs.get("media_position_updated_at")
                 if duration is not None and position is not None:
                     card["media_duration"] = duration
                     card["media_position"] = position
+                    card["media_position_updated_at"] = position_updated_at
 
         cards.append(card)
     return cards
