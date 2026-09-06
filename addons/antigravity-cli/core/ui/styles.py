@@ -2409,7 +2409,10 @@ CSS_STYLES = """
       resize: none;
       outline: none;
       min-height: 26px;
-      max-height: 120px;
+      /* No max-height here -- autoResizeTextarea() in core/ui/scripts.py
+         now sets an explicit inline height capped at 40% of the window
+         instead (a fixed 120px here was silently overriding that JS cap
+         at ~5 lines regardless of window size). */
       line-height: 1.5;
       padding: 2px 4px;
     }

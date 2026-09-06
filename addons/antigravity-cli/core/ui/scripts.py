@@ -3212,12 +3212,21 @@ function showToast(text) {
       const el = document.getElementById('user-input');
       if (!el) return;
       el.style.height = 'auto';
-      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 21;
-      const maxHeight = Math.round(lineHeight * 3);
+      // No fixed line-count cap -- now that Enter inserts a newline instead
+      // of sending (see handleKey()), a hard 3-line box made any longer
+      // message an awkward tiny scrolling window. Grows with content up to
+      // a fraction of the actual window height instead, so it scales with
+      // whatever screen the user has, while still leaving room above for
+      // the message history and the composer toolbar below.
+      const maxHeight = Math.round(window.innerHeight * 0.4);
       const next = Math.min(el.scrollHeight, maxHeight);
       el.style.height = next + 'px';
       el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
     }
+    // The cap above is viewport-relative -- re-apply it if the window
+    // itself is resized (e.g. rotating a phone, resizing a desktop
+    // window) while the textarea is already expanded, not just on input.
+    window.addEventListener('resize', autoResizeTextarea);
 
     // File attachments -- Mode 3 (CLI 추론 모드) only. agy's own `view_file`
     // tool reads and visually understands an image given just its absolute
@@ -3524,11 +3533,15 @@ function showToast(text) {
           return;
         }
       }
-      updateSendBtn();
-      if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter alone always inserts a newline (the textarea's own default
+      // behavior -- nothing to intercept for that); sending otherwise only
+      // happens via the send button, except this one explicit shortcut.
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         sendMessage();
+        return;
       }
+      updateSendBtn();
     }
 
     // Self-implemented /codesearch (see core/codesearch.py) -- a plain

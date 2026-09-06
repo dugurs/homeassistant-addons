@@ -39,7 +39,7 @@ HTML_BODY = f"""
       <button class="icon-btn-lg" id="sidebar-toggle-btn" onclick="toggleSessionSidebar()" title="대화 목록 사이드바 열기/닫기"><span class="icon">{ICON_MENU}</span></button>
       <div class="brand-name">
         <span class="brand-emoji">🤖</span>
-        <span>Antigravity AI</span>
+        <span>Antigravity CLI</span>
         <span class="brand-badge" id="build-badge" title="배포 빌드 번호 (업데이트 반영 확인용): {UI_BUILD_VERSION}">{_UI_VERSION_SHORT}</span>
       </div>
     </div>
@@ -84,7 +84,7 @@ HTML_BODY = f"""
         <h4>단축키</h4>
         <ul>
           <li><span class="mono">Ctrl+K</span> — 새 대화 시작</li>
-          <li><span class="mono">Enter</span> — 전송, <span class="mono">Shift+Enter</span> — 줄바꿈</li>
+          <li><span class="mono">Enter</span> — 줄바꿈, <span class="mono">Ctrl+Enter</span> 또는 <strong>전송 버튼</strong> — 전송</li>
           <li><span class="mono">/codesearch &lt;검색어&gt;</span> — 워크스페이스 코드 검색(agy 연동 없는 자체 grep)</li>
         </ul>
       </div>
