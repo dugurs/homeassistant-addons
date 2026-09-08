@@ -324,6 +324,18 @@ fi
 WRAPPER_EOF
 chmod +x /usr/local/bin/agy
 
+# Self-update the CLI on every boot. The real binary at /root/.local/bin/agy
+# only reflects whatever was "latest" the last time the Dockerfile's `curl
+# install.sh` layer actually re-ran -- Docker reuses that cached layer on
+# every subsequent addon rebuild since the RUN command's own text never
+# changes, so without this the container can silently run a version many
+# releases behind indefinitely (confirmed live: this is exactly how a
+# rebuilt image was still on 1.1.22 while upstream was already on 1.1.27,
+# missing the `remote-control` subcommand entirely as a result). Best-effort
+# -- a network hiccup here should delay startup, not block it.
+echo "[INFO] Antigravity CLI 자체 업데이트 확인 중..."
+agy update || echo "[WARN] agy update 확인 실패 (네트워크 문제일 수 있음, 기존 버전으로 계속 진행)"
+
 # Pre-warm uvx cache for ha-mcp BEFORE starting agy (with timeout guard)
 # Runs uvx in background + kills after 45s to avoid hanging run.sh
 echo "[INFO] ha-mcp 캐시 사전 준비 중 (최대 45초)..."

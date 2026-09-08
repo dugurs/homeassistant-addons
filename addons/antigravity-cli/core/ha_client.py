@@ -155,7 +155,45 @@ def _has_whole_house_keyword(prompt: str, clean: str) -> bool:
     return bool(re.search(r"(?<![가-힣])다(?![가-힣])", prompt))
 
 
-_GENERIC_DEVICE_WORDS = {"등", "불", "조명", "전등"}
+_GENERIC_DEVICE_WORDS = {"등", "불", "조명", "전등", "라이트", "램프"}
+
+
+def _strip_generic_words(text: str) -> str:
+    """Remove every generic device-type word from text, leaving only
+    whatever actually distinguishes one device from another of the same
+    type. Needed because a device's OWN registered suffix word doesn't
+    have to be the same generic word the user says: a real house had "안방
+    스텐드 램프" (registered with "램프") right next to a plain "안방 등" --
+    a user saying "안방 스텐드 등 켜줘" (using "등" as their own generic word
+    for "light", regardless of what any specific fixture is actually
+    suffixed with) used to have the qualifier check below require the
+    WHOLE remainder "스텐드램프" to appear verbatim in the prompt, which it
+    never would since the prompt said "등", not "램프" -- silently falling
+    through to "no qualifier given" and picking the wrong, bare "안방등"
+    light. Stripping the generic suffix down to the bare qualifier
+    ("스텐드") before comparing fixes that, independent of which generic
+    word either side happens to use.
+    """
+    for g in _GENERIC_DEVICE_WORDS:
+        text = text.replace(g, "")
+    return text
+
+# ㅐ/ㅔ are near-homophones Korean speakers routinely type interchangeably
+# ("스탠드" as "스텐드" being the case that actually surfaced this: a user
+# saying "안방 스텐드 등 켜줘" against an entity literally named "안방 스탠드
+# 등" got the exact-substring qualifier check below to miss, falling through
+# to the "no qualifier given" branch and turning on the wrong (generic
+# "안방등") light instead). Normalizing both sides through this map before
+# the substring check keeps that check exact everywhere else.
+_QUALIFIER_SPELLING_VARIANTS = {
+    "스텐드": "스탠드",
+}
+
+
+def _normalize_qualifier_spelling(text: str) -> str:
+    for variant, canonical in _QUALIFIER_SPELLING_VARIANTS.items():
+        text = text.replace(variant, canonical)
+    return text
 
 
 def _remainder_after_room(friendly_name: str, room: str) -> str:
@@ -184,7 +222,12 @@ def _narrow_multi_device_targets(clean: str, matched_room: str, room_targets: li
         for c in room_targets
     ]
 
-    specific = [(c, r) for c, r in remainders if r and r not in _GENERIC_DEVICE_WORDS and r in clean]
+    normalized_clean = _normalize_qualifier_spelling(clean)
+    specific = []
+    for c, r in remainders:
+        core = _normalize_qualifier_spelling(_strip_generic_words(r))
+        if core and core in normalized_clean:
+            specific.append((c, r))
     if len(specific) == 1:
         return [specific[0][0]]
     if len(specific) > 1:
@@ -563,6 +606,62 @@ def get_device_status_answer(prompt: str, states: list) -> str:
 
 _PERCENT_RE = re.compile(r"(\d{1,3})\s*(?:%|퍼센트|프로)")
 
+# Trigger keywords for the three device types below that accept a bare
+# percent number (curtain position / fan speed / light brightness), indexed
+# so _percent_for_group() can tell "this handler's own keyword" apart from
+# "some OTHER device's keyword" in the same sentence.
+_DEVICE_KEYWORD_GROUPS = [
+    ["커튼", "블라인드", "창문"],
+    ["팬", "선풍기", "환풍기", "실링팬"],
+    ["불", "조명", "전등", "등", "라이트", "램프"],
+]
+
+
+def _percent_for_group(clean: str, group_index: int):
+    """Percent number belonging to this handler's own device mention, not
+    just the first number anywhere in the sentence.
+
+    A combined command naming two devices of different types each with
+    their own percent ("스탠드등30%선풍기20%") used to have every matching
+    handler call a bare `_PERCENT_RE.search(clean)` on the whole sentence --
+    which always returns the FIRST number regardless of which device it was
+    actually written next to, so both the light and the fan ended up set to
+    30%.
+
+    Fixed by attributing each percent number to whichever device keyword
+    (of ANY type) most closely PRECEDES it in reading order -- "선풍기20%"
+    reads as "fan, 20%", so 20% belongs to the fan keyword right before it,
+    not to a light keyword earlier in the sentence. A percent with no
+    keyword before it at all (e.g. a lone "20%선풍기") falls back to the
+    nearest keyword AFTER it instead, so a single-device command still works
+    regardless of word order. Only returns a match when the number's owning
+    keyword turns out to belong to THIS handler's own group.
+    """
+    own_group = _DEVICE_KEYWORD_GROUPS[group_index]
+    if not any(k in clean for k in own_group):
+        return None
+
+    occurrences = sorted(
+        (idx, gi)
+        for gi, group in enumerate(_DEVICE_KEYWORD_GROUPS)
+        for k in group
+        for idx in [clean.find(k)]
+        if idx != -1
+    )
+
+    for match in _PERCENT_RE.finditer(clean):
+        preceding = [pos_gi for pos_gi in occurrences if pos_gi[0] <= match.start()]
+        if preceding:
+            owner_group = preceding[-1][1]
+        else:
+            following = [pos_gi for pos_gi in occurrences if pos_gi[0] >= match.start()]
+            if not following:
+                continue
+            owner_group = following[0][1]
+        if owner_group == group_index:
+            return match
+    return None
+
 # "26도로 맞춰줘"/"18도로 설정해줘" -- a target climate temperature named
 # directly, distinct from an on/off command. 1-2 digits since HA climate
 # entities' realistic min/max temp range never reaches 3 digits Celsius.
@@ -715,13 +814,13 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
 
     def _h_curtain():
         # 1. Curtains / Covers
-        if any(w in clean for w in ["커튼", "블라인드", "창문"]):
+        if any(w in clean for w in _DEVICE_KEYWORD_GROUPS[0]):
             # A number-of-percent target ("10퍼센트 열어"/"20% 열어") wins over
             # a bare open/close/stop word, same as fan speed/light brightness
             # above -- HA's own 0(closed)-100(open) cover position already
             # fully encodes the intent, so "열어"/"닫아" alongside a number is
             # redundant, not conflicting, with the requested position.
-            percent_match = _PERCENT_RE.search(clean)
+            percent_match = _percent_for_group(clean, 0)
             if percent_match:
                 percentage = max(0, min(100, int(percent_match.group(1))))
                 candidates = [s for s in states if s.get("entity_id", "").startswith("cover.")]
@@ -778,8 +877,8 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
 
     def _h_fan():
         # 2. Fans / Ventilators
-        if any(w in clean for w in ["팬", "선풍기", "환풍기", "실링팬"]):
-            percent_match = _PERCENT_RE.search(clean)
+        if any(w in clean for w in _DEVICE_KEYWORD_GROUPS[1]):
+            percent_match = _percent_for_group(clean, 1)
             if percent_match:
                 percentage = max(0, min(100, int(percent_match.group(1))))
                 candidates = [s for s in states if s.get("entity_id", "").startswith("fan.")]
@@ -871,8 +970,8 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         # command was recognized at all, and the prompt fell all the way through
         # handle_agent_chat() to the unrelated "Fallback" comprehensive home
         # summary (core/ha_engine.py) instead of turning anything on/off.
-        if any(w in clean for w in ["불", "조명", "전등", "등", "라이트", "램프"]):
-            percent_match = _PERCENT_RE.search(clean)
+        if any(w in clean for w in _DEVICE_KEYWORD_GROUPS[2]):
+            percent_match = _percent_for_group(clean, 2)
             if percent_match:
                 # Brightness percentage, not on/off -- same "no 켜/꺼 verb, so the
                 # command never got recognized at all" gap fixed for fan speed

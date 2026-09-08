@@ -200,7 +200,44 @@ function showToast(text) {
       if (popover && popover.classList.contains('open') && !popover.contains(e.target)) {
         closeSkillInfoPopover();
       }
+      const rcPopover = document.getElementById('remote-control-info-popover');
+      if (rcPopover && rcPopover.classList.contains('open') && !rcPopover.contains(e.target) && !e.target.closest('.remote-control-info-btn')) {
+        rcPopover.classList.remove('open');
+      }
     });
+
+    // Remote-control (i) button -- same on-demand .info-popover mechanism as
+    // toggleSkillInfo() above, just with a fixed instructions string instead
+    // of per-skill data.
+    const REMOTE_CONTROL_INFO_TEXT =
+      '웹에서 원격 접속하는 방법:\\n\\n' +
+      '1. 외부 PC나 스마트폰 브라우저에서 antigravity.google.com에 접속합니다.\\n' +
+      '2. 이 애드온에 로그인한 것과 동일한 구글 계정으로 로그인합니다.\\n' +
+      '3. 목록에서 이 인스턴스를 선택하면, 터미널이 닫혀 있어도 웹에서 언제든지 실시간으로 에이전트와 대화하고 작업을 지시할 수 있습니다.';
+
+    function toggleRemoteControlInfo(btn) {
+      let popover = document.getElementById('remote-control-info-popover');
+      if (!popover) {
+        popover = document.createElement('div');
+        popover.id = 'remote-control-info-popover';
+        popover.className = 'info-popover';
+        document.body.appendChild(popover);
+      }
+      const wasOpen = popover.classList.contains('open');
+      closeSkillInfoPopover();
+      popover.classList.remove('open');
+      if (wasOpen) return;
+      popover.textContent = REMOTE_CONTROL_INFO_TEXT;
+      popover.classList.add('open');
+      const rect = btn.getBoundingClientRect();
+      const popRect = popover.getBoundingClientRect();
+      let left = Math.min(rect.left, window.innerWidth - popRect.width - 12);
+      left = Math.max(12, left);
+      let top = rect.bottom + 6;
+      if (top + popRect.height > window.innerHeight - 12) top = Math.max(12, rect.top - popRect.height - 6);
+      popover.style.left = left + 'px';
+      popover.style.top = top + 'px';
+    }
 
     function getCurrentTimeStr() {
       const now = new Date();
@@ -1851,11 +1888,56 @@ function showToast(text) {
       drawDualSparkline('ram-dual-chart', sysRamHistory, addonRamHistory, 100, sysRamCol, addonRamCol, addonRamFill);
     }
 
+    // Remote-control daemon toggle (help panel) -- state comes from the
+    // same pollStatus() request everything else here already runs, except
+    // while a start/stop request is in flight (remoteControlBusy), so the
+    // switch doesn't flicker back to its pre-click position on the next
+    // poll tick that lands before the daemon has actually finished starting.
+    let remoteControlBusy = false;
+
+    function renderRemoteControlToggle(running) {
+      const toggle = document.getElementById('remote-control-toggle');
+      const checkbox = document.getElementById('remote-control-checkbox');
+      const status = document.getElementById('remote-control-status');
+      if (!toggle || !checkbox || !status) return;
+      if (remoteControlBusy) return;
+      checkbox.checked = !!running;
+      toggle.classList.remove('toggle-disabled');
+      status.textContent = running ? '실행 중' : '꺼짐';
+    }
+
+    async function onRemoteControlToggle(checkbox) {
+      const toggle = document.getElementById('remote-control-toggle');
+      const status = document.getElementById('remote-control-status');
+      const wantsOn = checkbox.checked;
+      remoteControlBusy = true;
+      if (toggle) toggle.classList.add('toggle-disabled');
+      if (status) status.textContent = wantsOn ? '시작하는 중...' : '중지하는 중...';
+      try {
+        const res = await fetch(`api/remote_control/${wantsOn ? 'start' : 'stop'}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          checkbox.checked = !wantsOn;
+          if (status) status.textContent = `오류: ${data.error || '알 수 없는 오류'}`;
+        } else {
+          if (status) status.textContent = (data.running ?? wantsOn) ? '실행 중' : '꺼짐';
+        }
+      } catch (e) {
+        checkbox.checked = !wantsOn;
+        if (status) status.textContent = '오류: 요청 실패';
+      } finally {
+        remoteControlBusy = false;
+        if (toggle) toggle.classList.remove('toggle-disabled');
+      }
+    }
+
     async function pollStatus() {
       try {
         const res = await fetch('api/status');
         if (!res.ok) return;
         const data = await res.json();
+
+        renderRemoteControlToggle(data.remote_control_running);
 
         // Addon vs System CPU
         const addonCpu = typeof data.addon_cpu_usage === 'number' ? data.addon_cpu_usage : (typeof data.cpu_usage === 'number' ? data.cpu_usage : 0);

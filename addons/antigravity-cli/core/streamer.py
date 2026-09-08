@@ -518,6 +518,7 @@ def stream_headless_cli(
     api_key = ""
     print_timeout = "5m"
     enable_sandbox = False
+    dangerous_mode = True
     if os.path.exists("/data/options.json"):
         try:
             with open("/data/options.json", "r") as f:
@@ -525,6 +526,7 @@ def stream_headless_cli(
                 api_key = opts.get("api_key", "").strip()
                 print_timeout = str(opts.get("print_timeout") or "5m").strip()
                 enable_sandbox = bool(opts.get("enable_sandbox", False))
+                dangerous_mode = bool(opts.get("dangerous_mode", True))
         except Exception:
             pass
 
@@ -558,6 +560,13 @@ def stream_headless_cli(
     # agy's own built-in default rather than passed through unsanitized.
     timeout_arg = f" --print-timeout {print_timeout}" if re.fullmatch(r"[0-9]+(h|m|s)([0-9]+(m|s))?", print_timeout) else ""
     sandbox_arg = " --sandbox" if enable_sandbox else ""
+    # Addon-config-controlled (`dangerous_mode`, default on). Turning it off
+    # is a real foot-gun: this headless path is documented upstream to hang
+    # forever waiting for an approval prompt it has no way to answer once
+    # this flag is gone (see the same NOTE in run.sh's HA_DENY_RULES setup),
+    # so a user who disables it should expect chat responses to stall rather
+    # than fail cleanly.
+    skip_permissions_arg = " --dangerously-skip-permissions" if dangerous_mode else ""
     # shlex.quote(), not json.dumps() -- this string is re-parsed by a POSIX
     # shell (`script -c` runs it via `/bin/sh -c`), which has no idea what
     # JSON escaping is. json.dumps("안녕\n하세요") produces
@@ -573,7 +582,7 @@ def stream_headless_cli(
         f"{model_arg}"
         f"{agent_arg}"
         f" --output-format stream-json"
-        f" --dangerously-skip-permissions"
+        f"{skip_permissions_arg}"
         f"{timeout_arg}"
         f"{sandbox_arg}"
     )

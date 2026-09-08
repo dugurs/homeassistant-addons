@@ -462,6 +462,14 @@ CSS_STYLES = """
       font-weight: 700;
     }
 
+    /* Remote-control toggle row directly under the nav tabs (see
+       .remote-control-row's own label/status/switch styling below) --
+       sidebar-specific padding only, matching .sidebar-nav's own gutter. */
+    .sidebar-remote-control-row {
+      padding: 8px 10px;
+    }
+    .sidebar-remote-control-row .remote-control-label { font-weight: 500; }
+
     .sidebar-section-title {
       padding: 8px 10px 4px;
       font-size: 10px;
@@ -2658,4 +2666,73 @@ CSS_STYLES = """
       display: none;
     }
     .info-popover.open { display: block; }
+
+    /* Remote-control daemon on/off row (sidebar, below the nav tabs -- see
+       #remote-control-toggle in templates.py). Prefixed "rc-" because a
+       DIFFERENT, unrelated `.toggle-switch`/`.toggle-slider` pair already
+       exists elsewhere in this file (JS-generated settings toggles, see
+       scripts.py) -- reusing the bare name here would silently override
+       that other component's sizing since a later same-specificity rule
+       always wins. */
+    .remote-control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .remote-control-row .remote-control-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.85rem;
+      color: var(--text-main);
+    }
+    .remote-control-row .remote-control-status { font-size: 0.76rem; color: var(--text-dim); margin-top: 2px; }
+    .remote-control-link-btn,
+    .remote-control-info-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+    .remote-control-link-btn:hover,
+    .remote-control-info-btn:hover { color: var(--accent-blue); }
+    .remote-control-link-btn svg,
+    .remote-control-info-btn svg { width: 100%; height: 100%; }
+    .rc-toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex: none;
+      cursor: pointer;
+    }
+    .rc-toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .rc-toggle-switch .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border-color);
+      border-radius: 999px;
+      transition: background 0.15s ease;
+    }
+    .rc-toggle-switch .toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.15s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .rc-toggle-switch input:checked + .toggle-track { background: var(--accent-blue); }
+    .rc-toggle-switch input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); }
+    .rc-toggle-switch.toggle-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 """.strip()

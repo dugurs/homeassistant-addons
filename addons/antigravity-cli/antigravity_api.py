@@ -159,11 +159,17 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             from core.ha_client import get_scheduled_controls
             from core.system_info import check_agy_hardware_support, get_mcp_status
             from core.ui import UI_BUILD_VERSION
+            from core.remote_control import is_running as remote_control_is_running
             hw_info = check_agy_hardware_support()
             mcp_status = get_mcp_status()
             scheduled = get_scheduled_controls()
             res = {
                 "status": "online",
+                # Backs both the web UI's remote-control toggle and the HA
+                # integration's switch entity (custom_components/
+                # antigravity_cli/switch.py) -- both poll this same status
+                # endpoint rather than needing their own dedicated one.
+                "remote_control_running": remote_control_is_running(),
                 # Backs the HA integration's "예약 목록" sensor
                 # (custom_components/antigravity_cli/sensor.py) -- count as
                 # the sensor's own state, full list as its extra_state_
@@ -528,6 +534,23 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             query = str(payload.get("query", "")).strip()
             self._set_headers(200)
             self.wfile.write(json.dumps(search_workspace(query), ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 2d. Remote-control daemon (`agy remote-control serve`) on/off --
+        # driven by the web UI toggle and by the HA integration's switch
+        # entity (custom_components/antigravity_cli/switch.py), both of
+        # which read current state from /api/status's remote_control_running
+        # field above rather than these endpoints' own response.
+        if clean_path.endswith("/api/remote_control/start"):
+            from core.remote_control import start as remote_control_start
+            self._set_headers(200)
+            self.wfile.write(json.dumps(remote_control_start(), ensure_ascii=False).encode("utf-8"))
+            return
+
+        if clean_path.endswith("/api/remote_control/stop"):
+            from core.remote_control import stop as remote_control_stop
+            self._set_headers(200)
+            self.wfile.write(json.dumps(remote_control_stop(), ensure_ascii=False).encode("utf-8"))
             return
 
         # 3. Real-Time Chat Streaming API

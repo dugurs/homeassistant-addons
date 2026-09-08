@@ -59,6 +59,8 @@
 
 *   `ha_sse_url` (선택 사항): [ha-mcp HACS 커스텀 컴포넌트](https://github.com/homeassistant-ai/ha-mcp-integration) 등 외부 MCP 서버의 Streamable HTTP URL을 직접 지정할 때 사용합니다. 비워두면 `uvx ha-mcp@latest`를 `stdio`로 자동 실행합니다.
 
+*   `dangerous_mode` (기본값 `true`): 채팅(CLI 추론 모드 헤드리스 실행)과 리모트 데몬(`agy remote-control serve`)에 `--dangerously-skip-permissions`를 붙일지 여부입니다. **끄면 채팅 응답이 멈출 수 있습니다** — 이 헤드리스 실행 경로는 이 플래그 없이 돌리면 승인 대기 중 영구적으로 행(hang)하는 `agy` 자체의 상위 버그가 있어, 기본값을 켜둔 채로 두는 것을 권장합니다.
+
 ## 📝 문제 해결 (Troubleshooting)
 
 *   **AI가 기기를 제어하려고 할 때 권한을 묻는다면?**

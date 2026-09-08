@@ -29,6 +29,7 @@ ICON_BAR_CHART = f'<svg {_SVG}><line x1="18" y1="20" x2="18" y2="10"/><line x1="
 ICON_INFO = f'<svg {_SVG}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
 ICON_X = f'<svg {_SVG}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
 ICON_USER = f'<svg {_SVG}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+ICON_EXTERNAL_LINK = f'<svg {_SVG}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
 
 # Compact badge text ("b13") -- short like the reference's "v2.0", full version stays in the tooltip.
 _UI_VERSION_SHORT = "b" + UI_BUILD_VERSION.rsplit(".", 1)[-1] if "beta." in UI_BUILD_VERSION else UI_BUILD_VERSION
@@ -148,6 +149,21 @@ HTML_BODY = f"""
         <button class="sidebar-nav-item active" id="nav-tab-chat" onclick="switchTab('chat')"><span class="icon">{ICON_MESSAGE}</span><span>AI 채팅 대화창</span></button>
         <button class="sidebar-nav-item" id="nav-tab-terminal" onclick="switchTab('terminal')"><span class="icon">{ICON_TERMINAL}</span><span>웹 터미널 (ttyd)</span></button>
       </nav>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-remote-control-row remote-control-row">
+        <div>
+          <div class="remote-control-label">
+            리모트 데몬
+            <button type="button" class="remote-control-info-btn" onclick="toggleRemoteControlInfo(this)" title="웹에서 원격 접속하는 방법">{ICON_INFO}</button>
+            <a class="remote-control-link-btn" href="https://antigravity.google.com" target="_blank" rel="noopener" title="원격 접속 페이지 열기 (antigravity.google.com)">{ICON_EXTERNAL_LINK}</a>
+          </div>
+          <div class="remote-control-status" id="remote-control-status">상태 확인 중...</div>
+        </div>
+        <label class="rc-toggle-switch toggle-disabled" id="remote-control-toggle">
+          <input type="checkbox" id="remote-control-checkbox" onchange="onRemoteControlToggle(this)">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-new-chat-wrap">
         <button class="new-chat-btn-sidebar" onclick="startNewSession()">
