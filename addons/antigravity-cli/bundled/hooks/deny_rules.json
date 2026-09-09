@@ -1,13 +1,24 @@
 [
   "command(rm -rf)",
+  "command(rm -rf *)",
   "command(sudo)",
+  "command(sudo *)",
   "write_file(/homeassistant/.storage/)",
+  "write_file(/homeassistant/.storage/*)",
   "write_file(/homeassistant/secrets.yaml)",
   "write_file(/homeassistant/configuration.yaml)",
   "write_file(/homeassistant/.uuid)",
   "write_file(/homeassistant/.HA_VERSION)",
   "write_file(/homeassistant/home-assistant_v2.db)",
   "write_file(/homeassistant/.cloud/)",
+  "write_file(/homeassistant/.cloud/*)",
+  "write_file(/homeassistant/automations.yaml)",
+  "write_file(/homeassistant/scripts.yaml)",
+  "write_file(/homeassistant/scenes.yaml)",
+  "write_file(/homeassistant/custom_components/)",
+  "write_file(/homeassistant/custom_components/*)",
   "write_file(/config/.gemini/)",
-  "write_file(/backup/)"
+  "write_file(/config/.gemini/*)",
+  "write_file(/backup/)",
+  "write_file(/backup/*)"
 ]

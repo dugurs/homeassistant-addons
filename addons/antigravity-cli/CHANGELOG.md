@@ -1,3 +1,9 @@
+## 1.2.2
+
+### 개선 (Improvement) — 파일 보호 규칙 와일드카드 지원 + 문서화
+- `permissions.allow/deny`가 와일드카드(`*`)를 지원한다는 걸 확인하고 `deny_rules.json`의 디렉터리 항목들에 적용, 기존 보호 훅에는 있었지만 빠져있던 automations/scripts/scenes/custom_components 항목도 추가
+- CLI 추론 모드와 리모트 데몬은 `--dangerously-skip-permissions`로 인해 이 목록의 보호를 받지 못하며, 두 경로의 실질적 방어선은 항상 작동하는 PreToolUse 훅이라는 점을 문서화
+
 ## 1.2.1
 
 ### 추가 (Feature) — 리모트 데몬 연결 상태 표시

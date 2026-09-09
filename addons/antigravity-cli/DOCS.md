@@ -101,11 +101,14 @@
     | HA Smart Controller | 조명/스위치/냉난방 실시간 제어, 모드 일괄 제어, 상태 브리핑 |
 
 *   **훅(Hook) — `ha-file-guard`**
-    파일 삭제/덮어쓰기 도구가 호출되기 직전(PreToolUse)에 가로채, `/homeassistant/.storage`, `secrets.yaml`, `configuration.yaml`, `automations.yaml`, `home-assistant_v2.db`, `/backup` 등 HA 핵심 데이터를 대상으로 한 `rm`/`mv`/덮어쓰기 시도를 스크립트 레벨에서 무조건 차단합니다. 사용자 승인 여부와 무관하게 항상 거부되는 최후 방어선입니다.
+    파일 삭제/덮어쓰기 도구가 호출되기 직전(PreToolUse)에 가로채, `/homeassistant/.storage`, `secrets.yaml`, `configuration.yaml`, `automations.yaml`, `home-assistant_v2.db`, `/backup` 등 HA 핵심 데이터를 대상으로 한 `rm`/`mv`/덮어쓰기 시도를 스크립트 레벨에서 무조건 차단합니다. 사용자 승인 여부와 무관하게 항상 거부되는 최후 방어선이며, **`--dangerously-skip-permissions`가 걸린 CLI 추론 모드와 리모트 데몬(`agy remote-control serve`) 양쪽 모두에서 그대로 작동합니다** — 이 플래그가 우회하는 건 아래 `permissions.allow/deny` 목록뿐, 훅은 별개 메커니즘입니다.
+
+*   **`permissions.deny` 목록 (`bundled/hooks/deny_rules.json`)**
+    위 훅과는 별도로, `settings.json`의 `permissions.deny`에도 같은 취지의 차단 목록이 등록됩니다. 다만 이건 **`--dangerously-skip-permissions`가 걸리면 완전히 우회되는** agy 자체의 권한 엔진이라, CLI 추론 모드와 리모트 데몬 양쪽 다 이 목록의 보호를 받지 못합니다(실측 확인 — 위 `ha-file-guard` 훅이 이 두 경로의 실질적인 방어선). 이 목록이 실제로 적용되는 건 `--dangerously-skip-permissions` 없이 뜨는 웹 터미널(ttyd/tmux) 경로뿐입니다.
 
 *   **하네스 규칙 (always-on rule, 모든 대화에 항상 적용)**
     *   `ha-guidelines` — 기기 제어/조회 시 직접 `curl` 대신 `ha-mcp` 도구를 우선 사용하도록 지시
-    *   `ha-file-safety` — 파일 삭제·덮어쓰기 전에는 항상 대상 경로와 개수, 이유를 먼저 제시하고 사용자의 명시적 승인을 받은 뒤에만 실행하도록 지시하며, 위 훅이 보호하는 HA 핵심 데이터는 사용자가 승인해도 거부하고 위험성을 설명하도록 지시. CLI 모드의 headless 실행 경로(`--dangerously-skip-permissions`)에서는 승인 절차 자체가 우회되므로, 이 규칙이 실질적인 최종 안전장치 역할을 합니다.
+    *   `ha-file-safety` — 파일 삭제·덮어쓰기 전에는 항상 대상 경로와 개수, 이유를 먼저 제시하고 사용자의 명시적 승인을 받은 뒤에만 실행하도록 지시하며, 위 훅이 보호하는 HA 핵심 데이터는 사용자가 승인해도 거부하고 위험성을 설명하도록 지시. CLI 모드/리모트 데몬의 headless 실행 경로(`--dangerously-skip-permissions`)에서는 승인 절차 자체가 우회되므로, 이 규칙이 실질적인 최종 안전장치 역할을 합니다.
 
 *   **웹 UI 오픈소스 라이브러리 — `jsdiff`**
     CLI 추론 모드의 파일 수정 내역을 실제 줄 단위(line-matching)로 비교해 보여주는 diff 뷰어에 사용됩니다. CDN이 아니라 `core/ui/vendor_diff.py`에 직접 내장(vendoring)되어 있어 외부 네트워크 접근 없이 동작합니다.

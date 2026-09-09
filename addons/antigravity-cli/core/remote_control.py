@@ -73,6 +73,17 @@ def start() -> dict:
 
     cmd = [_AGY_BIN, "remote-control", "serve"]
     if _read_dangerous_mode():
+        # NOTE: this flag bypasses agy's whole permissions.allow/deny engine
+        # (settings.json, sourced from bundled/hooks/deny_rules.json) -- a
+        # global agy behavior, not Mode-3-specific, confirmed by asking the
+        # Antigravity agent itself to read its own binary's permission-
+        # matching code. So editing deny_rules.json does NOT protect this
+        # remote-control session while dangerous_mode stays on (the
+        # deliberate choice here -- turning it off would leave remote tool
+        # calls hanging forever on an approval prompt nothing can answer).
+        # What DOES still protect HA-critical files here, unconditionally,
+        # is the PreToolUse hook (bundled/hooks/ha_file_guard.py) -- hooks
+        # fire regardless of this flag, per antigravity.google/docs/hooks/.
         cmd.append("--dangerously-skip-permissions")
 
     env = os.environ.copy()
