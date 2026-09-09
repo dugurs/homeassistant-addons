@@ -205,6 +205,17 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(res).encode("utf-8"))
             return
 
+        # 2e. Remote-control daemon detail status (`agy remote-control
+        # status`'s raw text) -- separate from /api/status's cheap
+        # remote_control_running boolean above since this one shells out to
+        # agy itself, so it's only called on demand (e.g. the (i) popover),
+        # not on every 3s poll tick.
+        if clean_path.endswith("/api/remote_control/status"):
+            from core.remote_control import status_detail
+            self._set_headers(200)
+            self.wfile.write(json.dumps(status_detail(), ensure_ascii=False).encode("utf-8"))
+            return
+
         # 3. Headless Stream Test API
         if clean_path.endswith("/api/test_stream"):
             from core.streamer import test_headless_cli_execution

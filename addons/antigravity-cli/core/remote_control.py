@@ -94,6 +94,159 @@ def start() -> dict:
     return {"ok": True, "running": True, "already_running": False, "pid": proc.pid}
 
 
+def _daemon_log_path(pid: int):
+    """Find the daemon's own cli-*.log by inspecting its open file
+    descriptors (/proc/<pid>/fd) -- NOT by picking "whatever cli-*.log has
+    the newest mtime", since any other agy invocation (a chat prompt, a
+    hardware check) writes its own cli-*.log to the same directory and
+    would otherwise be picked up by mistake. Confirmed via live
+    investigation: agy's own logging redirects fd 1/2 to this exact file
+    once its logger initializes."""
+    try:
+        fd_dir = f"/proc/{pid}/fd"
+        for fd in os.listdir(fd_dir):
+            target = os.readlink(os.path.join(fd_dir, fd))
+            if "/log/cli-" in target:
+                return target
+    except Exception:
+        pass
+    return None
+
+
+_BUSY_WINDOW_SEC = 20
+
+_BRAIN_DIR_CANDIDATES = [
+    "/root/.gemini/antigravity-cli/brain",
+    "/config/.gemini/antigravity-cli/brain",
+]
+
+
+def _log_has_recent_pattern(log_path: str, patterns: list, window_sec: int) -> bool:
+    """Whether `log_path` was modified within the last `window_sec` seconds
+    AND its tail contains one of `patterns`. The recency check first is
+    what keeps this from reporting "busy" forever just because the
+    pattern appeared once, long ago."""
+    try:
+        if time.time() - os.path.getmtime(log_path) > window_sec:
+            return False
+        with open(log_path, "r", errors="replace") as f:
+            tail = f.readlines()[-50:]
+    except Exception:
+        return False
+    return any(p in ln for ln in tail for p in patterns)
+
+
+def _active_brain_transcript(window_sec: int):
+    """Most recently modified brain/<conversation-id>/.../transcript.jsonl,
+    if it was touched within `window_sec` seconds. Confirmed by asking the
+    Antigravity agent itself: this is the most reliable place to see an
+    in-flight tool call (a `tool_calls` entry with no matching result line
+    yet). Using "most recently modified" rather than resolving the exact
+    remote-control conversation id is a deliberate simplification that
+    only holds because this addon's only long-lived agy session is the
+    remote-control daemon -- every other invocation (a chat prompt, a
+    hardware check) is short-lived and exits well before its transcript
+    could be mistaken for "currently active" under this same recency
+    window.
+    """
+    brain_root = next((d for d in _BRAIN_DIR_CANDIDATES if os.path.isdir(d)), None)
+    if not brain_root:
+        return None
+    best, best_mtime = None, 0
+    try:
+        for name in os.listdir(brain_root):
+            transcript = os.path.join(brain_root, name, ".system_generated", "logs", "transcript.jsonl")
+            if os.path.isfile(transcript):
+                mtime = os.path.getmtime(transcript)
+                if mtime > best_mtime:
+                    best_mtime, best = mtime, transcript
+    except Exception:
+        return None
+    if best and (time.time() - best_mtime) <= window_sec:
+        return best
+    return None
+
+
+def is_busy() -> dict:
+    """Best-effort "is the daemon actively generating a response or
+    running a file-write tool right now" check, used to lock the stop
+    button.
+
+    Confirmed live (see CHANGELOG) that `write_to_file`/
+    `replace_file_content` write directly to the target file -- no
+    temp-file+rename step -- so a SIGKILL mid-write can leave a
+    truncated/corrupted file. Neither signal below is an official API;
+    both are inferred from log content within a short recency window, so
+    this can have false positives (stays "busy" briefly after activity
+    actually ended) but is deliberately biased against false negatives
+    (never reporting "safe to stop" while a write might still be in
+    flight).
+    """
+    if not is_running():
+        return {"busy": False, "reason": None}
+
+    pid = _read_pid()
+    log_path = _daemon_log_path(pid)
+    if log_path and _log_has_recent_pattern(log_path, ["streamGenerateContent"], _BUSY_WINDOW_SEC):
+        return {"busy": True, "reason": "generating"}
+
+    transcript = _active_brain_transcript(_BUSY_WINDOW_SEC)
+    if transcript:
+        try:
+            with open(transcript, "r", errors="replace") as f:
+                tail = "".join(f.readlines()[-5:])
+            if "write_to_file" in tail or "replace_file_content" in tail:
+                return {"busy": True, "reason": "writing_file"}
+        except Exception:
+            pass
+
+    return {"busy": False, "reason": None}
+
+
+def status_detail() -> dict:
+    """Best-effort remote-control status.
+
+    `agy remote-control status` itself is not useful here: confirmed live
+    that its "Daemon status:" field shells out to `systemctl --user`
+    internally, which doesn't exist in this container, so it always comes
+    back empty (still returned as `raw` since it does carry the instance
+    name). The actually useful signal -- whether the daemon's connection
+    to the web dashboard is up -- comes from tailing its own cli-*.log for
+    the "Connection status: <value>" line it writes on
+    connect/reconnect/disconnect (there is no other documented API for
+    this; see CHANGELOG for how this was confirmed).
+    """
+    if not is_running():
+        return {"running": False, "raw": None, "connection_status": None}
+
+    pid = _read_pid()
+    try:
+        p = subprocess.run(
+            [_AGY_BIN, "remote-control", "status"],
+            capture_output=True, text=True, timeout=5, errors="replace",
+        )
+        raw = (p.stdout or p.stderr).strip()
+    except Exception:
+        raw = None
+
+    connection_status = None
+    log_path = _daemon_log_path(pid)
+    if log_path:
+        try:
+            with open(log_path, "r", errors="replace") as f:
+                for line in f:
+                    if "Connection status:" in line:
+                        connection_status = line.split("Connection status:", 1)[1].strip()
+        except Exception:
+            pass
+
+    busy = is_busy()
+    return {
+        "running": True, "raw": raw, "connection_status": connection_status,
+        "busy": busy["busy"], "busy_reason": busy["reason"],
+    }
+
+
 def stop() -> dict:
     pid = _read_pid()
     if pid is None or not _pid_alive(pid):
@@ -102,6 +255,10 @@ def stop() -> dict:
         except Exception:
             pass
         return {"ok": True, "running": False, "was_running": False}
+
+    busy = is_busy()
+    if busy["busy"]:
+        return {"ok": False, "running": True, "error": "busy", "busy_reason": busy["reason"]}
 
     try:
         os.kill(pid, signal.SIGTERM)

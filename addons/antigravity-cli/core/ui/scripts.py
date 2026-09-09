@@ -1895,6 +1895,72 @@ function showToast(text) {
     // poll tick that lands before the daemon has actually finished starting.
     let remoteControlBusy = false;
 
+    // Separate from remoteControlBusy above: whether the DAEMON itself is
+    // busy (generating a response or running a file-write tool -- see
+    // core/remote_control.py is_busy()) and therefore locked against being
+    // turned off, since write_to_file/replace_file_content write directly
+    // to the target file with no atomic temp-file+rename step -- killing
+    // the daemon mid-write (confirmed live) can leave a truncated file.
+    let remoteControlDaemonBusy = false;
+
+    const REMOTE_CONTROL_BUSY_LABEL = {
+      generating: '응답 생성 중',
+      writing_file: '파일 수정 중',
+    };
+
+    // Detail poll (connection_status/busy from the daemon's own log -- see
+    // core/remote_control.py status_detail()) is separate from the cheap
+    // running/not-running boolean above: it shells out to agy and reads
+    // log/transcript files, so it only runs on its own slower interval
+    // while the daemon is actually on, not on every 3s /api/status tick.
+    let remoteControlDetailTimer = null;
+
+    function stopRemoteControlDetailPoll() {
+      if (remoteControlDetailTimer) { clearInterval(remoteControlDetailTimer); remoteControlDetailTimer = null; }
+    }
+
+    function applyRemoteControlLockState() {
+      const toggle = document.getElementById('remote-control-toggle');
+      if (!toggle) return;
+      // Only OUR OWN in-flight action (remoteControlBusy) or the daemon's
+      // own busy state should keep this locked -- never remove the class
+      // out from under an in-flight start/stop request.
+      if (remoteControlBusy || remoteControlDaemonBusy) {
+        toggle.classList.add('toggle-disabled');
+      } else {
+        toggle.classList.remove('toggle-disabled');
+      }
+    }
+
+    async function pollRemoteControlDetail() {
+      const status = document.getElementById('remote-control-status');
+      if (!status) return;
+      try {
+        const res = await fetch('api/remote_control/status');
+        const data = await res.json();
+        if (!data.running) { stopRemoteControlDetailPoll(); return; }
+        remoteControlDaemonBusy = !!data.busy;
+        applyRemoteControlLockState();
+        if (remoteControlBusy) return;
+        const busyLabel = data.busy ? (REMOTE_CONTROL_BUSY_LABEL[data.busy_reason] || '작업 중') : null;
+        if (busyLabel) { status.textContent = `실행 중 · ${busyLabel} (끄기 잠김)`; return; }
+        const conn = data.connection_status;
+        if (!conn) { status.textContent = '실행 중 (연결 확인 중...)'; return; }
+        status.textContent = conn === 'Connected' ? '실행 중 · 연결됨' : `실행 중 · ${conn}`;
+      } catch (e) {}
+    }
+
+    function startRemoteControlDetailPoll() {
+      if (remoteControlDetailTimer) return;
+      pollRemoteControlDetail();
+      remoteControlDetailTimer = setInterval(pollRemoteControlDetail, 8000);
+    }
+
+    // Set on every actual on/off transition (not every 3s poll tick) so
+    // this plain-text render doesn't fight with pollRemoteControlDetail()'s
+    // own, less frequent "실행 중 · 연결됨" text while steady-state running.
+    let lastKnownRemoteControlRunning = null;
+
     function renderRemoteControlToggle(running) {
       const toggle = document.getElementById('remote-control-toggle');
       const checkbox = document.getElementById('remote-control-checkbox');
@@ -1902,32 +1968,58 @@ function showToast(text) {
       if (!toggle || !checkbox || !status) return;
       if (remoteControlBusy) return;
       checkbox.checked = !!running;
-      toggle.classList.remove('toggle-disabled');
-      status.textContent = running ? '실행 중' : '꺼짐';
+      if (running !== lastKnownRemoteControlRunning) {
+        status.textContent = running ? '실행 중' : '꺼짐';
+      }
+      lastKnownRemoteControlRunning = running;
+      if (!running) remoteControlDaemonBusy = false;
+      applyRemoteControlLockState();
+      if (running) {
+        startRemoteControlDetailPoll();
+      } else {
+        stopRemoteControlDetailPoll();
+      }
     }
 
     async function onRemoteControlToggle(checkbox) {
       const toggle = document.getElementById('remote-control-toggle');
       const status = document.getElementById('remote-control-status');
       const wantsOn = checkbox.checked;
+      if (!wantsOn && remoteControlDaemonBusy) {
+        // Belt-and-suspenders: the toggle-disabled class already blocks
+        // clicks via pointer-events:none, but guard here too in case this
+        // fires anyway (e.g. keyboard activation).
+        checkbox.checked = true;
+        return;
+      }
       remoteControlBusy = true;
-      if (toggle) toggle.classList.add('toggle-disabled');
+      stopRemoteControlDetailPoll();
+      applyRemoteControlLockState();
       if (status) status.textContent = wantsOn ? '시작하는 중...' : '중지하는 중...';
       try {
         const res = await fetch(`api/remote_control/${wantsOn ? 'start' : 'stop'}`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok || data.ok === false) {
           checkbox.checked = !wantsOn;
-          if (status) status.textContent = `오류: ${data.error || '알 수 없는 오류'}`;
+          if (data.error === 'busy') {
+            remoteControlDaemonBusy = true;
+            const busyLabel = REMOTE_CONTROL_BUSY_LABEL[data.busy_reason] || '작업 중';
+            if (status) status.textContent = `실행 중 · ${busyLabel} (끄기 잠김)`;
+          } else if (status) {
+            status.textContent = `오류: ${data.error || '알 수 없는 오류'}`;
+          }
         } else {
-          if (status) status.textContent = (data.running ?? wantsOn) ? '실행 중' : '꺼짐';
+          const nowRunning = data.running ?? wantsOn;
+          if (status) status.textContent = nowRunning ? '실행 중' : '꺼짐';
+          lastKnownRemoteControlRunning = nowRunning;
+          if (nowRunning) startRemoteControlDetailPoll();
         }
       } catch (e) {
         checkbox.checked = !wantsOn;
         if (status) status.textContent = '오류: 요청 실패';
       } finally {
         remoteControlBusy = false;
-        if (toggle) toggle.classList.remove('toggle-disabled');
+        applyRemoteControlLockState();
       }
     }
 
