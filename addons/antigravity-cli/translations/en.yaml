@@ -24,6 +24,9 @@ configuration:
     name: "Enable Web Terminal"
     description: "Runs the ttyd/tmux web terminal. Turn off after initial login to save RAM if only using remote control or chat."
   enable_chat_ui:
-    name: "Enable Web UI Chat Mode"
-    description: "Enables AI chat input and conversation interface in Web UI. When disabled, Web UI switches to a lightweight monitoring dashboard, preventing 200-300MB memory spikes."
+    name: "Enable Web UI Chat Mode (Backward Compatibility)"
+    description: "Enables AI chat input and conversation interface in Web UI. It is recommended to use the new 'chat_mode' option instead."
+  chat_mode:
+    name: "Chat Operating Mode"
+    description: "Selects the Web UI operation mode. full: Fast smart home control and full CLI reasoning agent (default), fast_only: Fast native smart home control and conversation history browsing only (blocks 200-300MB memory spikes from CLI subprocess), monitoring: switches Web UI to lightweight system and daemon monitoring dashboard."
 

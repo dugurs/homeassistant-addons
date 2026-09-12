@@ -256,3 +256,30 @@ def get_all_addons_memory() -> str:
         f"- Antigravity CLI 애드온: {usage['memory_usage']} MB (CPU {usage['cpu_usage']}%)\n"
         f"- 시스템 전체 RAM: {usage['used_memory_gb']} GB / {usage['total_memory_gb']} GB ({usage['memory_percent']}%)"
     )
+
+
+def get_chat_mode() -> str:
+    """Get chat operating mode from add-on options ('full', 'fast_only', 'monitoring').
+
+    Defaults to 'full'. Supports backward compatibility with 'enable_chat_ui'.
+    """
+    options_path = "/data/options.json"
+    if os.path.exists(options_path):
+        try:
+            with open(options_path, "r", encoding="utf-8") as f:
+                opts = json.load(f)
+                mode = str(opts.get("chat_mode", "")).strip().lower()
+                if mode in ("full", "fast_only", "monitoring"):
+                    return mode
+                # Backward compatibility with enable_chat_ui
+                if "enable_chat_ui" in opts and not bool(opts["enable_chat_ui"]):
+                    return "monitoring"
+        except Exception:
+            pass
+    return "full"
+
+
+def is_chat_ui_enabled() -> bool:
+    """Check if web UI chat mode is enabled (False if chat_mode is 'monitoring')."""
+    return get_chat_mode() != "monitoring"
+

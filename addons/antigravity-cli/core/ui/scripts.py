@@ -646,20 +646,33 @@ function showToast(text) {
         </div>`;
     }
 
-    function deviceCardRowSlider(entityId, domain, service, dataKey, label, min, max, value, unit, divisor) {
+    function deviceCardRowSlider(entityId, domain, service, dataKey, label, min, max, value, unit, divisor, step, totalSteps) {
       const eid = jsAttrEscape(entityId);
       const dm = jsAttrEscape(domain);
       const sv = jsAttrEscape(service);
       const dk = jsAttrEscape(dataKey);
       const safeId = 'dc_' + entityId.replace(/[^a-zA-Z0-9]/g, '_') + '_' + dataKey;
       const unitStr = unit || '';
+      const stepVal = (step && Number(step) > 0) ? Number(step) : 1;
+
+      let displayVal = value + unitStr;
+      let oninputCode = `document.getElementById('${safeId}_val').textContent = Math.round(this.value) + '${unitStr}'`;
+
+      if (totalSteps && Number(totalSteps) > 1 && Number(totalSteps) <= 20) {
+        const sc = Number(totalSteps);
+        const pStep = (step && Number(step) > 0) ? Number(step) : (100 / sc);
+        const curStep = Math.min(sc, Math.max(1, Math.round(Number(value) / pStep)));
+        displayVal = `${curStep}단 (${Math.round(value)}%)`;
+        oninputCode = `(function(el){ var v = Number(el.value); var s = Math.min(${sc}, Math.max(1, Math.round(v / ${pStep}))); document.getElementById('${safeId}_val').textContent = s + '단 (' + Math.round(v) + '%)'; })(this)`;
+      }
+
       return `
         <div class="device-card-row">
           <span class="device-card-row-label">${label}</span>
-          <input type="range" class="device-card-slider" min="${min}" max="${max}" value="${value}" id="${safeId}"
-            oninput="document.getElementById('${safeId}_val').textContent = this.value + '${unitStr}'"
+          <input type="range" class="device-card-slider" min="${min}" max="${max}" step="${stepVal}" value="${value}" id="${safeId}"
+            oninput="${oninputCode}"
             onchange="handleDeviceSlider(this, '${eid}', '${dm}', '${sv}', '${dk}', ${divisor || 0})">
-          <span class="device-card-row-value" id="${safeId}_val">${value}${unitStr}</span>
+          <span class="device-card-row-value" id="${safeId}_val">${displayVal}</span>
         </div>`;
     }
 
@@ -780,7 +793,9 @@ function showToast(text) {
         }
       } else if (card.domain === 'fan') {
         if (typeof card.percentage === 'number') {
-          rows.push(deviceCardRowSlider(card.entity_id, 'fan', 'set_percentage', 'percentage', '풍량', 0, 100, card.percentage, '%'));
+          const stepVal = (card.percentage_step && card.percentage_step > 1.5) ? card.percentage_step : 1;
+          const totalSteps = card.speed_count || (card.percentage_step && card.percentage_step > 1.5 ? Math.round(100 / card.percentage_step) : 0);
+          rows.push(deviceCardRowSlider(card.entity_id, 'fan', 'set_percentage', 'percentage', '풍량', 0, 100, card.percentage, '%', 0, stepVal, totalSteps));
         }
       } else if (card.domain === 'climate') {
         // A climate entity's own `state` IS its current hvac_mode in HA
@@ -2089,13 +2104,20 @@ function showToast(text) {
           dashMcp.style.color = data.mcp_enabled ? '#34c759' : 'var(--text-muted)';
         }
 
-        // Mode 3 (CLI 모드) hardware support flag. CLI mode stays selectable
-        // even when unsupported (AVX/AVX2 missing, e.g. VM without CPU host
-        // passthrough) -- we just warn instead of force-switching away, since
-        // agy still works there, just without live streaming and much slower.
+        // Mode 3 (CLI 모드) hardware support flag.
         cliModeSupported = !!data.agy_stream_supported;
+        if (data.chat_mode) {
+          const oldMode = window.CHAT_MODE;
+          window.CHAT_MODE = data.chat_mode;
+          if (data.chat_mode === 'fast_only' && currentStreamMode === '3') {
+            currentStreamMode = '1';
+            updateStreamModeButton();
+          } else if (data.chat_mode === 'monitoring' && oldMode !== 'monitoring') {
+            applyChatUiDisabledMode();
+          }
+        }
         renderStreamModeList();
-        if (!cliModeSupported && currentStreamMode === '3') maybeShowHwNotice();
+        if (!cliModeSupported && currentStreamMode === '3' && window.CHAT_MODE !== 'fast_only') maybeShowHwNotice();
 
         // Cached for the Help modal's "MCP 연동" section (see
         // renderHelpMcpStatus()) -- no need for a separate fetch since this
@@ -2156,11 +2178,22 @@ function showToast(text) {
     }
 
     function updateStreamModeButton() {
+      const isFastOnly = (window.CHAT_MODE === 'fast_only');
+      if (isFastOnly && currentStreamMode !== '1') {
+        currentStreamMode = '1';
+        localStorage.setItem('antigravity_stream_mode', '1');
+      }
       const nameEl = document.getElementById('stream-mode-current');
       const iconEl = document.getElementById('stream-mode-icon');
+      const modeBtn = document.getElementById('stream-mode-btn');
       const m = STREAM_MODES.find(x => x.value === currentStreamMode) || STREAM_MODES[0];
-      if (nameEl) nameEl.textContent = m.shortName;
+      if (nameEl) nameEl.textContent = isFastOnly ? `${m.shortName} (고정)` : m.shortName;
       if (iconEl) { iconEl.innerHTML = m.icon; iconEl.className = `icon ${m.colorClass}`; }
+      if (modeBtn) {
+        modeBtn.title = isFastOnly
+          ? 'fast_only 설정으로 고속 제어 모드로 고정되었습니다 (RAM 보호)'
+          : '실행 모드 변경';
+      }
       updateAttachBtnState();
       updateModelAgentPickerState();
       renderQuickGrid();
@@ -2186,15 +2219,20 @@ function showToast(text) {
     function renderStreamModeList() {
       const list = document.getElementById('stream-mode-list');
       if (!list) return;
+      const isFastOnly = (window.CHAT_MODE === 'fast_only');
       list.innerHTML = STREAM_MODES.map(m => {
         const isActive = m.value === currentStreamMode;
         const hwLimited = m.value === '3' && !cliModeSupported;
+        const isBlockedByFastOnly = isFastOnly && m.value === '3';
+        const clickHandler = isBlockedByFastOnly ? '' : `selectStreamMode('${m.value}')`;
+        const rowStyle = isBlockedByFastOnly ? 'opacity:0.35; pointer-events:none; cursor:not-allowed; filter:grayscale(0.5);' : '';
         return `
-          <div class="mode-row ${isActive ? 'active' : ''}" onclick="selectStreamMode('${m.value}')">
+          <div class="mode-row ${isActive ? 'active' : ''} ${isBlockedByFastOnly ? 'disabled' : ''}" style="${rowStyle}" onclick="${clickHandler}">
             <div class="mode-row-left">
               <span class="icon ${m.colorClass}">${m.icon}</span>
               <span class="mode-row-name">${m.name}</span>
-              ${hwLimited ? '<span class="mode-row-hw-warn" title="하드웨어 제한 감지 (AVX 미지원) — 클릭 시 안내 다시 보기" onclick="event.stopPropagation(); forceShowHwNotice();">⚠️</span>' : ''}
+              ${isBlockedByFastOnly ? '<span class="mode-row-hw-warn" style="background:rgba(255,59,48,0.12);color:#ff453a;font-size:10px;padding:2px 5px;border-radius:4px;font-weight:600;" title="chat_mode: fast_only 설정으로 비활성화됨">비활성화 (RAM 보호)</span>' : ''}
+              ${(!isBlockedByFastOnly && hwLimited) ? '<span class="mode-row-hw-warn" title="하드웨어 제한 감지 (AVX 미지원) — 클릭 시 안내 다시 보기" onclick="event.stopPropagation(); forceShowHwNotice();">⚠️</span>' : ''}
             </div>
             ${isActive ? `<span class="icon icon-sm mode-color-amber">${ICON_CHECK_SVG}</span>` : ''}
           </div>`;
@@ -2202,6 +2240,9 @@ function showToast(text) {
     }
 
     function selectStreamMode(value) {
+      if (window.CHAT_MODE === 'fast_only' && value === '3') {
+        return;
+      }
       currentStreamMode = value;
       localStorage.setItem('antigravity_stream_mode', value);
       updateStreamModeButton();
@@ -3299,6 +3340,190 @@ function showToast(text) {
       historyScrollObserver.observe(statusEl);
     }
 
+    let isRefreshingSession = false;
+
+    async function refreshCurrentSession(isPullUp = false) {
+      if (isRefreshingSession) return;
+      if (activeAbortController) {
+        showToast('답변 생성 중에는 새로고침할 수 없습니다');
+        return;
+      }
+      isRefreshingSession = true;
+
+      try {
+        if (currentConversationId) {
+          const apiUrl = new URL(`api/sessions/${encodeURIComponent(currentConversationId)}`, window.location.href).href;
+          const res = await fetch(apiUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const newSteps = data.history || [];
+
+          // Detect any change in history steps
+          const hasDiff = newSteps.length !== loadedHistorySteps.length ||
+                          JSON.stringify(newSteps) !== JSON.stringify(loadedHistorySteps);
+
+          if (hasDiff) {
+            loadedHistorySteps = newSteps;
+            sessionTurns = buildSessionTurns(loadedHistorySteps);
+
+            const box = document.getElementById('chat-box');
+            teardownHistoryScrollObserver();
+            box.innerHTML = '';
+
+            if (sessionTurns.length === 0) {
+              box.innerHTML = "<div class='session-loading'>대화 내용이 비어 있습니다.</div>";
+            } else {
+              if (renderedFromTurnIndex >= sessionTurns.length) {
+                renderedFromTurnIndex = Math.max(0, sessionTurns.length - HISTORY_TURNS_PER_PAGE);
+              }
+
+              const statusDiv = document.createElement('div');
+              statusDiv.id = 'history-load-status';
+              statusDiv.className = 'history-load-more';
+              box.appendChild(statusDiv);
+
+              renderTurnsRange(renderedFromTurnIndex, sessionTurns.length, false);
+              updateHistoryStatusIndicator();
+              setupHistoryScrollObserver();
+              box.scrollTop = box.scrollHeight;
+            }
+            showToast('최신 대화 내역이 갱신되었습니다');
+          } else {
+            showToast('대화가 이미 최신 상태입니다');
+          }
+        } else {
+          showToast('대화 목록을 갱신했습니다');
+        }
+        await loadSessionsList();
+      } catch (err) {
+        console.error('Failed to refresh session:', err);
+        showToast(`새로고침 실패: ${err.message}`);
+      } finally {
+        isRefreshingSession = false;
+      }
+    }
+
+    function setupPullUpRefresh() {
+      const box = document.getElementById('chat-box');
+      const indicator = document.getElementById('pull-up-indicator');
+      const indicatorIcon = document.getElementById('pull-up-icon');
+      const indicatorText = document.getElementById('pull-up-text');
+      if (!box || !indicator) return;
+
+      let touchStartY = 0;
+      let touchStartX = 0;
+      let canPullUp = false;
+      let pullDistance = 0;
+      const PULL_THRESHOLD = 45; // 45px damped displacement
+
+      function hideIndicator() {
+        indicator.classList.remove('visible', 'ready', 'loading', 'success');
+        indicator.style.transform = 'translateX(-50%) translateY(30px)';
+        if (indicatorIcon) indicatorIcon.textContent = '⬆️';
+        if (indicatorText) indicatorText.textContent = '위로 끌어올려 최신 대화 새로고침';
+        pullDistance = 0;
+      }
+
+      // Click to refresh directly
+      indicator.addEventListener('click', () => {
+        if (!isRefreshingSession && !activeAbortController) {
+          indicator.classList.remove('ready');
+          indicator.classList.add('loading');
+          indicator.style.transform = 'translateX(-50%) translateY(0px)';
+          if (indicatorIcon) indicatorIcon.textContent = '🔄';
+          if (indicatorText) indicatorText.textContent = '최신 대화 동기화 중...';
+          refreshCurrentSession(true).then(() => {
+            indicator.classList.remove('loading');
+            indicator.classList.add('success');
+            if (indicatorIcon) indicatorIcon.textContent = '✓';
+            if (indicatorText) indicatorText.textContent = '최신 대화 동기화 완료';
+            setTimeout(hideIndicator, 800);
+          }).catch(() => {
+            indicator.classList.remove('loading');
+            hideIndicator();
+          });
+        }
+      });
+
+      box.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        touchStartY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX;
+        // Check if user is at or near the bottom of chat-box (within 15px)
+        const atBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) <= 15;
+        canPullUp = atBottom && !isRefreshingSession && !activeAbortController;
+        pullDistance = 0;
+      }, { passive: true });
+
+      box.addEventListener('touchmove', (e) => {
+        if (!canPullUp || e.touches.length !== 1) return;
+        const currentY = e.touches[0].clientY;
+        const currentX = e.touches[0].clientX;
+        const diffY = touchStartY - currentY; // positive when user swipes UP
+        const diffX = Math.abs(currentX - touchStartX);
+
+        // Cancel if horizontal swipe is dominant (e.g. drawer swipe)
+        if (diffX > Math.abs(diffY)) {
+          canPullUp = false;
+          hideIndicator();
+          return;
+        }
+
+        if (diffY > 8) {
+          // Resistance damping curve
+          pullDistance = Math.min(75, (diffY - 8) * 0.4);
+          indicator.classList.add('visible');
+          const currentTransY = Math.max(0, 30 - pullDistance);
+          indicator.style.transform = `translateX(-50%) translateY(${currentTransY}px)`;
+
+          if (pullDistance >= PULL_THRESHOLD) {
+            indicator.classList.add('ready');
+            if (indicatorIcon) indicatorIcon.textContent = '🔄';
+            if (indicatorText) indicatorText.textContent = '손을 놓으면 새로고침';
+          } else {
+            indicator.classList.remove('ready');
+            if (indicatorIcon) indicatorIcon.textContent = '⬆️';
+            if (indicatorText) indicatorText.textContent = '위로 끌어올려 새로고침';
+          }
+        } else if (diffY <= 0) {
+          hideIndicator();
+        }
+      }, { passive: true });
+
+      box.addEventListener('touchend', async (e) => {
+        if (!canPullUp) return;
+        canPullUp = false;
+
+        if (pullDistance >= PULL_THRESHOLD) {
+          indicator.classList.remove('ready');
+          indicator.classList.add('loading');
+          indicator.style.transform = 'translateX(-50%) translateY(0px)';
+          if (indicatorIcon) indicatorIcon.textContent = '🔄';
+          if (indicatorText) indicatorText.textContent = '최신 대화 동기화 중...';
+
+          try {
+            await refreshCurrentSession(true);
+            indicator.classList.remove('loading');
+            indicator.classList.add('success');
+            if (indicatorIcon) indicatorIcon.textContent = '✓';
+            if (indicatorText) indicatorText.textContent = '최신 대화 동기화 완료';
+          } catch (err) {
+            indicator.classList.remove('loading');
+            if (indicatorIcon) indicatorIcon.textContent = '⚠️';
+            if (indicatorText) indicatorText.textContent = '동기화 실패';
+          }
+          setTimeout(hideIndicator, 800);
+        } else {
+          hideIndicator();
+        }
+      }, { passive: true });
+
+      box.addEventListener('touchcancel', () => {
+        canPullUp = false;
+        hideIndicator();
+      }, { passive: true });
+    }
+
     function applyChatUiDisabledMode() {
       // 1. Hide chat composer input bar
       const inputBar = document.querySelector('.input-bar-wrap');
@@ -3381,8 +3606,12 @@ function showToast(text) {
     }
 
     window.addEventListener('DOMContentLoaded', async () => {
-      if (window.ENABLE_CHAT_UI === false) {
+      const chatMode = window.CHAT_MODE || (window.ENABLE_CHAT_UI === false ? 'monitoring' : 'full');
+      if (chatMode === 'monitoring') {
         applyChatUiDisabledMode();
+      } else if (chatMode === 'fast_only') {
+        currentStreamMode = '1';
+        localStorage.setItem('antigravity_stream_mode', '1');
       }
 
       updateStreamModeButton();
@@ -3392,17 +3621,21 @@ function showToast(text) {
 
       // Initial Status Poll & Load Session History List
       await pollStatus();
-      if (window.ENABLE_CHAT_UI !== false) {
+      if (chatMode !== 'monitoring') {
         await loadSessionsList();
-        await loadModelCatalog();
-        await loadAgentCatalog();
+        if (chatMode !== 'fast_only') {
+          await loadModelCatalog();
+          await loadAgentCatalog();
+        }
         prefetchUsage();
       }
+
+      setupPullUpRefresh();
 
       // Start 3-second Periodic Status Polling
       setInterval(pollStatus, 3000);
       // Keep the usage snapshot warm so opening "View Usage" feels instant
-      if (window.ENABLE_CHAT_UI !== false) {
+      if (chatMode === 'full') {
         setInterval(prefetchUsage, 55000);
       }
     });

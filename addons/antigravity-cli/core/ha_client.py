@@ -203,43 +203,179 @@ def _remainder_after_room(friendly_name: str, room: str) -> str:
     return friendly_name.replace(room, "", 1).replace(" ", "").strip()
 
 
+# Specific device subtypes within common domains that should never be mixed up:
+# If the user's prompt explicitly mentions one of these, an entity whose friendly_name
+# contains that exact subtype MUST be prioritized over other subtypes in the same room.
+_EXCLUSIVE_SUBTYPES = [
+    # Fan domain subtypes
+    {"실링팬", "선풍기", "환풍기", "서큘레이터", "공기청정기"},
+    # Light domain subtypes
+    {"스탠드", "화장대", "식탁등", "매립등", "간접등", "벽등", "다운라이트", "스트립", "무드등", "취침등"},
+    # Appliance / Switch subtypes
+    {"보일러", "히터", "온열기", "전기스토브", "콘센트", "플러그"},
+]
+
+
+def get_fan_speed_specs(entity: dict) -> tuple[int, float]:
+    """Dynamically determine a fan entity's total speed steps and step percentage
+    from its actual Home Assistant attributes.
+    Returns: (total_steps, percentage_step)
+    """
+    attrs = entity.get("attributes", {})
+
+    # 1. Check explicit speed_count (standard in HA core FanEntity)
+    raw_sc = attrs.get("speed_count")
+    if raw_sc is not None:
+        try:
+            sc = int(raw_sc)
+            if sc > 0:
+                raw_ps = attrs.get("percentage_step")
+                p_step = float(raw_ps) if raw_ps is not None else (100.0 / sc)
+                return sc, p_step
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Check percentage_step (float step size, e.g. 16.666... for 6-step, 25.0 for 4-step, 33.333... for 3-step)
+    raw_ps = attrs.get("percentage_step")
+    if raw_ps is not None:
+        try:
+            p_step = float(raw_ps)
+            if p_step > 0:
+                if p_step > 1.5:
+                    total_steps = round(100.0 / p_step)
+                    return total_steps, p_step
+                return 100, 1.0
+        except (ValueError, TypeError):
+            pass
+
+    # 3. Check preset_modes if they represent numbered speed levels
+    presets = attrs.get("preset_modes")
+    if isinstance(presets, list) and presets:
+        level_like = [p for p in presets if any(char.isdigit() for char in str(p))]
+        if len(level_like) >= 2 and len(level_like) == len(presets):
+            sc = len(presets)
+            return sc, (100.0 / sc)
+
+    # 4. Default fallback: 100% continuous
+    return 100, 1.0
+
+
+def calc_fan_step_percentage(req_step: int, total_steps: int, step_pct: float) -> tuple[int, str]:
+    """Convert a requested step number (e.g. 1~6단) into HA percentage and user-friendly description.
+    Returns: (percentage_0_to_100, description_string)
+    """
+    # Case A: Standard discrete multi-step fan (e.g. 3, 4, 5, 6, 8, 10, 12단)
+    if 1 < total_steps <= 20:
+        clamped_step = max(1, min(total_steps, req_step))
+        if clamped_step >= total_steps:
+            calc_pct = 100
+        else:
+            calc_pct = max(1, round(clamped_step * step_pct))
+        return calc_pct, f"{clamped_step}단({calc_pct}%)"
+
+    # Case B: 100-step fine-grained fan (e.g. Xiaomi / dmaker percentage_step=1.0)
+    # When user asks for a small step like "1단", "2단", "3단", "4단",
+    # interpret it against the 4-level smart fan standard (25%, 50%, 75%, 100%)
+    # rather than setting 1%, 2%, 3%, 4% (which would stall the fan).
+    if total_steps == 100:
+        if 1 <= req_step <= 4:
+            std_mapping = {1: 25, 2: 50, 3: 75, 4: 100}
+            calc_pct = std_mapping[req_step]
+            return calc_pct, f"{req_step}단({calc_pct}%)"
+        clamped_step = max(1, min(100, req_step))
+        return clamped_step, f"{clamped_step}%"
+
+    # Case C: Other large-step fan
+    clamped_step = max(1, min(total_steps, req_step))
+    calc_pct = min(100, max(1, round(clamped_step * step_pct)))
+    return calc_pct, f"{clamped_step}단({calc_pct}%)"
+
+
+def _clean_friendly_name_for_match(friendly_name: str, room: str) -> str:
+    """Normalize friendly_name by stripping the room prefix, spaces, and common trailing noise like 'Fan'."""
+    name = friendly_name.replace(room, "").strip()
+    name = _normalize_qualifier_spelling(name)
+    # Strip trailing english domain noise like 'Fan', 'Light', 'Switch', 'Sensor'
+    name = re.sub(r"(?i)\s*(fan|light|switch|climate|sensor)$", "", name).strip()
+    return name.replace(" ", "")
+
+
 def _narrow_multi_device_targets(clean: str, matched_room: str, room_targets: list):
     """When a room has more than one device of the same type, figure out
     which single one (if any) the prompt actually singles out.
-
-    Returns a one-item list when the prompt clearly names a specific device
-    -- either an explicit qualifier like "스탠드"/"화장대", or, when no
-    qualifier at all is given, the one device whose name is just the bare
-    generic word (e.g. "안방 등" among "안방 스탠드 등"/"안방 화장대 등").
-    Returns None when it can't confidently narrow to one -- the caller
-    should ask instead of guessing. This is what stops "안방 등 켜" from
-    turning on every light in the bedroom just because they all contain
-    "등" somewhere in their name (previously each candidate only had to
-    contain the room name, with no per-device narrowing at all).
+    Prioritizes friendly_name semantic match rate over raw entity_id.
     """
+    normalized_clean = _normalize_qualifier_spelling(clean)
+
+    # 1. Exclusive Subtype Check:
+    # E.g., '선풍기' vs '실링팬' vs '환풍기'
+    # If the user explicitly mentions '선풍기', do NOT select '실링팬' even if both are in fan domain.
+    for subtype_group in _EXCLUSIVE_SUBTYPES:
+        prompt_subtypes = [w for w in subtype_group if w in normalized_clean]
+        if prompt_subtypes:
+            # Pick the longest matched subtype in prompt (e.g. '실링팬' over '팬')
+            prompt_subtypes.sort(key=len, reverse=True)
+            chosen_subtype = prompt_subtypes[0]
+
+            matched_candidates = []
+            for c in room_targets:
+                fn = c.get("attributes", {}).get("friendly_name") or c.get("entity_id", "")
+                fn_norm = _clean_friendly_name_for_match(fn, matched_room)
+                if chosen_subtype in fn_norm or chosen_subtype in fn:
+                    matched_candidates.append(c)
+
+            if len(matched_candidates) == 1:
+                return [matched_candidates[0]]
+            if len(matched_candidates) > 1:
+                # Multiple candidates share the same subtype in this room; narrow further below
+                room_targets = matched_candidates
+                break
+
+    # 2. Friendly Name Match Score Evaluation
+    # Compare the non-room remainder of prompt against each candidate's friendly_name
+    prompt_remainder = normalized_clean.replace(matched_room, "").strip()
+    # Remove common command verbs from remainder to isolate device description
+    prompt_remainder = re.sub(r"(켜|꺼|켜줘|꺼줘|틀어|틀어줘|올려|내려|닫아|열어|작동|가동|설정|해줘|상태|알려줘).*", "", prompt_remainder).strip()
+
+    scored = []
+    for c in room_targets:
+        fn = c.get("attributes", {}).get("friendly_name") or c.get("entity_id", "")
+        fn_clean = _clean_friendly_name_for_match(fn, matched_room)
+        core_qualifier = _strip_generic_words(fn_clean)
+
+        score = 0
+        if prompt_remainder:
+            # Exact substring match of prompt remainder in friendly_name
+            if prompt_remainder in fn_clean:
+                score += 100
+            elif core_qualifier and core_qualifier in prompt_remainder:
+                score += 80
+            # Common characters overlap ratio
+            common_chars = sum(1 for ch in fn_clean if ch in prompt_remainder)
+            score += common_chars * 10
+
+        scored.append((c, score, len(fn_clean)))
+
+    # Sort primarily by match score (descending), secondarily by concise name
+    scored.sort(key=lambda x: (x[1], -x[2]), reverse=True)
+
+    if scored and scored[0][1] > 0:
+        # Check if top candidate has a clear score lead
+        if len(scored) == 1 or scored[0][1] > scored[1][1]:
+            return [scored[0][0]]
+
+    # 3. Fallback: if no specific qualifier was given (e.g. bare "등 켜줘"),
+    # pick the candidate with the shortest bare generic remainder, if unambiguous.
     remainders = [
-        (c, _remainder_after_room(c.get("attributes", {}).get("friendly_name") or c.get("entity_id"), matched_room))
+        (c, _clean_friendly_name_for_match(c.get("attributes", {}).get("friendly_name") or c.get("entity_id", ""), matched_room))
         for c in room_targets
     ]
-
-    normalized_clean = _normalize_qualifier_spelling(clean)
-    specific = []
-    for c, r in remainders:
-        core = _normalize_qualifier_spelling(_strip_generic_words(r))
-        if core and core in normalized_clean:
-            specific.append((c, r))
-    if len(specific) == 1:
-        return [specific[0][0]]
-    if len(specific) > 1:
-        return None
-
-    # No explicit qualifier in the prompt -- fall back to the candidate with
-    # the shortest (bare) remainder, but only if that's unambiguous (e.g. two
-    # equally-generic "등1"/"등2" style names should still ask).
     remainders.sort(key=lambda cr: len(cr[1]))
     if len(remainders) >= 2 and len(remainders[0][1]) < len(remainders[1][1]):
         return [remainders[0][0]]
+
     return None
+
 
 
 def resolve_control_scope(
@@ -516,6 +652,7 @@ _COMMAND_MARKERS = ["줘", "줄래", "주세요", "주실래요", "주실수", "
 def is_status_query(prompt: str, clean: str) -> bool:
     """True when the prompt is ASKING about current device state ("켜져있어?" --
     is it on?) rather than COMMANDING a change ("켜줘" -- turn it on).
+    Also True when asking for device status ("거실 실링팬 상태 알려줘", "선풍기 상태").
 
     Both share the same "켜"/"꺼" substring, so a plain keyword-in-string check
     can never tell them apart -- this is the single choke point every control
@@ -526,6 +663,14 @@ def is_status_query(prompt: str, clean: str) -> bool:
     """
     if any(p in clean for p in _STATE_QUERY_PATTERNS):
         return True
+    # If the sentence mentions "상태" or "상황" and a device category keyword, it's a device status query!
+    if any(w in clean for w in ["상태", "상황"]):
+        has_device_trigger = any(
+            any(tw in clean for tw in words)
+            for words, _, _ in _DOMAIN_STATUS_TRIGGERS
+        )
+        if has_device_trigger:
+            return True
     if prompt.rstrip().endswith("?") and not any(m in clean for m in _COMMAND_MARKERS):
         return True
     return False
@@ -587,6 +732,23 @@ def get_device_status_answer(prompt: str, states: list) -> str:
         where = f"{room}에는 " if room else ""
         return f"{where}확인할 수 있는 {label}{_particle(label, '이', '가')} 없습니다."
 
+    # If the user singled out an exclusive subtype (e.g. "실링팬" vs "선풍기" vs "환풍기"),
+    # narrow candidates so "거실 실링팬 상태" answers specifically about the ceiling fan.
+    for subtype_group in _EXCLUSIVE_SUBTYPES:
+        prompt_subtypes = [w for w in subtype_group if w in clean]
+        if prompt_subtypes:
+            prompt_subtypes.sort(key=len, reverse=True)
+            chosen_subtype = prompt_subtypes[0]
+            matched_sub = [
+                c for c in candidates
+                if chosen_subtype in (c.get("attributes", {}).get("friendly_name") or "")
+                or chosen_subtype in c.get("entity_id", "")
+            ]
+            if matched_sub:
+                candidates = matched_sub
+                label = chosen_subtype
+                break
+
     on_label, off_label = ("열림", "닫힘") if domain_prefix == "cover." else ("켜짐", "꺼짐")
     lines = []
     for c in candidates:
@@ -598,7 +760,22 @@ def get_device_status_answer(prompt: str, states: list) -> str:
             is_active = st == "open"
         else:
             is_active = st == "on"
-        lines.append(f"- {fn}: {on_label if is_active else off_label}")
+
+        if domain_prefix == "fan." and is_active:
+            attrs = c.get("attributes", {})
+            pct = attrs.get("percentage")
+            total_steps, step_pct = get_fan_speed_specs(c)
+            if pct is not None:
+                if 1 < total_steps <= 20:
+                    cur_step = max(1, min(total_steps, round(pct / step_pct)))
+                    status_text = f"켜짐 ({total_steps}단 중 {cur_step}단, {int(pct)}%)"
+                else:
+                    status_text = f"켜짐 ({int(pct)}%)"
+            else:
+                status_text = "켜짐"
+            lines.append(f"- {fn}: {status_text}")
+        else:
+            lines.append(f"- {fn}: {on_label if is_active else off_label}")
 
     header = f"{room + ' ' if room else ''}{label} 상태"
     return f"🔎 **{header}**\n" + "\n".join(lines)
@@ -879,18 +1056,38 @@ def _execute_single_control_clause(prompt: str, states: list, conversation_id: s
         # 2. Fans / Ventilators
         if any(w in clean for w in _DEVICE_KEYWORD_GROUPS[1]):
             percent_match = _percent_for_group(clean, 1)
-            if percent_match:
-                percentage = max(0, min(100, int(percent_match.group(1))))
+            step_match = re.search(r"(\d+)\s*(?:단|단계|속)", clean)
+            if percent_match or step_match:
                 candidates = [s for s in states if s.get("entity_id", "").startswith("fan.")]
+                req_step = int(step_match.group(1)) if step_match else None
+                req_pct = max(0, min(100, int(percent_match.group(1)))) if percent_match else None
+
                 targets, err = resolve_control_scope(
                     prompt, clean, rooms, matched_room, candidates, "선풍기/환풍기", conversation_id,
-                    domain="fan", service="set_percentage", extra_data={"percentage": percentage},
+                    domain="fan", service="set_percentage",
+                    extra_data={"percentage": req_pct if req_pct is not None else req_step},
                 )
                 if err:
                     return err
-                ok = all([ha_call_service_api("fan", "set_percentage", {"entity_id": f.get("entity_id"), "percentage": percentage}) for f in targets])
-                names = [f.get("attributes", {}).get("friendly_name") or f.get("entity_id") for f in targets]
-                return f"🌀 {', '.join(names)} 풍량을 {percentage}%로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
+
+                results = []
+                ok = True
+                for f in targets:
+                    attrs = f.get("attributes", {})
+                    fn = attrs.get("friendly_name") or f.get("entity_id")
+                    total_steps, step_pct = get_fan_speed_specs(f)
+
+                    if req_pct is not None:
+                        calc_pct = req_pct
+                        desc = f"{calc_pct}%"
+                    else:
+                        calc_pct, desc = calc_fan_step_percentage(req_step, total_steps, step_pct)
+
+                    call_ok = ha_call_service_api("fan", "set_percentage", {"entity_id": f.get("entity_id"), "percentage": calc_pct})
+                    ok = ok and call_ok
+                    results.append(f"{fn} {desc}")
+
+                return f"🌀 {', '.join(results)} 풍량으로 설정했습니다.{'' if ok else _PARTIAL_FAILURE_SUFFIX}"
 
             service = _resolve_onoff_service(wants_toggle, is_on, is_off)
             if service:
@@ -2010,6 +2207,11 @@ def build_device_cards(entity_ids: list, states: list) -> list:
         elif domain == "fan":
             if attrs.get("percentage") is not None:
                 card["percentage"] = attrs["percentage"]
+            total_steps, step_pct = get_fan_speed_specs(s)
+            card["percentage_step"] = step_pct
+            if 1 < total_steps <= 20:
+                card["speed_count"] = total_steps
+                card["current_step"] = max(1, min(total_steps, round(attrs.get("percentage", 0) / step_pct))) if attrs.get("percentage") else 0
             if attrs.get("preset_modes"):
                 card["preset_mode"] = attrs.get("preset_mode")
                 card["preset_modes"] = attrs["preset_modes"]

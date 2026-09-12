@@ -1058,9 +1058,28 @@ def stream_agent_chat(
     which keeps old clients/localStorage values that still send "2" working
     instead of erroring.
     """
+    from core.system_info import get_chat_mode
+    current_chat_mode = get_chat_mode()
+
     if stream_mode == 3:
-        for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model, agent=agent):
-            yield ev
+        if current_chat_mode == "fast_only":
+            # RAM Protection Mode: CLI reasoning (agy subprocess) is disabled.
+            # Emit a friendly notification step and fallback cleanly to the fast dispatcher.
+            yield make_sse("reasoning_step", data={
+                "group": "ha",
+                "verb": "RAM Protection:",
+                "target": "chat_mode: fast_only",
+                "stat": "",
+                "args_json": json.dumps({"mode": 3, "status": "blocked_to_prevent_ram_spike"}, ensure_ascii=False, indent=2),
+                "detail": json.dumps({
+                    "message": "애드온 설정(chat_mode: fast_only)에 의해 CLI 자율 추론 모드가 비활성화되어 있습니다. RAM 보호를 위해 스마트홈 고속 모드로 전환하여 응답합니다."
+                }, ensure_ascii=False, indent=2),
+            })
+            for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
+                yield ev
+        else:
+            for ev in stream_headless_cli(prompt, is_mobile=is_mobile, conversation_id=conversation_id, model=model, agent=agent):
+                yield ev
     else:
         for ev in stream_fast_dashboard(prompt, is_mobile=is_mobile, conversation_id=conversation_id):
             yield ev

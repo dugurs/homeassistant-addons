@@ -237,6 +237,10 @@ HTML_BODY = f"""
             <div class="quick-grid" id="quick-grid"></div>
           </div>
         </div>
+        <div class="pull-up-indicator" id="pull-up-indicator">
+          <span class="pull-up-icon" id="pull-up-icon">⬆️</span>
+          <span class="pull-up-text" id="pull-up-text">위로 끌어올려 최신 대화 새로고침</span>
+        </div>
         <div class="input-bar-wrap">
           <div class="quota-banner" id="quota-banner" style="display:none;">
             <span class="quota-banner-icon">⚠️</span>

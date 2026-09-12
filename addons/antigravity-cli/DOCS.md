@@ -61,7 +61,8 @@
 |---|---|---|---|
 | `auto_start_remote_control` | bool | `false` | 애드온 부팅 시 백그라운드로 `agy remote-control serve` 데몬을 자동 시작합니다. 웹 대시보드나 리모트 세션을 주로 쓸 때 추천합니다. |
 | `enable_terminal` | bool | `true` | 인그레스 웹 터미널(`ttyd` 및 `tmux`)을 띄울지 여부입니다. 최초 로그인 후 터미널을 안 쓸 때 `false`로 끄면 메모리를 절약할 수 있습니다. |
-| `enable_chat_ui` | bool | `true` | 웹 UI AI 채팅 및 대화창을 띄울지 여부입니다. 리모트 데몬만 쓸 때 `false`로 끄면 웹 UI가 모니터링 전용 대시보드로 전환되어 메모리 피크 스파이크(200~300MB)를 원천 차단합니다. |
+| `chat_mode` | string (enum) | `"full"` | 웹 UI 채팅 모드 동작 방식입니다. `"full"`(고속 스마트홈 + CLI 추론 전체 활성화), `"fast_only"`(0.05초 고속 기기 제어 및 과거 대화 열람 허용 + 200~300MB 메모리 스파이크를 유발하는 agy CLI 기동 차단으로 RAM 보호), `"monitoring"`(순수 모니터링 관제 대시보드로 전환). |
+| `enable_chat_ui` | bool | `true` | (하위 호환) 웹 UI AI 채팅 활성화 여부입니다. 최신 설정인 `chat_mode` 사용을 권장합니다. |
 | `dangerous_mode` | bool | `true` | 채팅(CLI 추론 모드)과 리모트 데몬에 `--dangerously-skip-permissions`를 붙입니다. 끄면 agy가 무한 대기(hang)할 수 있으므로 `true` 권장. |
 | `api_port` | port | `8000` | 애드온의 REST/SSE 및 상태 API 포트 번호입니다. |
 | `api_key` | string | `""` (비움) | 외부 클라이언트 접근용 인증 토큰입니다. 비워두면 로컬 네트워크에서 인증 없이 접근 가능합니다. |

@@ -95,9 +95,16 @@ def get_dynamic_rooms(states: list) -> list:
 
     # 2. Discover custom area suffixes (e.g. OO방, OO실, OO룸)
     for s in states:
+        eid = s.get("entity_id", "")
+        # Skip scheduler, automation, script, and helper entities from area discovery
+        if any(eid.startswith(p) for p in ("automation.", "script.", "scene.")) or "schedule" in eid.lower():
+            continue
         fn = s.get("attributes", {}).get("friendly_name", "")
         for word in re.findall(r"([가-힣]{2,4}(?:방|실|룸|홀|테라스|베란다|현관))", fn):
             if word not in discovered and word not in _ROOM_WORD_EXCLUDE:
+                # Reject typo like "거실실", "화장실실", "안방방" where known base room is duplicated with suffix
+                if any(word.startswith(k) and word.endswith(k[-1]) and len(word) == len(k) + 1 for k in known_candidates):
+                    continue
                 discovered.append(word)
 
     # 3. Discover compound areas made of two adjacent single-word room candidates

@@ -1,12 +1,12 @@
 # Google Antigravity CLI - Home Assistant Add-on
 
-[![Current Version](https://img.shields.io/badge/version-1.3.1--beta.1-blue.svg)](config.yaml)
+[![Current Version](https://img.shields.io/badge/version-1.3.1--beta.7-blue.svg)](config.yaml)
 
 이 애드온은 Home Assistant 내부에서 **Google Antigravity CLI (`agy`)**를 구동하고, Home Assistant의 모든 기기와 상태를 AI 요원이 직접 제어할 수 있도록 완벽하게 연동해 주는 커스텀 애드온입니다.
 
 *   **웹 기반 듀얼 인터페이스**: 인그레스 대시보드 안에서 곧바로 웹 터미널(ttyd/tmux)과 직관적인 반응형 웹 UI 지원
 *   **완벽한 MCP 연동**: 공식 `ha-mcp`를 `stdio`로 실행해 조명 제어, 센서 읽기, 자동화 관리 등 88개 이상의 HA 전용 도구 제공
-*   **경량 관제 모니터링 모드 (`enable_chat_ui: false`)**: 리모트 데몬 위주 사용 시 웹 UI 채팅을 꺼서 200~300MB 메모리 스파이크를 원천 방지하고 가벼운 실시간 대시보드로 전환
+*   **세분화된 3단 채팅 작동 모드 (`chat_mode`)**: 고속 제어와 CLI 추론 전체(`full`), 0.05초 초고속 기기 제어와 대화 열람은 유지하되 agy 기동을 차단해 200~300MB 메모리 스파이크를 원천 차단하는 RAM 보호 모드(`fast_only`), 경량 관제 대시보드(`monitoring`) 지원
 *   **모바일 2×2 반응형 뷰 & 실시간 사용률 그래프**: 스마트폰 환경에 최적화된 2×2 상태 카드 그리드 및 초고해상도 실시간 CPU/RAM 스파크라인 차트
 *   **리모트 데몬 원격 제어 (`agy remote-control serve`)**: 구글 공식 원격 웹 대시보드(`antigravity.google.com`) 연동 및 안전한 끄기 잠금(busy lock) 지원
 *   **백그라운드 세션 유지**: 브라우저를 닫아도 `tmux` 세션에서 작업이 계속 유지

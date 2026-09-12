@@ -5,6 +5,7 @@ import re
 # Re-export all sub-module functions for 100% backwards compatibility
 from core.ha_client import (
     ALLOWED_CARD_SERVICES,
+    _DOMAIN_STATUS_TRIGGERS,
     build_device_cards,
     describe_calls,
     execute_device_control_intent,
@@ -327,6 +328,14 @@ def handle_agent_chat(
             return f"현재 {matched_room}의 공기질 센서 데이터를 찾을 수 없습니다."
 
         if any(w in no_space for w in ["상태", "상황", "기기", "모습", "어때"]):
+            has_device_trigger = any(
+                any(tw in no_space for tw in words)
+                for words, _, _ in _DOMAIN_STATUS_TRIGGERS
+            )
+            if has_device_trigger:
+                dev_status = get_device_status_answer(clean_prompt, states)
+                if dev_status:
+                    return dev_status
             return get_room_full_state(states, matched_room)
 
     # 3. Automations & Scripts (ha_config_get_automation)

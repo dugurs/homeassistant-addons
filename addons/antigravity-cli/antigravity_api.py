@@ -17,21 +17,11 @@ import time
 
 from core.ha_engine import get_resource_usage, get_supervisor_token, handle_agent_chat
 from core.streamer import stop_stream, stream_agent_chat
+from core.system_info import get_chat_mode, is_chat_ui_enabled
 from core.web_ui import HTML_INDEX
 
 TTYD_INTERNAL_PORT = 7682
 
-
-def is_chat_ui_enabled() -> bool:
-    """Check if web UI chat mode is enabled in add-on options (default: True)."""
-    options_path = "/data/options.json"
-    if os.path.exists(options_path):
-        try:
-            with open(options_path, "r", encoding="utf-8") as f:
-                return bool(json.load(f).get("enable_chat_ui", True))
-        except Exception:
-            pass
-    return True
 
 
 class AntigravityAPIHandler(BaseHTTPRequestHandler):
@@ -215,6 +205,7 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     "mcp_status": mcp_status,
                     "mcp_enabled": mcp_status["configured"],
                     "enable_chat_ui": is_chat_ui_enabled(),
+                    "chat_mode": get_chat_mode(),
                     "agy_stream_supported": hw_info.get("supported", False),
                     "hw_info": hw_info,
                 }
@@ -499,10 +490,11 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             return
 
         # Serve Web UI
-        chat_enabled = is_chat_ui_enabled()
+        chat_mode = get_chat_mode()
+        chat_enabled = (chat_mode != "monitoring")
         html = HTML_INDEX.replace(
             "</head>",
-            f"  <script>window.ENABLE_CHAT_UI = {'true' if chat_enabled else 'false'};</script>\n</head>",
+            f"  <script>window.ENABLE_CHAT_UI = {'true' if chat_enabled else 'false'};\n  window.CHAT_MODE = '{chat_mode}';</script>\n</head>",
         )
         self._set_headers(200, "text/html; charset=utf-8")
         self.wfile.write(html.encode("utf-8"))
@@ -596,10 +588,11 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
         # 3. Real-Time Chat Streaming API
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
-            if not is_chat_ui_enabled():
+            chat_mode = get_chat_mode()
+            if chat_mode == "monitoring":
                 self._set_headers(403)
                 self.wfile.write(json.dumps({
-                    "error": "Chat mode is disabled in add-on configuration (enable_chat_ui=false)"
+                    "error": "Chat mode is disabled in add-on configuration (chat_mode=monitoring)"
                 }, ensure_ascii=False).encode("utf-8"))
                 return
 

@@ -1,13 +1,14 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:7.3.3
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.4.0
 FROM ${BUILD_FROM}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# 1. Base tools, dev environments, HA analysis tools & Korean fonts
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    gnupg \
+# 1. Base tools, dev environments, HA analysis tools, GitHub CLI (gh) & Korean fonts
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     git \
     jq \
     sudo \
@@ -24,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     qemu-user \
     qemu-user-static \
+    gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (blazing fast Python package manager)
@@ -36,14 +38,6 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     LANGUAGE=C.UTF-8 \
     S6_KEEP_ENV=1
-
-# 2. Install GitHub CLI (gh)
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
 
 # 3. Install yq (YAML processor)
 ARG BUILD_ARCH=amd64
@@ -71,24 +65,24 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 # /config volume without clobbering local edits on every rebuild.
 COPY bundled/ /usr/local/share/antigravity-cli-bundled/
 
-# 5b. Bake in the homeassistant-ai/skills "home-assistant-best-practices" Agent
-# Skill (SKILL.md + references/) so it's available out of the box. Placed
-# outside ~/.gemini here because run.sh symlinks /root/.gemini -> the
-# persistent /config/.gemini addon_config volume on every start (see run.sh);
-# run.sh copies this baked copy into ~/.gemini/config/skills/ on first boot.
-# Prefer the live GitHub fetch (freshest content); if the network call fails
-# during image build (rate limit, transient outage, offline build), fall
-# back to the vendored snapshot checked into bundled/skills/ above instead of
-# failing the whole build.
+# 5b. Smart Upstream Skill Fetch: Compare GitHub remote commit against local bundled commit
+# Avoids re-downloading the entire tarball when the local snapshot is already at the latest upstream commit.
 RUN mkdir -p /usr/local/share/antigravity-cli-skills \
-    && ( curl -fsSL https://github.com/homeassistant-ai/skills/archive/refs/heads/main.tar.gz -o /tmp/ha-skills.tar.gz \
-         && mkdir -p /tmp/ha-skills-extract \
-         && tar -xzf /tmp/ha-skills.tar.gz -C /tmp/ha-skills-extract \
-         && cp -r /tmp/ha-skills-extract/skills-main/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ \
-         && rm -rf /tmp/ha-skills.tar.gz /tmp/ha-skills-extract \
-       ) || ( echo "[WARN] GitHub fetch for home-assistant-best-practices skill failed -- using vendored bundled/skills fallback" \
-         && rm -rf /usr/local/share/antigravity-cli-skills/home-assistant-best-practices \
-         && cp -r /usr/local/share/antigravity-cli-bundled/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ )
+    && LOCAL_COMMIT="$(cat /usr/local/share/antigravity-cli-bundled/skills/.upstream_commit 2>/dev/null || echo '')" \
+    && REMOTE_COMMIT="$(git ls-remote https://github.com/homeassistant-ai/skills.git refs/heads/main 2>/dev/null | awk '{print $1}')" \
+    && if [ -n "$REMOTE_COMMIT" ] && [ "$REMOTE_COMMIT" != "$LOCAL_COMMIT" ]; then \
+         echo "[INFO] Newer upstream skill detected ($REMOTE_COMMIT != $LOCAL_COMMIT) -- downloading..." \
+         && ( curl -fsSL https://github.com/homeassistant-ai/skills/archive/refs/heads/main.tar.gz -o /tmp/ha-skills.tar.gz \
+              && mkdir -p /tmp/ha-skills-extract \
+              && tar -xzf /tmp/ha-skills.tar.gz -C /tmp/ha-skills-extract \
+              && cp -r /tmp/ha-skills-extract/skills-main/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ \
+              && rm -rf /tmp/ha-skills.tar.gz /tmp/ha-skills-extract \
+            ) || ( echo "[WARN] GitHub download failed, falling back to bundled snapshot" \
+                   && cp -r /usr/local/share/antigravity-cli-bundled/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/ ); \
+       else \
+         echo "[INFO] Bundled skill is up-to-date ($LOCAL_COMMIT) -- using local snapshot" \
+         && cp -r /usr/local/share/antigravity-cli-bundled/skills/home-assistant-best-practices /usr/local/share/antigravity-cli-skills/; \
+       fi
 
 # 6. Automatically install CLI packages (HA CLI, Python AI tools) + a small
 # pure-Python websocket client -- entity-registry metadata (hidden_by, used
@@ -97,7 +91,7 @@ RUN mkdir -p /usr/local/share/antigravity-cli-skills \
 # equivalent. Best-effort like the rest of this line: core/ha_registry.py
 # catches ImportError/connection failures and degrades to "no hidden-device
 # filtering" rather than breaking device control if this fails to install.
-RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli websocket-client smbprotocol || true
+RUN pip3 install --no-cache-dir --break-system-packages numpy homeassistant-cli websocket-client smbprotocol || true
 
 # 7. Copy core modules, run script and API server
 COPY core/ /usr/local/bin/core/

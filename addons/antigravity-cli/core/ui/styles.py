@@ -691,6 +691,7 @@ CSS_STYLES = """
     main { flex: 1; position: relative; overflow: hidden; }
     .tab-view { width: 100%; height: 100%; display: none; }
     .tab-view.active { display: flex; flex-direction: column; }
+    #chat-view { position: relative; }
 
     /* Chat View */
     .chat-container {
@@ -2864,4 +2865,67 @@ CSS_STYLES = """
     .rc-toggle-switch input:checked + .toggle-track { background: var(--accent-blue); }
     .rc-toggle-switch input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); }
     .rc-toggle-switch.toggle-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+    /* Pull-Up Refresh Indicator */
+    .pull-up-indicator {
+      position: absolute;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(30px);
+      background: var(--bg-card-high, #1e293b);
+      border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      border-radius: 999px;
+      padding: 8px 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-normal, #f1f5f9);
+      pointer-events: auto;
+      cursor: pointer;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      z-index: 50;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .pull-up-indicator.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+    .pull-up-indicator.ready {
+      color: var(--accent-blue, #38bdf8);
+      border-color: var(--accent-blue, #38bdf8);
+      box-shadow: 0 4px 20px rgba(56, 189, 248, 0.25);
+    }
+    .pull-up-indicator.ready .pull-up-icon {
+      transform: rotate(180deg);
+    }
+    .pull-up-indicator .pull-up-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      transition: transform 0.2s ease;
+    }
+    .pull-up-indicator.loading {
+      color: var(--accent-blue, #38bdf8);
+      border-color: var(--accent-blue, #38bdf8);
+    }
+    .pull-up-indicator.loading .pull-up-icon {
+      display: inline-block;
+      animation: pull-up-spin 0.75s linear infinite;
+    }
+    .pull-up-indicator.success {
+      color: var(--accent-green, #4ade80);
+      border-color: var(--accent-green, #4ade80);
+      box-shadow: 0 4px 20px rgba(74, 222, 128, 0.2);
+    }
+    @keyframes pull-up-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
 """.strip()
