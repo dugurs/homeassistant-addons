@@ -15,8 +15,8 @@ https://github.com/dugurs/homeassistant-addons
 ```
 
 ## Available Add-ons
-
-* **[Antigravity CLI](addons/antigravity-cli/)**
+ 
+* **[Antigravity CLI](addons/antigravity-cli/)** — Run Google Antigravity CLI (`agy`) inside Home Assistant with dual Web UI/Terminal, 88+ HA MCP tools, mobile-responsive monitoring dashboard, and remote control daemon.
 
 ## About
 

@@ -1,0 +1,29 @@
+configuration:
+  ha_sse_url:
+    name: "External HA MCP SSE URL"
+    description: "Specify an external Streamable HTTP/SSE URL (e.g. ha-mcp HACS custom component). Leave empty for default local stdio (uvx)."
+  api_key:
+    name: "REST API Auth Token"
+    description: "Bearer authentication token for accessing add-on REST/SSE API. Leave empty to allow unauthenticated access."
+  api_port:
+    name: "API Port"
+    description: "Port number for add-on REST/SSE API. (Default: 8000)"
+  print_timeout:
+    name: "CLI Response Timeout"
+    description: "Maximum timeout for headless CLI execution. (Default: 5m)"
+  enable_sandbox:
+    name: "Enable Sandbox"
+    description: "Whether to run Antigravity CLI in a sandbox container. (Default: false)"
+  dangerous_mode:
+    name: "Dangerous Mode (Skip Permissions)"
+    description: "Applies --dangerously-skip-permissions to headless CLI and remote daemon to prevent hangs on approval prompts."
+  auto_start_remote_control:
+    name: "Auto-start Remote Control Daemon"
+    description: "Automatically launches 'agy remote-control serve' on add-on boot. Recommended when using remote session control."
+  enable_terminal:
+    name: "Enable Web Terminal"
+    description: "Runs the ttyd/tmux web terminal. Turn off after initial login to save RAM if only using remote control or chat."
+  enable_chat_ui:
+    name: "Enable Web UI Chat Mode"
+    description: "Enables AI chat input and conversation interface in Web UI. When disabled, Web UI switches to a lightweight monitoring dashboard, preventing 200-300MB memory spikes."
+

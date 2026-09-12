@@ -751,6 +751,135 @@ CSS_STYLES = """
       border-color: rgba(56, 189, 248, 0.5);
     }
 
+    /* Monitoring Mode Dashboard Styles */
+    .dash-status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+      text-align: left;
+    }
+    .dash-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 84px;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .dash-card-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .dash-card-val {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-bold);
+      letter-spacing: -0.01em;
+      word-break: break-word;
+    }
+    .dash-card-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 5px;
+      line-height: 1.3;
+    }
+    .dash-action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      width: 100%;
+      max-width: 720px;
+      margin: 16px auto 0 auto;
+    }
+    .dash-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+      text-decoration: none;
+    }
+    .dash-action-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-blue);
+      color: var(--text-bold);
+    }
+    .dash-action-btn.primary {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.35);
+      color: var(--accent-blue);
+    }
+    .dash-action-btn.primary:hover {
+      background: rgba(56, 189, 248, 0.2);
+    }
+
+    @media (max-width: 640px) {
+      .hero-card {
+        padding: 12px 6px;
+        justify-content: flex-start;
+      }
+      .hero-card h2 {
+        font-size: 1.15rem;
+        margin-top: 6px;
+      }
+      .hero-card p {
+        font-size: 0.78rem;
+        margin-bottom: 12px;
+        line-height: 1.45;
+      }
+      .dash-status-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .dash-card {
+        padding: 10px 12px;
+        border-radius: 10px;
+        min-height: 72px;
+      }
+      .dash-card-label {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .dash-card-val {
+        font-size: 13px;
+      }
+      .dash-card-sub {
+        font-size: 10px;
+        margin-top: 3px;
+      }
+      .dash-action-row {
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .dash-action-btn {
+        padding: 7px 10px;
+        font-size: 11px;
+        flex: 1 1 calc(33.333% - 6px);
+        justify-content: center;
+      }
+    }
+
     /* Messages */
     .msg-row { display: flex; width: 100%; }
     .msg-row.user { justify-content: flex-end; }

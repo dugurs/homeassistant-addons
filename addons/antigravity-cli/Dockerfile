@@ -97,7 +97,7 @@ RUN mkdir -p /usr/local/share/antigravity-cli-skills \
 # equivalent. Best-effort like the rest of this line: core/ha_registry.py
 # catches ImportError/connection failures and degrades to "no hidden-device
 # filtering" rather than breaking device control if this fails to install.
-RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli websocket-client || true
+RUN pip3 install --no-cache-dir --break-system-packages "numpy<2" homeassistant-cli websocket-client smbprotocol || true
 
 # 7. Copy core modules, run script and API server
 COPY core/ /usr/local/bin/core/

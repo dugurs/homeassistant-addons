@@ -1,0 +1,29 @@
+configuration:
+  ha_sse_url:
+    name: "외부 HA MCP SSE URL"
+    description: "ha-mcp HACS 커스텀 컴포넌트 등 외부 Streamable HTTP/SSE URL을 직접 지정할 때 사용합니다. 비워두면 로컬 stdio(uvx)로 자동 실행됩니다."
+  api_key:
+    name: "REST API 인증 토큰"
+    description: "외부 클라이언트에서 애드온의 REST/SSE API에 접근할 때 사용할 인증 Bearer 토큰입니다. 비워두면 인증 없이 허용됩니다."
+  api_port:
+    name: "API 포트"
+    description: "애드온의 상태 및 REST/SSE API를 제공할 포트 번호입니다. (기본값: 8000)"
+  print_timeout:
+    name: "CLI 응답 타임아웃"
+    description: "CLI 추론 모드(agy)의 헤드리스 실행 최대 대기 시간입니다. (기본값: 5m)"
+  enable_sandbox:
+    name: "샌드박스 활성화"
+    description: "Antigravity CLI 실행 시 샌드박스 격리 환경을 적용할지 여부입니다. (기본값: false)"
+  dangerous_mode:
+    name: "권한 자동 승인 (위험 모드)"
+    description: "채팅(CLI 추론 모드)과 리모트 데몬에 --dangerously-skip-permissions 플래그를 적용합니다. 이 플래그가 없으면 agy가 무한 대기(hang)할 수 있으므로 켜두는 것을 권장합니다."
+  auto_start_remote_control:
+    name: "리모트 데몬 자동 시작"
+    description: "애드온 부팅 시 백그라운드로 agy remote-control serve 데몬을 자동으로 시작합니다. 외부 웹 대시보드나 리모트 세션을 주로 사용할 때 유용합니다."
+  enable_terminal:
+    name: "웹 터미널 (ttyd/tmux) 활성화"
+    description: "인그레스 웹 터미널(ttyd 및 tmux)을 실행할지 여부입니다. 최초 로그인 후 터미널을 사용하지 않을 때 끄면 메모리 사용량을 줄일 수 있습니다."
+  enable_chat_ui:
+    name: "웹 UI 채팅 모드 활성화"
+    description: "웹 UI에서 AI 채팅 입력창 및 대화 기능을 활성화합니다. 비활성화 시 웹 UI는 가벼운 시스템 리소스 및 리모트 데몬 모니터링 전용 대시보드로 전환되어 메모리 피크 스파이크(200~300MB)를 원천 방지합니다."
+

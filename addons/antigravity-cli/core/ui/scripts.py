@@ -1776,6 +1776,12 @@ function showToast(text) {
     function drawDualSparkline(canvasId, dataSys, dataAddon, maxScale, colorSys, colorAddon, fillAddon) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
+      if (canvas.offsetWidth && canvas.width !== canvas.offsetWidth) {
+        canvas.width = canvas.offsetWidth;
+      }
+      if (canvas.offsetHeight && canvas.height !== canvas.offsetHeight) {
+        canvas.height = canvas.offsetHeight;
+      }
       const ctx = canvas.getContext('2d');
       const w = canvas.width;
       const h = canvas.height;
@@ -2066,6 +2072,22 @@ function showToast(text) {
         if (valSysCpu) valSysCpu.textContent = `${sysCpu.toFixed(1)}%`;
         if (valAddonRam) valAddonRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
         if (valSysRam) valSysRam.textContent = `${data.used_memory_gb || 0}GB (${sysRamPct.toFixed(1)}%)`;
+
+        // Update Monitoring Dashboard status cards (when enable_chat_ui is false)
+        const dashRc = document.getElementById('dash-rc-status');
+        if (dashRc) {
+          dashRc.textContent = data.remote_control_running ? '🟢 실행 중 (연결됨)' : '⚪ 정지됨';
+          dashRc.style.color = data.remote_control_running ? '#34c759' : 'var(--text-muted)';
+        }
+        const dashRam = document.getElementById('dash-ram-status');
+        if (dashRam) dashRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
+        const dashCpu = document.getElementById('dash-cpu-status');
+        if (dashCpu) dashCpu.textContent = `${addonCpu.toFixed(1)}% (전체 ${sysCpu.toFixed(1)}%)`;
+        const dashMcp = document.getElementById('dash-mcp-status');
+        if (dashMcp) {
+          dashMcp.textContent = data.mcp_enabled ? '🟢 연결됨 (stdio)' : '⚪ 미구성';
+          dashMcp.style.color = data.mcp_enabled ? '#34c759' : 'var(--text-muted)';
+        }
 
         // Mode 3 (CLI 모드) hardware support flag. CLI mode stays selectable
         // even when unsupported (AVX/AVX2 missing, e.g. VM without CPU host
@@ -3277,7 +3299,92 @@ function showToast(text) {
       historyScrollObserver.observe(statusEl);
     }
 
+    function applyChatUiDisabledMode() {
+      // 1. Hide chat composer input bar
+      const inputBar = document.querySelector('.input-bar-wrap');
+      if (inputBar) inputBar.style.display = 'none';
+
+      // 2. Hide sidebar new chat button and session list
+      const newChatWrap = document.querySelector('.sidebar-new-chat-wrap');
+      if (newChatWrap) newChatWrap.style.display = 'none';
+
+      const sessionTitle = document.getElementById('session-list-title');
+      if (sessionTitle) {
+        sessionTitle.textContent = '모니터링 모드';
+        const selectBtn = document.getElementById('session-select-btn');
+        if (selectBtn) selectBtn.style.display = 'none';
+      }
+      const sessionList = document.getElementById('session-list');
+      if (sessionList) {
+        sessionList.innerHTML = '<div style="padding:16px 12px;font-size:12px;color:var(--text-dim);line-height:1.6;">웹 UI 채팅이 비활성화되었습니다.<br>메모리 피크 스파이크(200~300MB)가 차단되고 있습니다.</div>';
+      }
+
+      // 3. Update sidebar nav tab label
+      const navChatTab = document.getElementById('nav-tab-chat');
+      if (navChatTab) {
+        const span = navChatTab.querySelector('span:last-child');
+        if (span) span.textContent = '상태 대시보드';
+      }
+
+      // 4. Update hero card into Monitoring Dashboard
+      const heroCard = document.getElementById('chat-hero-card');
+      if (heroCard) {
+        heroCard.innerHTML = `
+          <span class="hero-badge" style="background:rgba(52,199,89,0.15);color:#34c759;border-color:rgba(52,199,89,0.3);">🛡️ 메모리 최적화 모니터링 모드</span>
+          <h2>Google Antigravity CLI</h2>
+          <p style="max-width:540px;margin:0 auto 14px auto;color:var(--text-muted);word-break:keep-all;">
+            웹 UI 채팅이 비활성화되어 리모트 데몬과의 충돌 및 순간 메모리 폭증을 원천 차단하고 있습니다. 원격 제어는 리모트 데몬 또는 웹 터미널을 이용하세요.
+          </p>
+          <div class="dash-status-grid">
+            <div class="dash-card">
+              <div class="dash-card-label">🚀 리모트 데몬</div>
+              <div class="dash-card-val" id="dash-rc-status">확인 중...</div>
+              <div class="dash-card-sub">agy remote-control</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">💾 애드온 RAM</div>
+              <div class="dash-card-val" id="dash-ram-status" style="color:#34c759;">측정 중...</div>
+              <div class="dash-card-sub">순수 프로세스 (Anon)</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">⚙️ 애드온 CPU</div>
+              <div class="dash-card-val" id="dash-cpu-status" style="color:#0a84ff;">측정 중...</div>
+              <div class="dash-card-sub">실시간 프로세스 점유율</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">🔌 HA MCP 도구</div>
+              <div class="dash-card-val" id="dash-mcp-status">확인 중...</div>
+              <div class="dash-card-sub">stdio ha-mcp 88+</div>
+            </div>
+          </div>
+          <div class="dash-action-row">
+            <button type="button" class="dash-action-btn primary" onclick="switchTab('terminal')">
+              <span class="icon">💻</span> 웹 터미널 열기
+            </button>
+            <button type="button" class="dash-action-btn" onclick="toggleResourcePanel()">
+              <span class="icon">📊</span> 리소스 차트
+            </button>
+            <button type="button" class="dash-action-btn" onclick="pollStatus(); showToast('상태를 갱신했습니다');">
+              <span class="icon">🔄</span> 새로고침
+            </button>
+          </div>
+        `;
+      }
+
+      // 5. Expand top-resource-panel by default for monitoring usage graphs
+      const panel = document.getElementById('top-resource-panel');
+      if (panel) {
+        panel.classList.add('open');
+        isResourcePanelOpen = true;
+        renderCharts();
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', async () => {
+      if (window.ENABLE_CHAT_UI === false) {
+        applyChatUiDisabledMode();
+      }
+
       updateStreamModeButton();
       renderStreamModeList();
       const sessBadge = document.getElementById('session-tokens');
@@ -3285,15 +3392,19 @@ function showToast(text) {
 
       // Initial Status Poll & Load Session History List
       await pollStatus();
-      await loadSessionsList();
-      await loadModelCatalog();
-      await loadAgentCatalog();
-      prefetchUsage();
+      if (window.ENABLE_CHAT_UI !== false) {
+        await loadSessionsList();
+        await loadModelCatalog();
+        await loadAgentCatalog();
+        prefetchUsage();
+      }
 
       // Start 3-second Periodic Status Polling
       setInterval(pollStatus, 3000);
       // Keep the usage snapshot warm so opening "View Usage" feels instant
-      setInterval(prefetchUsage, 55000);
+      if (window.ENABLE_CHAT_UI !== false) {
+        setInterval(prefetchUsage, 55000);
+      }
     });
 
     // Mode 3 stop/cancel state -- set by sendMessage() while a generation is

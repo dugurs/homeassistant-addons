@@ -89,6 +89,9 @@ def start() -> dict:
     env = os.environ.copy()
     env["HOME"] = "/root"
     env["USER"] = "root"
+    # Go runtime memory optimization: aggressive GC and memory limit
+    env["GOMEMLIMIT"] = "384MiB"
+    env["GOGC"] = "50"
 
     try:
         with open(_LOG_FILE, "a") as log:
@@ -194,24 +197,117 @@ def is_busy() -> dict:
     flight).
     """
     if not is_running():
-        return {"busy": False, "reason": None}
+        return {
+            "busy": False,
+            "reason": None,
+            "activity_state": "stopped",
+            "current_tool": None,
+            "target_file": None,
+        }
 
-    pid = _read_pid()
-    log_path = _daemon_log_path(pid)
-    if log_path and _log_has_recent_pattern(log_path, ["streamGenerateContent"], _BUSY_WINDOW_SEC):
-        return {"busy": True, "reason": "generating"}
+    # 1. Check in-flight chat stream in streamer if present
+    try:
+        from core.streamer import _RUNNING_STREAMS, _RUNNING_STREAMS_LOCK
+        with _RUNNING_STREAMS_LOCK:
+            if _RUNNING_STREAMS:
+                return {
+                    "busy": True,
+                    "reason": "chat_generating",
+                    "activity_state": "thinking",
+                    "current_tool": None,
+                    "target_file": None,
+                }
+    except Exception:
+        pass
 
+    # 2. Check active transcript in brain directory
     transcript = _active_brain_transcript(_BUSY_WINDOW_SEC)
     if transcript:
         try:
             with open(transcript, "r", errors="replace") as f:
-                tail = "".join(f.readlines()[-5:])
-            if "write_to_file" in tail or "replace_file_content" in tail:
-                return {"busy": True, "reason": "writing_file"}
+                lines = [ln.strip() for ln in f.readlines()[-10:] if ln.strip()]
+            for ln in reversed(lines):
+                try:
+                    data = json.loads(ln)
+                except Exception:
+                    continue
+
+                tool_calls = data.get("tool_calls") or []
+                if tool_calls and isinstance(tool_calls, list):
+                    tc = tool_calls[0]
+                    tname = tc.get("name") or tc.get("tool_name", "")
+                    args = tc.get("args") or tc.get("arguments") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    target_file = (
+                        args.get("TargetFile")
+                        or args.get("target_file")
+                        or args.get("AbsolutePath")
+                        or args.get("file_path")
+                    )
+                    base_name = os.path.basename(target_file) if target_file else None
+                    if tname in ("replace_file_content", "write_to_file"):
+                        return {
+                            "busy": True,
+                            "reason": "writing_file",
+                            "activity_state": "file_working",
+                            "current_tool": tname,
+                            "target_file": base_name,
+                        }
+                    return {
+                        "busy": True,
+                        "reason": f"running_tool:{tname}",
+                        "activity_state": "executing_tool",
+                        "current_tool": tname,
+                        "target_file": base_name,
+                    }
+
+                thinking = data.get("thinking")
+                if thinking or data.get("type") == "PLANNER_RESPONSE":
+                    return {
+                        "busy": True,
+                        "reason": "generating",
+                        "activity_state": "thinking",
+                        "current_tool": None,
+                        "target_file": None,
+                    }
         except Exception:
             pass
 
-    return {"busy": False, "reason": None}
+    # 3. Check daemon's own log for generation activity
+    pid = _read_pid()
+    log_path = _daemon_log_path(pid)
+    if log_path and _log_has_recent_pattern(log_path, ["streamGenerateContent"], _BUSY_WINDOW_SEC):
+        return {
+            "busy": True,
+            "reason": "generating",
+            "activity_state": "thinking",
+            "current_tool": None,
+            "target_file": None,
+        }
+
+    return {
+        "busy": False,
+        "reason": None,
+        "activity_state": "idle",
+        "current_tool": None,
+        "target_file": None,
+    }
+
+
+def get_activity_status() -> dict:
+    """Return structured activity status for HA integration and Web UI."""
+    info = is_busy()
+    return {
+        "state": info.get("activity_state", "idle" if is_running() else "stopped"),
+        "is_busy": info.get("busy", False),
+        "reason": info.get("reason"),
+        "current_tool": info.get("current_tool"),
+        "target_file": info.get("target_file"),
+    }
 
 
 def status_detail() -> dict:
@@ -255,6 +351,9 @@ def status_detail() -> dict:
     return {
         "running": True, "raw": raw, "connection_status": connection_status,
         "busy": busy["busy"], "busy_reason": busy["reason"],
+        "activity_state": busy.get("activity_state"),
+        "current_tool": busy.get("current_tool"),
+        "target_file": busy.get("target_file"),
     }
 
 
@@ -269,7 +368,16 @@ def stop() -> dict:
 
     busy = is_busy()
     if busy["busy"]:
-        return {"ok": False, "running": True, "error": "busy", "busy_reason": busy["reason"]}
+        return {
+            "ok": False,
+            "running": True,
+            "error": "busy",
+            "busy_reason": busy["reason"],
+            "activity_state": busy.get("activity_state"),
+            "current_tool": busy.get("current_tool"),
+            "target_file": busy.get("target_file"),
+            "message": f"에이전트가 현재 {busy.get('activity_state', '작업')} 중입니다. 파일 및 데이터 손상을 방지하기 위해 정지가 잠겨 있습니다.",
+        }
 
     try:
         os.kill(pid, signal.SIGTERM)

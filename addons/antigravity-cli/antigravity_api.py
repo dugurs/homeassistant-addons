@@ -22,6 +22,18 @@ from core.web_ui import HTML_INDEX
 TTYD_INTERNAL_PORT = 7682
 
 
+def is_chat_ui_enabled() -> bool:
+    """Check if web UI chat mode is enabled in add-on options (default: True)."""
+    options_path = "/data/options.json"
+    if os.path.exists(options_path):
+        try:
+            with open(options_path, "r", encoding="utf-8") as f:
+                return bool(json.load(f).get("enable_chat_ui", True))
+        except Exception:
+            pass
+    return True
+
+
 class AntigravityAPIHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler for Ingress Dual Web UI, Real-Time Streaming, and REST API."""
 
@@ -155,54 +167,65 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
                 return
 
-            resources = get_resource_usage()
-            from core.ha_client import get_scheduled_controls
-            from core.system_info import check_agy_hardware_support, get_mcp_status
-            from core.ui import UI_BUILD_VERSION
-            from core.remote_control import is_running as remote_control_is_running
-            hw_info = check_agy_hardware_support()
-            mcp_status = get_mcp_status()
-            scheduled = get_scheduled_controls()
-            res = {
-                "status": "online",
-                # Backs both the web UI's remote-control toggle and the HA
-                # integration's switch entity (custom_components/
-                # antigravity_cli/switch.py) -- both poll this same status
-                # endpoint rather than needing their own dedicated one.
-                "remote_control_running": remote_control_is_running(),
-                # Backs the HA integration's "예약 목록" sensor
-                # (custom_components/antigravity_cli/sensor.py) -- count as
-                # the sensor's own state, full list as its extra_state_
-                # attributes, so the coordinator's existing poll-and-cache
-                # cycle (already hitting this endpoint) covers it for free
-                # instead of needing its own fetch path.
-                "scheduled_count": len(scheduled),
-                "scheduled_list": scheduled,
-                # Was a separately-hardcoded string that kept drifting behind
-                # config.yaml/UI_BUILD_VERSION on every bump -- same source of
-                # truth as ui_build_version now, so there's only one place to
-                # remember to update.
-                "version": UI_BUILD_VERSION,
-                "ui_build_version": UI_BUILD_VERSION,
-                "uptime": int(time.time() - SERVER_START_TIME),
-                "active_sessions": 1,
-                "memory_usage": resources["memory_usage"],
-                "addon_memory_mb": resources["addon_memory_mb"],
-                "addon_memory_percent": resources["addon_memory_percent"],
-                "cpu_usage": resources["cpu_usage"],
-                "addon_cpu_usage": resources["addon_cpu_usage"],
-                "system_cpu_usage": resources["system_cpu_usage"],
-                "total_memory_gb": resources["total_memory_gb"],
-                "used_memory_gb": resources["used_memory_gb"],
-                "memory_percent": resources["memory_percent"],
-                "system_memory_percent": resources["system_memory_percent"],
-                "mcp_status": mcp_status,
-                "mcp_enabled": mcp_status["configured"],
-                "agy_stream_supported": hw_info.get("supported", False),
-                "hw_info": hw_info,
-            }
-            self._set_headers(200)
-            self.wfile.write(json.dumps(res).encode("utf-8"))
+            try:
+                resources = get_resource_usage()
+                from core.ha_client import get_scheduled_controls
+                from core.system_info import check_agy_hardware_support, get_mcp_status
+                from core.ui import UI_BUILD_VERSION
+                from core.remote_control import get_activity_status, is_running as remote_control_is_running
+                hw_info = check_agy_hardware_support()
+                mcp_status = get_mcp_status()
+                scheduled = get_scheduled_controls()
+                res = {
+                    "status": "online",
+                    # Backs both the web UI's remote-control toggle and the HA
+                    # integration's switch entity (custom_components/
+                    # antigravity_cli/switch.py) -- both poll this same status
+                    # endpoint rather than needing their own dedicated one.
+                    "remote_control_running": remote_control_is_running(),
+                    # Backs the HA integration's activity / lock-out sensor
+                    # (custom_components/antigravity_cli/sensor.py and switch.py).
+                    "activity": get_activity_status(),
+                    # Backs the HA integration's "예약 목록" sensor
+                    # (custom_components/antigravity_cli/sensor.py) -- count as
+                    # the sensor's own state, full list as its extra_state_
+                    # attributes, so the coordinator's existing poll-and-cache
+                    # cycle (already hitting this endpoint) covers it for free
+                    # instead of needing its own fetch path.
+                    "scheduled_count": len(scheduled),
+                    "scheduled_list": scheduled,
+                    # Was a separately-hardcoded string that kept drifting behind
+                    # config.yaml/UI_BUILD_VERSION on every bump -- same source of
+                    # truth as ui_build_version now, so there's only one place to
+                    # remember to update.
+                    "version": UI_BUILD_VERSION,
+                    "ui_build_version": UI_BUILD_VERSION,
+                    "uptime": int(time.time() - SERVER_START_TIME),
+                    "active_sessions": 1,
+                    "memory_usage": resources["memory_usage"],
+                    "addon_memory_mb": resources["addon_memory_mb"],
+                    "addon_memory_percent": resources["addon_memory_percent"],
+                    "cpu_usage": resources["cpu_usage"],
+                    "addon_cpu_usage": resources["addon_cpu_usage"],
+                    "system_cpu_usage": resources["system_cpu_usage"],
+                    "total_memory_gb": resources["total_memory_gb"],
+                    "used_memory_gb": resources["used_memory_gb"],
+                    "memory_percent": resources["memory_percent"],
+                    "system_memory_percent": resources["system_memory_percent"],
+                    "mcp_status": mcp_status,
+                    "mcp_enabled": mcp_status["configured"],
+                    "enable_chat_ui": is_chat_ui_enabled(),
+                    "agy_stream_supported": hw_info.get("supported", False),
+                    "hw_info": hw_info,
+                }
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                import traceback
+                print(f"[ERR] /api/status failed: {e}", file=sys.stderr, flush=True)
+                traceback.print_exc()
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"status": "error", "error": str(e)}).encode("utf-8"))
             return
 
         # 2e. Remote-control daemon detail status (`agy remote-control
@@ -476,8 +499,13 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             return
 
         # Serve Web UI
+        chat_enabled = is_chat_ui_enabled()
+        html = HTML_INDEX.replace(
+            "</head>",
+            f"  <script>window.ENABLE_CHAT_UI = {'true' if chat_enabled else 'false'};</script>\n</head>",
+        )
         self._set_headers(200, "text/html; charset=utf-8")
-        self.wfile.write(HTML_INDEX.encode("utf-8"))
+        self.wfile.write(html.encode("utf-8"))
 
     def do_POST(self):
         """Handle POST requests."""
@@ -560,12 +588,21 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
 
         if clean_path.endswith("/api/remote_control/stop"):
             from core.remote_control import stop as remote_control_stop
-            self._set_headers(200)
-            self.wfile.write(json.dumps(remote_control_stop(), ensure_ascii=False).encode("utf-8"))
+            res = remote_control_stop()
+            status_code = 409 if (res.get("ok") is False and res.get("error") == "busy") else (200 if res.get("ok") else 500)
+            self._set_headers(status_code)
+            self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
             return
 
         # 3. Real-Time Chat Streaming API
         if clean_path.endswith("/api/chat") or clean_path.endswith("/api/prompt") or "/api/chat" in clean_path or "/api/prompt" in clean_path:
+            if not is_chat_ui_enabled():
+                self._set_headers(403)
+                self.wfile.write(json.dumps({
+                    "error": "Chat mode is disabled in add-on configuration (enable_chat_ui=false)"
+                }, ensure_ascii=False).encode("utf-8"))
+                return
+
             body = self._read_request_body()
 
             payload = {}
@@ -810,14 +847,28 @@ def start_server(port, name="API Server"):
 
 def main():
     api_port = 8000
+    auto_start_remote = False
     options_path = "/data/options.json"
     if os.path.exists(options_path):
         try:
             with open(options_path, "r", encoding="utf-8") as f:
                 options = json.load(f)
                 api_port = int(options.get("api_port", 8000))
+                auto_start_remote = bool(options.get("auto_start_remote_control", False))
         except Exception:
             pass
+
+    if auto_start_remote:
+        def _auto_start():
+            time.sleep(2)
+            try:
+                from core.remote_control import start as remote_control_start
+                res = remote_control_start()
+                print(f"[INFO] Auto-started remote control daemon on boot: {res}", flush=True)
+            except Exception as e:
+                print(f"[WARN] Failed to auto-start remote control: {e}", file=sys.stderr, flush=True)
+
+        threading.Thread(target=_auto_start, daemon=True).start()
 
     ingress_port = 7681
 

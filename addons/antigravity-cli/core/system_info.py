@@ -117,15 +117,34 @@ def get_cpu_percent() -> float:
 
 
 def get_resource_usage() -> dict:
-    """Read CPU and memory resource metrics for both Addon and System."""
-    mem_usage = 0.0
+    """Read CPU and memory resource metrics for both Addon and System.
+    Distinguishes true anonymous process RAM from reclaimable OS page cache.
+    """
+    cgroup_usage = 0.0
+    anon_usage = 0.0
+    cache_usage = 0.0
     try:
+        # 1. Parse cgroup memory.stat for pure process memory (anon) vs OS file cache
+        stat_path = "/sys/fs/cgroup/memory.stat"
+        if not os.path.exists(stat_path):
+            stat_path = "/sys/fs/cgroup/memory/memory.stat"
+        if os.path.exists(stat_path):
+            with open(stat_path, "r") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) == 2:
+                        k, v = parts[0], parts[1]
+                        if k in ("anon", "total_rss", "rss") and anon_usage == 0.0:
+                            anon_usage = int(v) / (1024 * 1024)
+                        elif k in ("file", "total_cache", "cache") and cache_usage == 0.0:
+                            cache_usage = int(v) / (1024 * 1024)
+
         if os.path.exists("/sys/fs/cgroup/memory.current"):
             with open("/sys/fs/cgroup/memory.current", "r") as f:
-                mem_usage = int(f.read().strip()) / (1024 * 1024)
+                cgroup_usage = int(f.read().strip()) / (1024 * 1024)
         elif os.path.exists("/sys/fs/cgroup/memory/memory.usage_in_bytes"):
             with open("/sys/fs/cgroup/memory/memory.usage_in_bytes", "r") as f:
-                mem_usage = int(f.read().strip()) / (1024 * 1024)
+                cgroup_usage = int(f.read().strip()) / (1024 * 1024)
     except Exception:
         pass
 
@@ -151,12 +170,17 @@ def get_resource_usage() -> dict:
 
     addon_cpu = get_addon_cpu_percent()
     system_cpu = get_cpu_percent()
-    addon_mem_mb = round(mem_usage, 1)
-    addon_mem_pct = round((mem_usage / max(1.0, total_mem_gb * 1024)) * 100, 1)
+
+    # Prioritize pure process anon memory to avoid false alarms from reclaimable OS page cache
+    pure_proc_mem = anon_usage if anon_usage > 0 else cgroup_usage
+    addon_mem_mb = round(pure_proc_mem, 1)
+    addon_mem_pct = round((pure_proc_mem / max(1.0, total_mem_gb * 1024)) * 100, 1)
 
     return {
         "memory_usage": addon_mem_mb,
         "addon_memory_mb": addon_mem_mb,
+        "addon_cache_mb": round(cache_usage, 1),
+        "addon_cgroup_mb": round(cgroup_usage, 1),
         "addon_memory_percent": addon_mem_pct,
         "cpu_usage": addon_cpu,
         "addon_cpu_usage": addon_cpu,

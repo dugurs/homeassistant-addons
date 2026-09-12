@@ -1,6 +1,6 @@
 # Google Antigravity CLI - Home Assistant Add-on
 
-[![Current Version](https://img.shields.io/badge/version-1.1.0--beta.82-blue.svg)](config.yaml)
+[![Current Version](https://img.shields.io/badge/version-1.3.1--beta.1-blue.svg)](config.yaml)
 
 이 애드온은 Home Assistant 내부에서 **Google Antigravity CLI (`agy`)**를 구동하고, Home Assistant의 모든 기기와 상태를 AI 요원이 직접 제어할 수 있도록 완벽하게 연동해 주는 커스텀 애드온입니다.
 
@@ -57,9 +57,18 @@
 
 기본적으로 애드온이 Home Assistant의 `SUPERVISOR_TOKEN`을 자동으로 감지하여 모든 권한을 알아서 설정합니다. 사용자가 수동으로 IP나 토큰을 입력할 필요가 없습니다.
 
-*   `ha_sse_url` (선택 사항): [ha-mcp HACS 커스텀 컴포넌트](https://github.com/homeassistant-ai/ha-mcp-integration) 등 외부 MCP 서버의 Streamable HTTP URL을 직접 지정할 때 사용합니다. 비워두면 `uvx ha-mcp@latest`를 `stdio`로 자동 실행합니다.
+| 옵션명 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `auto_start_remote_control` | bool | `false` | 애드온 부팅 시 백그라운드로 `agy remote-control serve` 데몬을 자동 시작합니다. 웹 대시보드나 리모트 세션을 주로 쓸 때 추천합니다. |
+| `enable_terminal` | bool | `true` | 인그레스 웹 터미널(`ttyd` 및 `tmux`)을 띄울지 여부입니다. 최초 로그인 후 터미널을 안 쓸 때 `false`로 끄면 메모리를 절약할 수 있습니다. |
+| `enable_chat_ui` | bool | `true` | 웹 UI AI 채팅 및 대화창을 띄울지 여부입니다. 리모트 데몬만 쓸 때 `false`로 끄면 웹 UI가 모니터링 전용 대시보드로 전환되어 메모리 피크 스파이크(200~300MB)를 원천 차단합니다. |
+| `dangerous_mode` | bool | `true` | 채팅(CLI 추론 모드)과 리모트 데몬에 `--dangerously-skip-permissions`를 붙입니다. 끄면 agy가 무한 대기(hang)할 수 있으므로 `true` 권장. |
+| `api_port` | port | `8000` | 애드온의 REST/SSE 및 상태 API 포트 번호입니다. |
+| `api_key` | string | `""` (비움) | 외부 클라이언트 접근용 인증 토큰입니다. 비워두면 로컬 네트워크에서 인증 없이 접근 가능합니다. |
+| `print_timeout` | string | `"5m"` | CLI 헤드리스 실행 최대 타임아웃 시간입니다. |
+| `ha_sse_url` | string | `""` (비움) | 외부 MCP 서버(HACS 컴포넌트 등)의 HTTP/SSE URL을 직접 지정할 때 사용합니다. 비워두면 로컬 stdio(`uvx ha-mcp@latest`)로 자동 실행됩니다. |
+| `enable_sandbox` | bool | `false` | CLI 실행 시 샌드박스 컨테이너 격리를 적용할지 여부입니다. |
 
-*   `dangerous_mode` (기본값 `true`): 채팅(CLI 추론 모드 헤드리스 실행)과 리모트 데몬(`agy remote-control serve`)에 `--dangerously-skip-permissions`를 붙일지 여부입니다. **끄면 채팅 응답이 멈출 수 있습니다** — 이 헤드리스 실행 경로는 이 플래그 없이 돌리면 승인 대기 중 영구적으로 행(hang)하는 `agy` 자체의 상위 버그가 있어, 기본값을 켜둔 채로 두는 것을 권장합니다.
 
 ## 📝 문제 해결 (Troubleshooting)
 

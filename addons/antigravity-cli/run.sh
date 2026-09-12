@@ -9,6 +9,13 @@ export LC_ALL=C.UTF-8
 export LANGUAGE=C.UTF-8
 export PYTHONIOENCODING=utf-8
 
+# Memory optimization for Go runtime (agy CLI and daemons)
+export GOMEMLIMIT="384MiB"
+export GOGC="50"
+
+# Kill any leftover orphan ha-mcp settings sidecar processes from previous runs
+pkill -f stdio_settings_sidecar 2>/dev/null || true
+
 # Determine primary workspace (favor /homeassistant if available, fallback to /config)
 if [ -d "/homeassistant" ]; then
     WORKDIR="/homeassistant"
@@ -105,6 +112,14 @@ mkdir -p /root/.local
 rm -rf /root/.local/share
 ln -sfn /config/.local_share /root/.local/share
 
+# Persist git configuration and credentials across addon rebuilds
+if [ -f /config/.gitconfig ]; then
+    ln -sfn /config/.gitconfig /root/.gitconfig
+fi
+if [ -f /config/.git-credentials ]; then
+    ln -sfn /config/.git-credentials /root/.git-credentials
+fi
+
 # Auto-configure Home Assistant MCP Server (stdio mode for Antigravity CLI)
 mkdir -p /root/.gemini/config
 
@@ -142,7 +157,12 @@ else
     HA_MCP_ENTRY=$(jq -n --arg token "$SUPERVISOR_TOKEN" '{
         command: "uvx",
         args: ["ha-mcp@latest"],
-        env: {HOMEASSISTANT_URL: "http://supervisor/core", HOMEASSISTANT_TOKEN: $token}
+        env: {
+            HOMEASSISTANT_URL: "http://supervisor/core",
+            HOMEASSISTANT_TOKEN: $token,
+            HA_MCP_DISABLE_SETTINGS_UI: "1",
+            HA_MCP_DISABLE_UPDATE_CHECK: "1"
+        }
     }')
 fi
 
@@ -356,21 +376,29 @@ done
 kill $PREWARM_PID 2>/dev/null || true
 wait $PREWARM_PID 2>/dev/null || true
 
-# Pre-initialize tmux session for web terminal (standby at bash)
-if ! tmux -u has-session -t main 2>/dev/null; then
-    tmux -u new-session -d -s main -c "${WORKDIR}" bash
+# Conditional Web Terminal (tmux + ttyd on port 7682)
+ENABLE_TERMINAL="true"
+if [ -f /data/options.json ]; then
+    ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' /data/options.json 2>/dev/null || echo "true")
 fi
 
-# Launch internal ttyd on port 7682 in background
-echo "[INFO] Starting ttyd on internal port 7682..."
-/usr/local/bin/ttyd \
-    -p 7682 \
-    -W \
-    -b /terminal \
-    -t fontSize=15 \
-    -t theme='{"background": "#1e1e1e"}' \
-    tmux -u new-session -A -s main -c "${WORKDIR}" bash &
-TTYD_PID=$!
+TTYD_PID=""
+if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "null" ]; then
+    echo "[INFO] Starting Web Terminal (tmux + ttyd on port 7682)..."
+    if ! tmux -u has-session -t main 2>/dev/null; then
+        tmux -u new-session -d -s main -c "${WORKDIR}" bash
+    fi
+    /usr/local/bin/ttyd \
+        -p 7682 \
+        -W \
+        -b /terminal \
+        -t fontSize=15 \
+        -t theme='{"background": "#1e1e1e"}' \
+        tmux -u new-session -A -s main -c "${WORKDIR}" bash &
+    TTYD_PID=$!
+else
+    echo "[INFO] Web Terminal disabled by configuration (enable_terminal=false). Saving memory."
+fi
 
 # Start Antigravity Dual Ingress Web UI (port 7681) & REST API (port 8000)
 API_PORT="8000"
@@ -383,6 +411,6 @@ fi
 export ANTIGRAVITY_API_PORT="${API_PORT}"
 echo "[INFO] Starting Antigravity Dual Ingress Server on 7681 and REST API on ${API_PORT}..."
 
-trap "kill -TERM $TTYD_PID 2>/dev/null || true; exit 0" SIGTERM SIGINT
+trap "if [ -n \"$TTYD_PID\" ]; then kill -TERM $TTYD_PID 2>/dev/null || true; fi; exit 0" SIGTERM SIGINT
 
 exec python3 /usr/local/bin/antigravity_api.py

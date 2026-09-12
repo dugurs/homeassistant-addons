@@ -1,6 +1,6 @@
 name: "Google Antigravity CLI"
 description: "Run Google Antigravity CLI - HA Add-on"
-version: "1.2.2"
+version: "1.3.1-beta.1"
 slug: "antigravity-cli"
 init: false
 arch:
@@ -39,6 +39,9 @@ options:
   print_timeout: "5m"
   enable_sandbox: false
   dangerous_mode: true
+  auto_start_remote_control: false
+  enable_terminal: true
+  enable_chat_ui: true
 schema:
   ha_sse_url: "str?"
   api_key: "str?"
@@ -46,3 +49,6 @@ schema:
   print_timeout: "str?"
   enable_sandbox: "bool?"
   dangerous_mode: "bool?"
+  auto_start_remote_control: "bool?"
+  enable_terminal: "bool?"
+  enable_chat_ui: "bool?"
