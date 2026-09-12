@@ -1,3 +1,11 @@
+## 1.3.2 (2026-09-12)
+
+### 공식 안정 버전 릴리즈 (Official Stable Release)
+- **채팅 작동 모드 설정 중복 제거**:
+  - `config.yaml`의 `options` 및 `schema`에서 레거시 항목인 `enable_chat_ui`를 제거하여 Home Assistant 애드온 구성 화면에서 `chat_mode` (라디오 버튼: `full` / `fast_only` / `monitoring`) 하나만 깔끔하게 노출되도록 단일화.
+  - 기존 사용자의 `/data/options.json`에 `enable_chat_ui`가 잔존하더라도 백엔드(`core/system_info.py`)의 폴백 코드를 통해 `monitoring`으로 매끄럽게 호환 유지.
+  - `translations/ko.yaml`, `translations/en.yaml` 및 `DOCS.md`에서 사용되지 않는 레거시 설정 설명 정리.
+
 ## 1.3.1 (2026-09-12)
 
 ### 공식 안정 버전 릴리즈 (Official Stable Release)

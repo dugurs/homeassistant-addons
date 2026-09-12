@@ -23,9 +23,6 @@ configuration:
   enable_terminal:
     name: "웹 터미널 (ttyd/tmux) 활성화"
     description: "인그레스 웹 터미널(ttyd 및 tmux)을 실행할지 여부입니다. 최초 로그인 후 터미널을 사용하지 않을 때 끄면 메모리 사용량을 줄일 수 있습니다."
-  enable_chat_ui:
-    name: "웹 UI 채팅 모드 활성화 (하위 호환)"
-    description: "웹 UI에서 AI 채팅 입력창 및 대화 기능을 활성화합니다. 최신 설정인 chat_mode를 대신 사용하는 것을 권장합니다."
   chat_mode:
     name: "채팅 작동 모드"
     description: "웹 UI의 작동 모드를 선택합니다. full: 고속 스마트홈 제어 및 CLI 자율 추론 전체 사용 (기본값), fast_only: 모드 1(고속 스마트홈 제어)과 대화 내역 열람만 허용하여 메모리 스파이크(200~300MB)를 차단하는 RAM 보호 모드, monitoring: 웹 UI를 순수 모니터링 관제 대시보드로 전환."
