@@ -21,6 +21,49 @@ from core.system_info import get_chat_mode, is_chat_ui_enabled
 from core.web_ui import HTML_INDEX
 
 TTYD_INTERNAL_PORT = 7682
+OPTIONS_FILE = "/data/options.json"
+
+
+def load_addon_options() -> dict:
+    """Load configuration options from /data/options.json."""
+    if os.path.exists(OPTIONS_FILE):
+        try:
+            with open(OPTIONS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_addon_options(new_options: dict) -> bool:
+    """Save updated options to /data/options.json and notify supervisor."""
+    opts = load_addon_options()
+    opts.update(new_options)
+    try:
+        with open(OPTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(opts, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ERR] Failed to save options to {OPTIONS_FILE}: {e}", file=sys.stderr)
+        return False
+
+    supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+    if supervisor_token:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                "http://supervisor/addons/self/options",
+                data=json.dumps({"options": opts}).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {supervisor_token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                pass
+        except Exception:
+            pass
+    return True
 
 
 
@@ -37,14 +80,6 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
     def _read_request_body(self) -> bytes:
         """Read a request body regardless of whether it arrived with a fixed
         Content-Length or chunked Transfer-Encoding.
-
-        HA's ingress proxy can relay a POST body chunked (no Content-Length
-        header at all) rather than with a fixed length -- a handler that only
-        checks Content-Length silently treats the body as empty in that case
-        (confirmed live: this is exactly why /api/upload always saw zero
-        files with no error, even for a tiny test file -- see core/uploads.py
-        history). /api/chat already handled both; this is that same logic,
-        shared so every POST handler gets it.
         """
         content_length = self.headers.get("Content-Length")
         if content_length:
@@ -59,28 +94,22 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 if not line:
                     break
                 try:
-                    chunk_len = int(line, 16)
+                    chunk_size = int(line, 16)
                 except ValueError:
                     break
-                if chunk_len == 0:
+                if chunk_size == 0:
                     self.rfile.readline()
                     break
-                chunks.append(self.rfile.read(chunk_len))
+                chunk_data = self.rfile.read(chunk_size)
+                chunks.append(chunk_data)
                 self.rfile.readline()
             return b"".join(chunks)
         return b""
 
     def _check_auth(self):
         """Check API authentication key."""
-        options_path = "/data/options.json"
-        expected_key = None
-        if os.path.exists(options_path):
-            try:
-                with open(options_path, "r", encoding="utf-8") as f:
-                    options = json.load(f)
-                    expected_key = options.get("api_key")
-            except Exception:
-                pass
+        options = load_addon_options()
+        expected_key = options.get("api_key")
         if not expected_key:
             return True
 
@@ -163,6 +192,8 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 from core.system_info import check_agy_hardware_support, get_mcp_status
                 from core.ui import UI_BUILD_VERSION
                 from core.remote_control import get_activity_status, is_running as remote_control_is_running
+                from core.usage_client import get_cached_usage_summary
+                opts = load_addon_options()
                 hw_info = check_agy_hardware_support()
                 mcp_status = get_mcp_status()
                 scheduled = get_scheduled_controls()
@@ -176,6 +207,15 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                     # Backs the HA integration's activity / lock-out sensor
                     # (custom_components/antigravity_cli/sensor.py and switch.py).
                     "activity": get_activity_status(),
+                    # Add-on configuration options for HA switches and select entities
+                    "options": {
+                        "auto_start_remote_control": bool(opts.get("auto_start_remote_control", False)),
+                        "enable_terminal": bool(opts.get("enable_terminal", True)),
+                        "chat_mode": get_chat_mode(),
+                        "dangerous_mode": bool(opts.get("dangerous_mode", True)),
+                    },
+                    # Cached model quota usage (0% memory overhead)
+                    "usage": get_cached_usage_summary(),
                     # Backs the HA integration's "예약 목록" sensor
                     # (custom_components/antigravity_cli/sensor.py) -- count as
                     # the sensor's own state, full list as its extra_state_
@@ -217,6 +257,23 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"status": "error", "error": str(e)}).encode("utf-8"))
+            return
+
+        # 2b. Addon Options API (GET)
+        if clean_path.endswith("/api/options"):
+            if not self._check_auth():
+                self._set_headers(401)
+                self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
+                return
+            opts = load_addon_options()
+            res = {
+                "auto_start_remote_control": bool(opts.get("auto_start_remote_control", False)),
+                "enable_terminal": bool(opts.get("enable_terminal", True)),
+                "chat_mode": get_chat_mode(),
+                "dangerous_mode": bool(opts.get("dangerous_mode", True)),
+            }
+            self._set_headers(200)
+            self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
             return
 
         # 2e. Remote-control daemon detail status (`agy remote-control
@@ -584,6 +641,43 @@ class AntigravityAPIHandler(BaseHTTPRequestHandler):
             status_code = 409 if (res.get("ok") is False and res.get("error") == "busy") else (200 if res.get("ok") else 500)
             self._set_headers(status_code)
             self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
+            return
+
+        # 2f. Addon Options API (POST)
+        if clean_path.endswith("/api/options"):
+            if not self._check_auth():
+                self._set_headers(401)
+                self.wfile.write(json.dumps({"error": "Unauthorized"}).encode("utf-8"))
+                return
+            body = self._read_request_body()
+            try:
+                payload = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                payload = {}
+
+            allowed_keys = ("auto_start_remote_control", "enable_terminal", "chat_mode", "dangerous_mode")
+            updates = {}
+            for k in allowed_keys:
+                if k in payload:
+                    val = payload[k]
+                    if k == "chat_mode":
+                        if str(val).lower() in ("full", "fast_only", "monitoring"):
+                            updates[k] = str(val).lower()
+                    elif isinstance(val, bool):
+                        updates[k] = val
+
+            if not updates:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "No valid options provided"}).encode("utf-8"))
+                return
+
+            ok = save_addon_options(updates)
+            self._set_headers(200 if ok else 500)
+            self.wfile.write(json.dumps({
+                "ok": ok,
+                "updated": updates,
+                "options": load_addon_options(),
+            }, ensure_ascii=False).encode("utf-8"))
             return
 
         # 3. Real-Time Chat Streaming API

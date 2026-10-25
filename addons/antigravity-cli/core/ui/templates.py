@@ -30,6 +30,7 @@ ICON_INFO = f'<svg {_SVG}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" 
 ICON_X = f'<svg {_SVG}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
 ICON_USER = f'<svg {_SVG}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
 ICON_EXTERNAL_LINK = f'<svg {_SVG}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
+ICON_REFRESH = f'<svg {_SVG}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
 
 # Compact badge text ("b13") -- short like the reference's "v2.0", full version stays in the tooltip.
 _UI_VERSION_SHORT = "b" + UI_BUILD_VERSION.rsplit(".", 1)[-1] if "beta." in UI_BUILD_VERSION else UI_BUILD_VERSION
@@ -231,6 +232,53 @@ HTML_BODY = f"""
         </div>
         <div class="chat-container" id="chat-box">
           <div class="hero-card" id="chat-hero-card">
+            <div class="dash-status-grid" style="margin: 0 auto 12px auto;">
+              <div class="dash-card">
+                <div class="dash-card-label">⚙️ 애드온 CPU</div>
+                <div class="dash-card-val" id="hero-cpu-status" style="color:#0a84ff;">측정 중...</div>
+                <div class="dash-card-sub">실시간 프로세스 점유율</div>
+              </div>
+              <div class="dash-card">
+                <div class="dash-card-label">💾 애드온 RAM</div>
+                <div class="dash-card-val" id="hero-ram-status" style="color:#34c759;">측정 중...</div>
+                <div class="dash-card-sub">순수 프로세스 (Anon)</div>
+              </div>
+              <div class="dash-card">
+                <div class="dash-card-label">🚀 리모트 데몬</div>
+                <div class="dash-card-val" id="hero-rc-status">확인 중...</div>
+                <div class="dash-card-sub">agy remote-control</div>
+              </div>
+              <div class="dash-card">
+                <div class="dash-card-label">🔌 HA MCP 도구</div>
+                <div class="dash-card-val" id="hero-mcp-status">확인 중...</div>
+                <div class="dash-card-sub">stdio ha-mcp 88+</div>
+              </div>
+            </div>
+
+            <div class="hero-usage-card" id="hero-usage-card">
+              <div class="hero-usage-header">
+                <div class="hero-usage-title">
+                  <span class="icon">📊</span>
+                  <span>AI 모델 쿼터 잔여량</span>
+                </div>
+                <button type="button" class="hero-usage-refresh-btn" onclick="fetchHeroUsageManual();" title="사용량 새로고침">
+                  <span class="icon">{ICON_REFRESH}</span>
+                </button>
+              </div>
+              <div class="hero-usage-body" id="hero-usage-body">
+                <div class="hero-usage-idle">
+                  <div class="hero-usage-warning-box">
+                    <span class="warning-icon">⚠️</span>
+                    <span>조회 시 순간 메모리 사용량이 약 200MB 정도 사용될 수 있습니다.</span>
+                  </div>
+                  <button type="button" class="hero-usage-manual-btn" onclick="fetchHeroUsageManual();">
+                    <span class="icon">📊</span>
+                    <span>쿼터 사용량 조회하기</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <span class="hero-badge">Google Antigravity Engine</span>
             <h2>무엇을 도와드릴까요?</h2>
             <p>Home Assistant 스마트홈 제어 및 환경 분석 실시간 AI 어시스턴트입니다.</p>

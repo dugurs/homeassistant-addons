@@ -112,6 +112,34 @@ mkdir -p /root/.local
 rm -rf /root/.local/share
 ln -sfn /config/.local_share /root/.local/share
 
+# Conditional persistence for user custom CLI tools, SDKs, and build caches across rebuilds (Opt-in)
+# 1. Custom CLI binaries (/config/.local_bin -> /root/.local/bin)
+if [ -d /config/.local_bin ]; then
+    mkdir -p /root/.local/bin
+    for bin in /config/.local_bin/*; do
+        if [ -f "$bin" ]; then
+            chmod +x "$bin" 2>/dev/null || true
+            ln -sf "$bin" "/root/.local/bin/$(basename "$bin")"
+        fi
+    done
+    export PATH="$PATH:/root/.local/bin"
+fi
+
+# 2. Custom development SDKs & caches (Android SDK, Gradle, etc.) linked only if present
+for custom_dir in Android .android .gradle; do
+    if [ -d "/config/$custom_dir" ]; then
+        rm -rf "/root/$custom_dir"
+        ln -sfn "/config/$custom_dir" "/root/$custom_dir"
+    fi
+done
+
+# 3. Inject Android SDK environment only if SDK is actually installed
+if [ -d "/root/Android/Sdk" ]; then
+    export ANDROID_HOME="/root/Android/Sdk"
+    export ANDROID_SDK_ROOT="/root/Android/Sdk"
+    export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+fi
+
 # Persist git configuration and credentials across addon rebuilds
 if [ -f /config/.gitconfig ]; then
     ln -sfn /config/.gitconfig /root/.gitconfig
@@ -200,7 +228,12 @@ if [ ! -f "$SETTINGS_FILE" ]; then
 {
   "permissions": {
     "allow": [
-      "mcp(home-assistant/*)"
+      "command(*)",
+      "mcp(*)",
+      "mcp(home-assistant/*)",
+      "read_file(*)",
+      "skill(*)",
+      "skills(*)"
     ],
     "deny": $HA_DENY_RULES
   }
@@ -209,7 +242,7 @@ SETTINGS_EOF
 else
     if command -v jq >/dev/null 2>&1; then
         jq --argjson deny "$HA_DENY_RULES" \
-           '.permissions.allow = ((.permissions.allow // []) + ["mcp(home-assistant/*)"] | unique) | .permissions.deny = ((.permissions.deny // []) + $deny | unique)' \
+           '.permissions.allow = ((.permissions.allow // []) + ["command(*)", "mcp(*)", "mcp(home-assistant/*)", "read_file(*)", "skill(*)", "skills(*)"] | unique) | .permissions.deny = ((.permissions.deny // []) + $deny | unique)' \
            "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" 2>/dev/null && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
     fi
 fi
@@ -305,6 +338,9 @@ export LC_ALL=C.UTF-8
 export HASS_SERVER="http://supervisor/core"
 export HASS_TOKEN="${SUPERVISOR_TOKEN}"
 export PATH="$PATH:/root/.local/bin"
+export ANDROID_HOME="/root/Android/Sdk"
+export ANDROID_SDK_ROOT="/root/Android/Sdk"
+export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
 alias ll='ls -la'
 alias cdha='cd /homeassistant'
 alias cdcfg='cd /config'

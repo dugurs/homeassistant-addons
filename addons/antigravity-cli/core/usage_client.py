@@ -275,3 +275,28 @@ def _refresh_credits_snapshot(now: float) -> dict:
         snapshot["response_text"] = parsed.get("response")
     _CREDITS_CACHE.update(data=snapshot, ts=now)
     return snapshot
+
+
+def get_cached_usage_summary() -> dict:
+    """Return cached usage metrics without spawning an agy subprocess.
+    Ensures 0% additional memory overhead for Home Assistant polling.
+    """
+    data = _CACHE.get("data")
+    if not data or not isinstance(data, dict):
+        return {
+            "available": False,
+            "gemini_weekly_remaining": None,
+            "gemini_5h_remaining": None,
+            "claude_weekly_remaining": None,
+            "claude_5h_remaining": None,
+        }
+    families = data.get("families", {})
+    gemini_stats = families.get("gemini", {})
+    claude_stats = families.get("claude_gpt", {})
+    return {
+        "available": data.get("available", True),
+        "gemini_weekly_remaining": gemini_stats.get("weekly_remaining_pct"),
+        "gemini_5h_remaining": gemini_stats.get("five_hour_remaining_pct"),
+        "claude_weekly_remaining": claude_stats.get("weekly_remaining_pct"),
+        "claude_5h_remaining": claude_stats.get("five_hour_remaining_pct"),
+    }

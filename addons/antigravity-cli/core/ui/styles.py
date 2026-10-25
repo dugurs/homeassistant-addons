@@ -635,6 +635,77 @@ CSS_STYLES = """
     }
     .session-card-delete-btn:hover { color: var(--accent-red); background: rgba(239, 68, 68, 0.1); }
 
+    .session-card-actions {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .session-card-more-btn {
+      opacity: 0.6;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .session-card:hover .session-card-more-btn,
+    .session-card-more-btn:hover {
+      opacity: 1;
+      color: var(--text-main);
+      background: var(--bg-card-hover);
+    }
+    .session-menu-dropdown {
+      position: absolute;
+      right: 0;
+      top: 100%;
+      margin-top: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      min-width: 140px;
+      padding: 4px;
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .session-menu-dropdown.open {
+      display: flex;
+    }
+    .session-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--text-main);
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      text-align: left;
+      font-family: inherit;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .session-menu-item:hover {
+      background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+    }
+    .session-menu-item.danger {
+      color: var(--accent-red);
+    }
+    .session-menu-item.danger:hover {
+      background: rgba(239, 68, 68, 0.12);
+    }
+
     /* Mobile Overlay */
     .sidebar-overlay {
       display: none;
@@ -835,6 +906,131 @@ CSS_STYLES = """
       background: rgba(56, 189, 248, 0.2);
     }
 
+    /* Hero Usage Summary Card (2 Columns) */
+    .hero-usage-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 10px 14px;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto 16px auto;
+      text-align: left;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .hero-usage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .hero-usage-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .hero-usage-refresh-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      transition: all 0.15s ease;
+    }
+    .hero-usage-refresh-btn:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-main);
+    }
+    /* 안쪽 블록 2열 고정 그리드 */
+    .hero-usage-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    .hero-usage-item {
+      background: var(--bg-main, rgba(0,0,0,0.02));
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .hero-usage-item-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+    .hero-usage-stat-line {
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 2px;
+    }
+    .hero-usage-empty {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 8px 0;
+    }
+    .hero-usage-idle {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0 2px 0;
+    }
+    .hero-usage-warning-box {
+      width: 100%;
+      background: rgba(234, 179, 8, 0.1);
+      border: 1px solid rgba(234, 179, 8, 0.25);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--accent-yellow, #eab308);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      line-height: 1.4;
+      text-align: center;
+    }
+    .hero-usage-warning-box .warning-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .hero-usage-manual-btn {
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent-blue, #38bdf8);
+      font-weight: 600;
+      font-size: 11px;
+      border-radius: 8px;
+      padding: 6px 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .hero-usage-manual-btn:hover {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: var(--accent-blue, #38bdf8);
+    }
+    .hero-usage-footer-note {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 6px;
+      line-height: 1.3;
+    }
+
     @media (max-width: 640px) {
       .hero-card {
         padding: 12px 6px;
@@ -858,6 +1054,14 @@ CSS_STYLES = """
         border-radius: 10px;
         min-height: 72px;
       }
+      .hero-usage-card {
+        padding: 8px 10px;
+        margin-bottom: 12px;
+      }
+      .hero-usage-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
       .dash-card-label {
         font-size: 11px;
         margin-bottom: 4px;
@@ -878,6 +1082,11 @@ CSS_STYLES = """
         font-size: 11px;
         flex: 1 1 calc(33.333% - 6px);
         justify-content: center;
+      }
+    }
+    @media (max-width: 480px) {
+      .hero-usage-grid {
+        grid-template-columns: 1fr;
       }
     }
 

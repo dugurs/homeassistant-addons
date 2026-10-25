@@ -22,6 +22,7 @@ import datetime
 import json
 import os
 import re
+import sqlite3
 import tempfile
 import threading
 import uuid
@@ -230,11 +231,60 @@ def _custom_title_path(conversation_id: str) -> str:
     return os.path.join(get_brain_base_dir(), conversation_id, ".system_generated", "logs", "custom_title.txt")
 
 
+def _get_conversation_summaries_db_path() -> str | None:
+    """Resolve the SQLite database path where agy CLI and remote daemon store conversation summaries."""
+    candidates = [
+        os.path.join(os.path.dirname(get_brain_base_dir()), "conversation_summaries.db"),
+        "/root/.gemini/antigravity-cli/conversation_summaries.db",
+        "/config/.gemini/antigravity-cli/conversation_summaries.db",
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _get_db_title(conversation_id: str) -> str | None:
+    """Fetch title stored by agy CLI or remote-control daemon in conversation_summaries.db."""
+    db_path = _get_conversation_summaries_db_path()
+    if not db_path or not conversation_id:
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        cur = conn.cursor()
+        cur.execute("SELECT title FROM conversation_summaries WHERE conversation_id = ? LIMIT 1;", (conversation_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            t = str(row[0]).strip()
+            return t or None
+    except Exception:
+        pass
+    return None
+
+
+def _set_db_title(conversation_id: str, title: str) -> bool:
+    """Update title in conversation_summaries.db to keep remote daemon in sync with web UI changes."""
+    db_path = _get_conversation_summaries_db_path()
+    if not db_path or not conversation_id or not title:
+        return False
+    try:
+        conn = sqlite3.connect(db_path, timeout=3.0)
+        cur = conn.cursor()
+        cur.execute("UPDATE conversation_summaries SET title = ? WHERE conversation_id = ?;", (title, conversation_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def set_session_title(conversation_id: str, title: str) -> bool:
     """Persist a user-chosen title for a conversation, overriding the auto-generated one.
 
     Path-safety-checked like delete_session(), since conversation_id comes
     from client-supplied JSON and is joined directly into a filesystem path.
+    Also syncs the updated title to conversation_summaries.db for remote-control.
     """
     if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
         return False
@@ -249,22 +299,28 @@ def set_session_title(conversation_id: str, title: str) -> bool:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(title)
+        _set_db_title(conversation_id, title)
         return True
     except Exception:
         return False
 
 
 def get_custom_title(conversation_id: str) -> str | None:
-    """User-set title for a conversation, if any (see set_session_title)."""
+    """User-set title for a conversation, if any (see set_session_title).
+
+    Checks custom_title.txt first (local UI override), then checks
+    conversation_summaries.db (remote daemon/CLI title).
+    """
     path = _custom_title_path(conversation_id)
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 title = f.read().strip()
-                return title or None
+                if title:
+                    return title
     except Exception:
         pass
-    return None
+    return _get_db_title(conversation_id)
 
 
 def _rewound_marker_path(conversation_id: str) -> str:

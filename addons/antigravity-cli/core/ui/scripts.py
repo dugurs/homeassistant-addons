@@ -76,6 +76,8 @@ function showToast(text) {
     // core/ui/templates.py (that file can't be reused directly here since
     // these are swapped in dynamically at runtime, not baked into initial HTML).
     const ICON_COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const ICON_REFRESH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+    const ICON_MORE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg>';
     // ICON_CHECK_SVG already declared further below (model/agent picker
     // checkmarks) -- reused here for copy-button feedback, see flashCopied().
     const ICON_EYE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -255,6 +257,55 @@ function showToast(text) {
         if (icon) icon.innerHTML = ICON_COPY_SVG;
         btn.classList.remove('copied');
       }, 2000);
+    }
+
+    let openSessionMenuId = null;
+
+    function toggleSessionMenu(cid, evt) {
+      if (evt) {
+        evt.stopPropagation();
+        evt.preventDefault();
+      }
+      const menu = document.getElementById(`session-menu-${cid}`);
+      const wasOpen = menu && menu.classList.contains('open');
+      closeAllSessionMenus();
+      if (!wasOpen && menu) {
+        menu.classList.add('open');
+        openSessionMenuId = cid;
+      }
+    }
+
+    function closeAllSessionMenus() {
+      document.querySelectorAll('.session-menu-dropdown.open').forEach(m => m.classList.remove('open'));
+      openSessionMenuId = null;
+    }
+
+    function copySessionId(cid, e) {
+      if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+      closeAllSessionMenus();
+      const btn = e && e.currentTarget ? e.currentTarget : null;
+      navigator.clipboard.writeText(cid).then(() => {
+        showToast('대화 ID가 복사되었습니다');
+        if (btn) flashCopied(btn);
+      }).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = cid;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+          showToast('대화 ID가 복사되었습니다');
+          if (btn) flashCopied(btn);
+        } catch (ex) {
+          showToast('대화 ID 복사 실패');
+        }
+        document.body.removeChild(ta);
+      });
     }
 
     function copyUserMessage(btn) {
@@ -2104,6 +2155,22 @@ function showToast(text) {
           dashMcp.style.color = data.mcp_enabled ? '#34c759' : 'var(--text-muted)';
         }
 
+        // Update Welcome/Hero Screen status cards
+        const heroRc = document.getElementById('hero-rc-status');
+        if (heroRc) {
+          heroRc.textContent = data.remote_control_running ? '🟢 실행 중 (연결됨)' : '⚪ 정지됨';
+          heroRc.style.color = data.remote_control_running ? '#34c759' : 'var(--text-muted)';
+        }
+        const heroRam = document.getElementById('hero-ram-status');
+        if (heroRam) heroRam.textContent = `${addonRamMb}MB (${addonRamPct.toFixed(1)}%)`;
+        const heroCpu = document.getElementById('hero-cpu-status');
+        if (heroCpu) heroCpu.textContent = `${addonCpu.toFixed(1)}% (전체 ${sysCpu.toFixed(1)}%)`;
+        const heroMcp = document.getElementById('hero-mcp-status');
+        if (heroMcp) {
+          heroMcp.textContent = data.mcp_enabled ? '🟢 연결됨 (stdio)' : '⚪ 미구성';
+          heroMcp.style.color = data.mcp_enabled ? '#34c759' : 'var(--text-muted)';
+        }
+
         // Mode 3 (CLI 모드) hardware support flag.
         cliModeSupported = !!data.agy_stream_supported;
         if (data.chat_mode) {
@@ -2300,6 +2367,8 @@ function showToast(text) {
     let modelCatalog = [];
     let familyLabels = {};
     let familyUsage = {};
+    let lastUsageData = null;
+    let lastCreditsData = null;
     let dismissedQuotaKey = '';
     let currentModelSlug = localStorage.getItem('antigravity_model_slug') || '';
     let currentEffort = localStorage.getItem('antigravity_effort') || '';
@@ -2663,7 +2732,57 @@ function showToast(text) {
       banner.style.display = 'flex';
     }
 
+    function updateHeroUsage(usageData, creditsData) {
+      const body = document.getElementById('hero-usage-body');
+      if (!body) return;
+
+      if (!usageData || !usageData.available) {
+        body.innerHTML = `<div class="hero-usage-empty">${usageData && usageData.reason ? usageData.reason : '사용량 정보를 조회하는 중이거나 CLI 추론 모드가 대기 상태입니다.'}</div>`;
+        return;
+      }
+
+      const families = usageData.families || {};
+      const labels = usageData.family_labels || {};
+      const famKeys = Object.keys(labels);
+      if (famKeys.length === 0) {
+        body.innerHTML = '<div class="hero-usage-empty">표시할 사용량 데이터가 없습니다.</div>';
+        return;
+      }
+
+      let html = '<div class="hero-usage-grid">';
+      famKeys.forEach(fam => {
+        const stats = families[fam] || {};
+        const label = labels[fam] || fam;
+        const wPct = typeof stats.weekly_remaining_pct === 'number' ? stats.weekly_remaining_pct : null;
+        const fPct = typeof stats.five_hour_remaining_pct === 'number' ? stats.five_hour_remaining_pct : null;
+        const wColor = wPct === null ? 'var(--text-muted)' : (wPct <= 15 ? 'var(--accent-red)' : wPct <= 40 ? 'var(--accent-yellow)' : 'var(--accent-green)');
+        const fColor = fPct === null ? 'var(--text-muted)' : (fPct <= 15 ? 'var(--accent-red)' : fPct <= 40 ? 'var(--accent-yellow)' : 'var(--accent-green)');
+
+        html += `
+          <div class="hero-usage-item">
+            <div class="hero-usage-item-name">${label}</div>
+            <div class="hero-usage-item-stats">
+              <div class="hero-usage-stat-line">
+                <span>주간 잔여:</span>
+                <strong style="color: ${wColor};">${wPct !== null ? wPct + '%' : '정보없음'}</strong>
+              </div>
+              ${fPct !== null ? `
+              <div class="hero-usage-stat-line">
+                <span>5시간 잔여:</span>
+                <strong style="color: ${fColor};">${fPct}%</strong>
+              </div>` : ''}
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      html += '<div class="hero-usage-footer-note">⚠️ 조회 시 일시적으로 메모리가 약 200MB 소모된 후 자동 반환됩니다.</div>';
+      body.innerHTML = html;
+    }
+
     function renderUsagePanelFromData(data) {
+      lastUsageData = data;
+      updateHeroUsage(data, lastCreditsData);
       const panel = document.getElementById('usage-panel');
       if (!panel) return;
       if (!data.available) {
@@ -2693,12 +2812,14 @@ function showToast(text) {
     // confirmed available, rather than baked into renderUsagePanelFromData's
     // main render, so a slow/failed credits call never blocks the quota bars.
     async function appendCreditsLine() {
-      const panel = document.getElementById('usage-panel');
-      if (!panel) return;
       try {
         const apiUrl = new URL('api/credits', window.location.href).href;
         const res = await fetch(apiUrl);
         const data = await res.json();
+        lastCreditsData = data;
+        updateHeroUsage(lastUsageData, lastCreditsData);
+        const panel = document.getElementById('usage-panel');
+        if (!panel) return;
         const remaining = data.available && data.data ? data.data.remaining_credits : undefined;
         if (typeof remaining !== 'number') return;
         const upgradeUri = data.data.upgrade_uri;
@@ -2758,6 +2879,15 @@ function showToast(text) {
         // shows this immediately instead of triggering its own fresh fetch.
         renderUsagePanelFromData(data);
       } catch (e) {}
+    }
+
+    async function fetchHeroUsageManual() {
+      const body = document.getElementById('hero-usage-body');
+      if (body) {
+        body.innerHTML = '<div class="hero-usage-empty">⏳ 쿼터 정보를 조회하고 있습니다... (약 5~10초 소요)</div>';
+      }
+      showToast('AI 쿼터 조회를 시작합니다 (순간 메모리 약 200MB 소모)');
+      await prefetchUsage();
     }
 
     async function loadUsageSnapshot() {
@@ -2887,6 +3017,7 @@ function showToast(text) {
 
     async function deleteSingleSession(cid, evt) {
       if (evt) evt.stopPropagation();
+      closeAllSessionMenus();
       if (!confirm('이 대화 기록을 삭제하시겠습니까?')) return;
       try {
         const apiUrl = new URL('api/sessions/' + encodeURIComponent(cid), window.location.href).href;
@@ -2898,6 +3029,7 @@ function showToast(text) {
 
     function startInlineRename(cid, evt) {
       if (evt) evt.stopPropagation();
+      closeAllSessionMenus();
       const card = evt.target.closest('.session-card');
       if (!card) return;
       const titleEl = card.querySelector('.session-card-title');
@@ -2977,8 +3109,26 @@ function showToast(text) {
               <div class="session-card-title">${displayTitle}</div>
               <div class="session-card-meta"><span>${sess.date_str || ''}</span><span>·</span><span>${sess.turns}단계</span></div>
             </div>
-            ${!sessionSelectMode ? `<button class="session-card-delete-btn" onclick="startInlineRename('${cid}', event)" title="제목 변경"><span class="icon">${ICON_EDIT_SVG}</span></button>` : ''}
-            ${!sessionSelectMode ? `<button class="session-card-delete-btn" onclick="deleteSingleSession('${cid}', event)" title="대화 삭제"><span class="icon">${ICON_TRASH_SVG}</span></button>` : ''}
+            ${!sessionSelectMode ? `
+              <div class="session-card-actions">
+                <button class="session-card-more-btn" onclick="toggleSessionMenu('${cid}', event)" title="대화 관리">
+                  <span class="icon">${ICON_MORE_SVG}</span>
+                </button>
+                <div class="session-menu-dropdown" id="session-menu-${cid}">
+                  <button class="session-menu-item" onclick="copySessionId('${cid}', event)">
+                    <span class="icon">${ICON_COPY_SVG}</span>
+                    <span>대화 ID 복사</span>
+                  </button>
+                  <button class="session-menu-item" onclick="startInlineRename('${cid}', event)">
+                    <span class="icon">${ICON_EDIT_SVG}</span>
+                    <span>제목 변경</span>
+                  </button>
+                  <button class="session-menu-item danger" onclick="deleteSingleSession('${cid}', event)">
+                    <span class="icon">${ICON_TRASH_SVG}</span>
+                    <span>대화 삭제</span>
+                  </button>
+                </div>
+              </div>` : ''}
           `;
           listEl.appendChild(card);
         });
@@ -3012,6 +3162,53 @@ function showToast(text) {
       const box = document.getElementById('chat-box');
       box.innerHTML = `
         <div class="hero-card" id="chat-hero-card">
+          <div class="dash-status-grid" style="margin: 0 auto 12px auto;">
+            <div class="dash-card">
+              <div class="dash-card-label">⚙️ 애드온 CPU</div>
+              <div class="dash-card-val" id="hero-cpu-status" style="color:#0a84ff;">측정 중...</div>
+              <div class="dash-card-sub">실시간 프로세스 점유율</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">💾 애드온 RAM</div>
+              <div class="dash-card-val" id="hero-ram-status" style="color:#34c759;">측정 중...</div>
+              <div class="dash-card-sub">순수 프로세스 (Anon)</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">🚀 리모트 데몬</div>
+              <div class="dash-card-val" id="hero-rc-status">확인 중...</div>
+              <div class="dash-card-sub">agy remote-control</div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-label">🔌 HA MCP 도구</div>
+              <div class="dash-card-val" id="hero-mcp-status">확인 중...</div>
+              <div class="dash-card-sub">stdio ha-mcp 88+</div>
+            </div>
+          </div>
+
+          <div class="hero-usage-card" id="hero-usage-card">
+            <div class="hero-usage-header">
+              <div class="hero-usage-title">
+                <span class="icon">📊</span>
+                <span>AI 모델 쿼터 잔여량</span>
+              </div>
+              <button type="button" class="hero-usage-refresh-btn" onclick="fetchHeroUsageManual();" title="사용량 새로고침">
+                <span class="icon">${ICON_REFRESH_SVG}</span>
+              </button>
+            </div>
+            <div class="hero-usage-body" id="hero-usage-body">
+              <div class="hero-usage-idle">
+                <div class="hero-usage-warning-box">
+                  <span class="warning-icon">⚠️</span>
+                  <span>조회 시 순간 메모리 사용량이 약 200MB 정도 사용될 수 있습니다.</span>
+                </div>
+                <button type="button" class="hero-usage-manual-btn" onclick="fetchHeroUsageManual();">
+                  <span class="icon">📊</span>
+                  <span>쿼터 사용량 조회하기</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <span class="hero-badge">Google Antigravity Engine</span>
           <h2>무엇을 도와드릴까요?</h2>
           <p>Home Assistant 스마트홈 제어 및 환경 분석 실시간 AI 어시스턴트입니다.</p>
@@ -3019,6 +3216,10 @@ function showToast(text) {
         </div>
       `;
       renderQuickGrid();
+      pollStatus();
+      if (lastUsageData) {
+        updateHeroUsage(lastUsageData, lastCreditsData);
+      }
       document.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
       if (window.innerWidth <= 768) {
         toggleSessionSidebar();
@@ -3627,17 +3828,19 @@ function showToast(text) {
           await loadModelCatalog();
           await loadAgentCatalog();
         }
-        prefetchUsage();
       }
 
       setupPullUpRefresh();
 
       // Start 3-second Periodic Status Polling
       setInterval(pollStatus, 3000);
-      // Keep the usage snapshot warm so opening "View Usage" feels instant
-      if (chatMode === 'full') {
-        setInterval(prefetchUsage, 55000);
-      }
+
+      // Close session menus on outside click
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.session-card-actions')) {
+          closeAllSessionMenus();
+        }
+      });
     });
 
     // Mode 3 stop/cancel state -- set by sendMessage() while a generation is
