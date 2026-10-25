@@ -112,8 +112,14 @@ mkdir -p /root/.local
 rm -rf /root/.local/share
 ln -sfn /config/.local_share /root/.local/share
 
-# Conditional persistence for user custom CLI tools, SDKs, and build caches across rebuilds (Opt-in)
+# Conditional persistence & auto-rescue for custom CLI tools, SDKs, and build caches across rebuilds
 # 1. Custom CLI binaries (/config/.local_bin -> /root/.local/bin)
+# Auto-rescue: Migrate existing non-symlink user binaries to /config/.local_bin if present
+if [ -d /root/.local/bin ] && [ ! -d /config/.local_bin ]; then
+    mkdir -p /config/.local_bin
+    cp -rn /root/.local/bin/* /config/.local_bin/ 2>/dev/null || true
+fi
+
 if [ -d /config/.local_bin ]; then
     mkdir -p /root/.local/bin
     for bin in /config/.local_bin/*; do
@@ -126,7 +132,12 @@ if [ -d /config/.local_bin ]; then
 fi
 
 # 2. Custom development SDKs & caches (Android SDK, Gradle, etc.) linked only if present
+# Auto-rescue: If existing real directory exists in /root but not in /config, migrate to /config first
 for custom_dir in Android .android .gradle; do
+    if [ ! -L "/root/$custom_dir" ] && [ -d "/root/$custom_dir" ] && [ ! -d "/config/$custom_dir" ]; then
+        echo "[INFO] Auto-migrating /root/$custom_dir to /config/$custom_dir for permanent persistence..."
+        mv "/root/$custom_dir" "/config/$custom_dir" 2>/dev/null || cp -rn "/root/$custom_dir" "/config/" 2>/dev/null || true
+    fi
     if [ -d "/config/$custom_dir" ]; then
         rm -rf "/root/$custom_dir"
         ln -sfn "/config/$custom_dir" "/root/$custom_dir"
