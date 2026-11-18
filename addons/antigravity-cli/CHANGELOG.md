@@ -1,44 +1,18 @@
-## 1.3.5-beta.4 (2026-11-18)
+## 1.3.5 (2026-11-18)
 
-### 애드온 자체 설정(`/config/.gemini/`) 수정 허용 및 도구 권한 화이트리스트 확장 (Allow .gemini Config Editing & Expand Allowed Tools)
-- **`/config/.gemini/` 안전 분류 완화 (Group 2 편입)**:
-  - 에이전트의 설정 파일(`settings.json`), 훅 스크립트, 규칙 문서를 사용자의 사전 승인 하에 에이전트가 직접 개선할 수 있도록 내용 수정(`edit_file`, `write_file`)을 허용.
-  - 단, 애드온의 두뇌 저장소인 `/config/.gemini/` 루트 폴더 자체의 통째 삭제(`rm -rf`)는 계속해서 엄격히 차단(Group 2 루트 컨테이너 보호 적용).
-- **도구 권한 화이트리스트 확장 및 팝업 간소화**:
-  - `run.sh` 부팅 스크립트의 `permissions.allow`에 `edit_file(*)`, `write_file(*)`을 기본 추가하여, 채팅창에서 계획 승인 후 실제 파일 수정 시 중복 권한 팝업 없이 원활하게 작업이 진행되도록 개선.
-  - `deny_rules.json` 및 `run.sh`의 deny 목록에서 `write_file(/config/.gemini/)`를 제거하여 최신 안전 규칙과 동기화.
-- **방어 훅(`ha_file_guard.py`) 및 규칙 문서(`ha-file-safety.md`) 동기화**:
-  - `ha_file_guard.py`에서 `/config/.gemini`를 `STRICT_PROTECTED`에서 `ROOT_CONTAINERS_NO_DELETE`로 이동하여 루트 삭제 방어 및 내부 파일 편집 허용 적용.
-
-## 1.3.5-beta.3 (2026-11-18)
-
-### secrets.yaml 및 adbkey 리소스 안전 분류 현실화 (Refine secrets.yaml & adbkey Safety Rules)
-- **`secrets.yaml` 수정 허용 및 파일 삭제 방어 유지 (Group 2 편입)**:
-  - 새로운 API 토큰, 날씨 키, 외부 서비스 비밀번호를 추가·수정할 수 있도록 내용 편집(`edit_file`, `write_file`)을 전면 허용.
-  - 단, `secrets.yaml` 파일 자체가 삭제되면 `configuration.yaml`의 모든 `!secret` 문법이 깨져 부팅 불가에 빠지므로, 파일 자체의 삭제(`rm`)는 계속해서 절대 금지 유지.
-- **`adbkey`, `adbkey.pub` 일반 리소스 재분류 (Group 3 편입)**:
-  - 코어 손상 위험이 없는 안드로이드 디버깅 키를 1단계(엄격 금지)에서 3단계(삭제/수정 가능)로 완화.
-  - 규칙 1(사전 승인 의무) 준수 하에 필요 시 정리 및 재생성 가능.
-- **방어 훅(`ha_file_guard.py`) 및 거부 목록(`deny_rules.json`) 동기화**:
-  - `ha_file_guard.py`에서 `secrets.yaml`을 `CONTAINER_FILES_NO_DELETE`로 이동하고 쓰기 차단 해제.
-  - `deny_rules.json` 및 `settings.json`에서 `write_file(/homeassistant/secrets.yaml)` 및 `adbkey` 차단 해제.
-
-## 1.3.5-beta.2 (2026-11-18)
-
-### 파일 및 폴더 안전 보호 3단계 기준 개정 및 방어 훅 정밀화 (3-Tier File Safety Standard & Granular Guard Hook)
-- **`/homeassistant` 하위 1단계 리소스 3대 안전 분류 체계 정립**:
-  - **1단계 [삭제 금지 & 수정 금지]**: `.storage/`, `.cloud/`, `.HA_VERSION`, `.ha_run.lock`, `home-assistant_v2.db*`, `secrets.yaml`, `adbkey*`, `/config/.gemini/`, `/backup/` 등 시스템 코어 및 인증, 바이너리 DB를 엄격 보호.
-  - **2단계 [삭제 금지 & 수정 가능]**: `configuration.yaml`, `automations.yaml`, `scripts.yaml`, `scenes.yaml`, `www/`, `custom_components/`, `packages/`, `esphome/` 등. 최상위 파일 및 컨테이너 폴더 자체 삭제(`rm`)는 금지하되, 설정 추가 및 자동화/컴포넌트 개발을 위한 내용 수정(`edit_file`, `write_file`)은 전면 허용. 또한 폴더 내부의 개별 하위 항목(예: `custom_components/aaa/`, `www/my_card.js`) 삭제는 규칙 1 사전 승인 하에 안전하게 허용.
-  - **3단계 [그 외: 삭제 가능 & 수정 가능]**: 과거 덤프(`core`), 이전 로그(`home-assistant.log.*`), 캐시(`tts/`, `image/`), 사용자 프로젝트(`projects/`), 워크스페이스 등 일반 리소스는 규칙 1(사전 승인 의무) 준수 하에 자유롭게 수정 및 삭제 가능.
-- **방어 훅(`ha_file_guard.py`) 및 거부 목록(`deny_rules.json`) 정밀화**:
-  - 2단계 항목에 대해 과도하게 걸려있던 쓰기 차단(`write_file`)을 해제하여 자동화 및 컴포넌트 편집이 정상 작동하도록 개선.
-  - 2단계 루트 컨테이너 폴더(`custom_components`, `www` 등)에 대한 정규식 삭제 감지를 적용하여 루트 폴더 삭제는 차단하고 하위 개별 컴포넌트/파일 삭제는 허용하도록 세분화.
-  - sandbox glob 미지원 오류(`globs not supported`)를 유발하던 와일드카드(`/*`) 항목 정리.
-
-## 1.3.5-beta.1 (2026-10-25)
-
-### 차기 개발 사이클 시작 (Next Development Cycle)
-- 공식 v1.3.4 안정 릴리즈 완료 후 차기 개발 사이클 시작.
+### 파일 및 설정 안전 관리 체계화 및 권한 편의성 대폭 개선 (3-Tier File Safety Standard & Enhanced Tool Usability)
+- **Home Assistant 리소스 3단계 안전 분류 체계 정립 (`ha-file-safety.md`)**:
+  - **1단계 [삭제/수정 엄격 금지]**: `.storage/`, `.cloud/`, `.HA_VERSION`, `.ha_run.lock`, `home-assistant_v2.db*`, `config`(심볼릭 링크), `/backup/` 등 시스템 코어 및 인증, 데이터베이스의 삭제/수정을 원천 차단.
+  - **2단계 [삭제 금지 & 수정 가능]**: `configuration.yaml`, `automations.yaml`, `scripts.yaml`, `scenes.yaml`, `secrets.yaml`, `www/`, `custom_components/`, `packages/`, `/config/.gemini/` 등.
+    - 루트 폴더 및 파일 자체의 통째 삭제(`rm`)는 강력 차단.
+    - 자동화 작성, 설정 추가, API 토큰 등록, 에이전트 설정 수정을 위한 내용 편집(`edit_file`, `write_file`) 및 하위 개별 파일 삭제(사전 승인 하)는 전면 허용.
+  - **3단계 [일반 리소스: 삭제/수정 가능]**: 덤프(`core`), 이전 로그(`home-assistant.log.*`), 캐시(`tts/`, `image/`), ADB 디버깅 키(`adbkey*`), 워크스페이스는 사전 승인 하에 정리 및 재생성 가능.
+- **방어 훅(`ha_file_guard.py`) 7종 보안 검증 정밀화**:
+  - 루트 컨테이너 정규식 삭제 감지 적용으로 루트 폴더 삭제는 차단하고 하위 개별 컴포넌트/파일 삭제는 안전하게 통과.
+  - 샌드박스 오류를 유발하던 와일드카드(`/*`) 항목 정규화.
+- **도구 권한 화이트리스트 자동 주입 (`run.sh`)**:
+  - 부팅 시 `permissions.allow`에 `edit_file(*)`, `write_file(*)`을 기본 추가하여, 채팅창에서 변경 계획 승인 후 실제 파일 수정 시 중복 권한 팝업 없이 원활하게 진행되도록 개선.
+  - `settings.json`의 deny 목록을 최신 `deny_rules.json`과 동기화.
 
 ## 1.3.4 (2026-10-25)
 
