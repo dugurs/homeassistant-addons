@@ -13,20 +13,44 @@ import json
 import re
 import sys
 
-PROTECTED = [
+# 1. [삭제 금지 & 수정 금지] (시스템 코어, 인증, 바이너리 DB)
+STRICT_PROTECTED = [
     ("/homeassistant/.storage", ".storage 레지스트리(엔티티/기기/로그인 계정 등 HA 핵심 상태)"),
+    ("/homeassistant/.cloud", "Nabu Casa Cloud 인증 토큰"),
+    ("/homeassistant/.HA_VERSION", "내부 코어 버전 식별 마커"),
+    ("/homeassistant/.ha_run.lock", "HA 코어 실행 락 파일"),
+    ("/homeassistant/.uuid", "이 HA 인스턴스의 고유 식별자"),
+    ("/homeassistant/home-assistant_v2.db", "히스토리/로그북 레코더 데이터베이스"),
+    ("/homeassistant/config", "/config 시스템 심볼릭 링크"),
+    ("/backup", "Home Assistant 백업 아카이브"),
+]
+
+# 2. [삭제 금지 & 수정 가능] 개별 파일 자체 삭제 금지 (내용 편집/추가는 허용)
+CONTAINER_FILES_NO_DELETE = [
     ("/homeassistant/secrets.yaml", "민감정보(비밀번호/토큰) 파일"),
     ("/homeassistant/configuration.yaml", "HA 메인 설정 파일"),
-    ("/homeassistant/.uuid", "이 HA 인스턴스의 고유 식별자"),
-    ("/homeassistant/.HA_VERSION", "내부 버전 마커"),
-    ("/homeassistant/home-assistant_v2.db", "히스토리/로그북 레코더 데이터베이스"),
-    ("/homeassistant/.cloud", "Nabu Casa Cloud 인증 토큰"),
-    ("/config/.gemini", "이 애드온(Antigravity CLI) 자신의 설정/인증/대화 기록"),
     ("/homeassistant/automations.yaml", "사용자 자동화 정의"),
     ("/homeassistant/scripts.yaml", "사용자 스크립트 정의"),
     ("/homeassistant/scenes.yaml", "사용자 씬 정의"),
-    ("/homeassistant/custom_components", "설치된 커스텀 통합(HACS 등)"),
-    ("/backup", "Home Assistant 백업 아카이브"),
+    ("/homeassistant/customize.yaml", "엔티티 커스터마이징 파일"),
+    ("/homeassistant/customize_glob.yaml", "엔티티 커스터마이징 파일"),
+    ("/homeassistant/custom_components/antigravity_cli", "애드온 연동 핵심 컴포넌트"),
+]
+
+# 3. [삭제 금지 & 수정 가능] 루트 컨테이너 폴더 자체 삭제 금지 (하위 개별 항목 삭제/수정은 허용)
+ROOT_CONTAINERS_NO_DELETE = [
+    ("/config/.gemini", "애드온 설정/기록 루트 폴더"),
+    ("/homeassistant/.gemini", "애드온 설정/기록 루트 폴더"),
+    ("/homeassistant/custom_components", "커스텀 통합구성요소 루트 폴더"),
+    ("/homeassistant/www", "대시보드 www 웹 리소스 루트 폴더"),
+    ("/homeassistant/packages", "패키지 설정 루트 폴더"),
+    ("/homeassistant/blueprints", "블루프린트 템플릿 루트 폴더"),
+    ("/homeassistant/themes", "대시보드 테마 루트 폴더"),
+    ("/homeassistant/custom_sentences", "음성 대화 문장 루트 폴더"),
+    ("/homeassistant/esphome", "ESPHome 기기 설정 루트 폴더"),
+    ("/homeassistant/espresense", "ESPresense 설정 루트 폴더"),
+    ("/homeassistant/node-red", "Node-RED 플로우 루트 폴더"),
+    ("/homeassistant/pyscript", "Pyscript 파이썬 스크립트 루트 폴더"),
 ]
 
 # A protected path substring alone isn't enough (plain `cat`/`ls`/`grep` must
@@ -92,8 +116,23 @@ def main():
     if name == "run_command":
         cmd = _unwrap(args.get("CommandLine", "")) or ""
         if _DESTRUCTIVE_RE.search(cmd):
-            for path, why in PROTECTED:
+            # 1. [삭제 금지 & 수정 금지] 대상 경로 검사
+            for path, why in STRICT_PROTECTED:
                 if path in cmd:
+                    _deny(path, why)
+                    return
+
+            # 2. [삭제 금지 & 수정 가능] 개별 파일 자체 삭제 검사
+            for path, why in CONTAINER_FILES_NO_DELETE:
+                if path in cmd:
+                    _deny(path, why)
+                    return
+
+            # 3. [삭제 금지 & 수정 가능] 루트 컨테이너 폴더 자체/전체 삭제 검사
+            # (하위 개별 항목, 예: custom_components/aaa/ 삭제는 허용)
+            for path, why in ROOT_CONTAINERS_NO_DELETE:
+                pat = re.compile(r'(?:^|[\s"\'])\s*' + re.escape(path) + r'(?:/(?:\*|\.)?)?(?=\s|["\']|$)')
+                if pat.search(cmd):
                     _deny(path, why)
                     return
         _allow()
@@ -101,7 +140,8 @@ def main():
 
     if name in ("write_to_file", "replace_file_content"):
         target = _unwrap(args.get("AbsolutePath", "")) or ""
-        for path, why in PROTECTED:
+        # 1번 그룹(STRICT_PROTECTED)만 쓰기/수정 차단 (2번 그룹은 내용 편집 전면 허용)
+        for path, why in STRICT_PROTECTED:
             if target == path or target.startswith(path.rstrip("/") + "/"):
                 _deny(path, why)
                 return

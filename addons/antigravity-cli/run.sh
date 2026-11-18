@@ -240,8 +240,9 @@ if [ ! -f "$SETTINGS_FILE" ]; then
   "permissions": {
     "allow": [
       "command(*)",
+      "edit_file(*)",
+      "write_file(*)",
       "mcp(*)",
-      "mcp(home-assistant/*)",
       "read_file(*)",
       "skill(*)",
       "skills(*)"
@@ -253,7 +254,7 @@ SETTINGS_EOF
 else
     if command -v jq >/dev/null 2>&1; then
         jq --argjson deny "$HA_DENY_RULES" \
-           '.permissions.allow = ((.permissions.allow // []) + ["command(*)", "mcp(*)", "mcp(home-assistant/*)", "read_file(*)", "skill(*)", "skills(*)"] | unique) | .permissions.deny = ((.permissions.deny // []) + $deny | unique)' \
+           '.permissions.allow = ((.permissions.allow // []) + ["command(*)", "edit_file(*)", "write_file(*)", "mcp(*)", "read_file(*)", "skill(*)", "skills(*)"] | unique) | .permissions.deny = $deny' \
            "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" 2>/dev/null && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
     fi
 fi
